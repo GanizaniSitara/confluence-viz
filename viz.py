@@ -7,6 +7,7 @@ import json
 import sys
 import os
 import webbrowser
+from datetime import datetime
 
 # ------------------------------------------------------------------
 # Configuration
@@ -61,10 +62,7 @@ def fetch_all_spaces():
         data = r.json()
         spaces = data.get("results", [])
         for sp in spaces:
-            all_spaces.append({
-                "key": sp.get("key", ""),
-                "name": sp.get("name", "")
-            })
+            all_spaces.append({"key": sp.get("key", ""), "name": sp.get("name", "")})
         if len(spaces) < SPACES_PAGE_LIMIT:
             break
         start += SPACES_PAGE_LIMIT
@@ -72,18 +70,20 @@ def fetch_all_spaces():
 
 
 # ------------------------------------------------------------------
-# Step 2: For each space, count pages via pagination
+# Step 2: For each space, count pages and collect last-edit timestamps
 # ------------------------------------------------------------------
-def fetch_page_count_for_space(space_key):
+def fetch_page_data_for_space(space_key):
     count = 0
     start = 0
+    timestamps = []
     while True:
         url = f"{CONFLUENCE_URL}/rest/api/content"
         params = {
             "type": "page",
             "spaceKey": space_key,
             "limit": CONTENT_PAGE_LIMIT,
-            "start": start
+            "start": start,
+            "expand": "version"
         }
         r = get_with_retry(url=url, params=params, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
         if r.status_code != 200:
@@ -91,11 +91,19 @@ def fetch_page_count_for_space(space_key):
             break
         data = r.json()
         pages = data.get("results", [])
+        for p in pages:
+            when = p.get("version", {}).get("when")
+            if when:
+                try:
+                    dt = datetime.fromisoformat(when.replace("Z", "+00:00"))
+                    timestamps.append(dt.timestamp())
+                except ValueError:
+                    pass
         count += len(pages)
         if len(pages) < CONTENT_PAGE_LIMIT:
             break
         start += CONTENT_PAGE_LIMIT
-    return count
+    return count, timestamps
 
 
 # ------------------------------------------------------------------
@@ -104,19 +112,16 @@ def fetch_page_count_for_space(space_key):
 def build_circle_packing_data(spaces):
     root = {"name": "Confluence", "children": []}
     for sp in spaces:
-        pc = sp.get("pageCount", 0)
-        if pc > 0:
-            root["children"].append({
-                # use the space key as the 'name' for layout
-                "name": sp["key"],
-                "key": sp["key"],
-                "value": pc
-            })
+        root["children"].append({
+            "key": sp["key"],
+            "value": sp["pageCount"],
+            "avg": sp["avgLastEdit"]
+        })
     return root
 
 
 # ------------------------------------------------------------------
-# Step 4: Generate the HTML file with inline data
+# Step 4: Generate the HTML file with inline data + 100-step pastel scale
 # ------------------------------------------------------------------
 def write_html_file(data):
     data_json = json.dumps(data)
@@ -129,7 +134,6 @@ def write_html_file(data):
   <style>
     body {{ margin: 0; font-family: sans-serif; }}
     .node text {{ text-anchor: middle; alignment-baseline: middle; font-size: 6pt; pointer-events: none; }}
-    .node circle {{ stroke: #999; fill: #ccc; }}
   </style>
 </head>
 <body>
@@ -137,6 +141,18 @@ def write_html_file(data):
 <script>
 // Embedded data
 const data = {data_json};
+
+// compute time bounds
+const times = data.children.map(d => d.avg);
+const [minT, maxT] = d3.extent(times);
+
+// build 100-step pastel scale from red to green
+const pastel = d3.range(100).map(i =>
+  d3.interpolateRgb("#ffcccc", "#ccffcc")(i / 99)
+);
+const colorScale = d3.scaleQuantize()
+  .domain([minT, maxT])
+  .range(pastel);
 
 const width = 1000, height = 800;
 const root = d3.pack().size([width, height]).padding(3)(
@@ -152,8 +168,10 @@ const nodes = svg.selectAll("g").data(leaf).enter()
   .attr("class", "node")
   .attr("transform", d => `translate(${{d.x}},${{d.y}})`);
 
-// draw circle
-nodes.append("circle").attr("r", d => d.r);
+// circles colored by 100-step pastel scale
+nodes.append("circle")
+  .attr("r", d => d.r)
+  .attr("fill", d => colorScale(d.data.avg));
 
 // first line: space key
 nodes.append("text")
@@ -179,28 +197,33 @@ def main():
     if not VERIFY_SSL:
         requests.packages.urllib3.disable_warnings()
 
-    print("Fetching list of spaces...")
     spaces = fetch_all_spaces()
     print(f"Found {len(spaces)} spaces.")
 
-    print("Counting pages per space...")
+    all_ts = []
     for idx, sp in enumerate(spaces, start=1):
-        sp["pageCount"] = fetch_page_count_for_space(sp["key"])
+        count, ts = fetch_page_data_for_space(sp["key"])
+        sp["pageCount"] = count
+        if ts:
+            sp["avgLastEdit"] = sum(ts) / len(ts)
+            all_ts.extend(ts)
+        else:
+            sp["avgLastEdit"] = 0
         if idx % 10 == 0:
             print(f"Processed {idx}/{len(spaces)} spaces...")
 
-    data_for_d3 = build_circle_packing_data(spaces)
+    if all_ts:
+        oldest = datetime.fromtimestamp(min(all_ts)).isoformat()
+        newest = datetime.fromtimestamp(max(all_ts)).isoformat()
+        print(f"Oldest edit: {oldest}, Newest edit: {newest}")
 
-    # also write JSON for reference
+    data_for_d3 = build_circle_packing_data(spaces)
     with open(OUTPUT_JSON, "w", encoding="utf-8") as jf:
         json.dump(data_for_d3, jf, indent=2)
 
     write_html_file(data_for_d3)
     print("Done. Created confluence_data.json and confluence_treepack.html")
-
-    full_html_path = os.path.realpath(OUTPUT_HTML)
-    print("Opening visualization in web browser...")
-    webbrowser.open("file://" + full_html_path)
+    webbrowser.open("file://" + os.path.realpath(OUTPUT_HTML))
 
 
 if __name__ == "__main__":
