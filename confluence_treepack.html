@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Confluence Circle Packing</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+    }
+    .node text {
+      text-anchor: middle;
+      alignment-baseline: middle;
+      font-size: 12px;
+      pointer-events: none;
+    }
+    .node circle {
+      stroke: #999;
+      fill: #ccc;
+    }
+  </style>
+</head>
+<body>
+<div id="chart"></div>
+
+<script>
+// Load data
+fetch('confluence_data.json')
+  .then(resp => resp.json())
+  .then(data => {
+    const width = 1000, height = 800;
+    const root = d3.pack()
+      .size([width, height])
+      .padding(3)(
+        d3.hierarchy(data)
+          .sum(d => d.value)
+      );
+
+    const svg = d3.select("#chart")
+      .append("svg")
+      .attr("width", width)
+      .attr("height", height);
+
+    // Only leaf nodes
+    const leaf = root.descendants().filter(d => !d.children);
+
+    const nodes = svg.selectAll("g")
+      .data(leaf)
+      .enter()
+      .append("g")
+      .attr("class", "node")
+      .attr("transform", d => `translate(${d.x},${d.y})`);
+
+    nodes.append("circle")
+      .attr("r", d => d.r);
+
+    nodes.append("text")
+      .text(d => d.data.name)
+      .style("font-size", "12px")
+      .attr("fill", "#000")
+      .each(function(d) {
+        const circleRadius = d.r;
+        const textLength = this.getComputedTextLength();
+        if (textLength > circleRadius * 1.7) d3.select(this).text("");
+      });
+  })
+  .catch(err => console.error("Error loading JSON:", err));
+</script>
+</body>
+</html>
