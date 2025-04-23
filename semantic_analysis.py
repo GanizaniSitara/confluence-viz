@@ -46,17 +46,19 @@ def process_spaces_parallel(spaces, api_base_url, auth, verify_ssl=False):
     """Process all spaces in parallel for faster computation"""
     space_texts = {}
 
+    # Exclude user spaces
+    spaces = [space for space in spaces if not space.get("key", "").startswith("~")]
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         future_to_space = {
-            executor.submit(extract_text_from_space, space['key'], api_base_url, auth, verify_ssl): space['key']
-            for space in spaces if 'key' in space
+            executor.submit(extract_text_from_space, space["key"], api_base_url, auth, verify_ssl): space["key"]
+            for space in spaces
         }
-
         for future in concurrent.futures.as_completed(future_to_space):
             space_key = future_to_space[future]
             try:
                 text = future.result()
-                if text:  # Only keep spaces with actual content
+                if text:
                     space_texts[space_key] = text
                 print(f"Successfully processed space: {space_key}")
             except Exception as e:
