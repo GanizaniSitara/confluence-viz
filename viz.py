@@ -185,7 +185,7 @@ def get_with_retry(url, params=None, auth=None, verify=False):
         return resp
 
 # ------------------------------------------------------------------
-# Fetch all spaces
+# Fetch all spaces, exclude user spaces
 # ------------------------------------------------------------------
 def fetch_all_spaces():
     print("Fetching all spaces...")
@@ -197,23 +197,21 @@ def fetch_all_spaces():
         params = {"start": start, "limit": SPACES_PAGE_LIMIT}
         r = get_with_retry(url, params=params, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
         if r.status_code != 200:
-             print(f"Failed to fetch spaces. Status code: {r.status_code}", file=sys.stderr)
-             break # Exit loop on error
+            print(f"Failed to fetch spaces. Status code: {r.status_code}", file=sys.stderr)
+            break
         results = r.json().get("results", [])
-        if not results and start == 0:
-            print("No spaces found via API.")
-            break # Exit loop if no results on the first page
         if not results:
-             print("No more spaces found on subsequent pages.")
-             break # Exit loop if no results on a subsequent page
+            break
         for sp in results:
+            if sp.get("key", "").startswith("~"):  # Exclude user spaces
+                print(f"Skipping user space: key={sp.get('key')}, name={sp.get('name')}")
+                continue
             idx += 1
             print(f"[{idx}] Fetched space: key={sp.get('key')}, name={sp.get('name')}")
             spaces.append({"key": sp.get("key"), "name": sp.get("name")})
         if len(results) < SPACES_PAGE_LIMIT:
-            break # Exit loop if this is the last page
+            break
         start += SPACES_PAGE_LIMIT
-        print(f"Fetched {len(results)} spaces on this page. Continuing from start={start}")
     print(f"Finished fetching spaces. Total fetched: {len(spaces)}")
     return spaces
 
