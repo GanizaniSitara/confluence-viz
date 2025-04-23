@@ -12,6 +12,24 @@ OUTPUT_PICKLE = "confluence_data.pkl"
 # Color constants
 GRADIENT_STEPS = 10  # Number of color steps
 GREY_COLOR_HEX = '#cccccc'  # Color for spaces with no pages/timestamps
+# Use the same gradient basis colors as viz.py (Red -> Yellow -> Green)
+GRADIENT_COLORS_FOR_INTERP_HEX = ['#ffcccc', '#ffffcc', '#ccffcc']
+
+
+def hex_to_rgb(hex_color):
+    """Converts a hex color string (e.g., '#RRGGBB') to an RGB tuple."""
+    hex_color = hex_color.lstrip('#')
+    # Ensure hex_color has length 6 before attempting conversion
+    if len(hex_color) != 6:
+        # Return a default color (e.g., black) or raise an error
+        # print(f"Warning: Invalid hex color format '{hex_color}'. Using black.", file=sys.stderr)
+        return (0, 0, 0) # Or raise ValueError("Invalid hex color format")
+    try:
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2 ,4))
+    except ValueError:
+        # Handle cases where conversion fails (e.g., non-hex characters)
+        # print(f"Warning: Could not convert hex '{hex_color}' to RGB. Using black.", file=sys.stderr)
+        return (0, 0, 0) # Or raise
 
 
 def rgb_to_hex(rgb_tuple):
@@ -64,13 +82,9 @@ def calculate_color_data(data):
     else:
         percentile_thresholds = []
 
-    # Generate color gradient - pastel colors
-    # RGB basis colors: oldest=pastel red, middle=pastel amber, newest=pastel green
-    gradient_colors_rgb_basis = [
-        [255, 179, 179],  # Oldest (pastel red)
-        [255, 224, 179],  # Middle (pastel amber)
-        [179, 255, 179]   # Newest (pastel green)
-    ]
+    # Generate color gradient - use the hex colors defined above
+    # Convert hex basis colors to RGB for interpolation
+    gradient_colors_rgb_basis = [hex_to_rgb(c) for c in GRADIENT_COLORS_FOR_INTERP_HEX]
 
     # Generate color range
     color_range_hex = []
