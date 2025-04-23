@@ -28,6 +28,10 @@ GRADIENT_STEPS = 10  # Number of percentile bins/color steps
 OUTPUT_JSON = "confluence_data.json"
 OUTPUT_HTML = "confluence_treepack.html"
 
+# Suppress InsecureRequestWarning if VERIFY_SSL is False
+if not VERIFY_SSL:
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 # Define the gradient colors: Red (oldest/lowest percentile) -> Yellow -> Green (newest/highest percentile)
 # This list defines the colors assigned to the 10 bins.
 # The first color is for the 0-10th percentile bin, the last color is for the 90-100th percentile bin.
@@ -265,9 +269,6 @@ def build_data(spaces):
 # Main execution
 # ------------------------------------------------------------------
 def main():
-    if not VERIFY_SSL:
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
     spaces = fetch_all_spaces()
     all_ts = [] # This list contains ALL individual page edit timestamps (used only for overall min/max print now)
     total_pages_fetched = 0 # Keep track of total pages
