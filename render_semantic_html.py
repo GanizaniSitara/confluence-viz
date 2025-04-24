@@ -7,6 +7,8 @@ import numpy as np
 from datetime import datetime
 from scipy.spatial import distance
 import argparse
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from config_loader import load_confluence_settings
 
