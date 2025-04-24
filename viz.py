@@ -462,14 +462,9 @@ const GREY_COLOR_HEX = '{GREY_COLOR_HEX}'; // Pass grey color to JS
 const colorScale = d3.scaleThreshold().domain(PERCENTILE_THRESHOLDS).range(COLOR_RANGE_HEX);
 
 // Pack layout
-const width = 1000, height = 800;
-const root = d3.pack().size([width, height]).padding(3)(d3.hierarchy(data).sum(d => d.value));
-// Filter out nodes without avg (like the root node). Nodes with avg=0 (spaces with no pages) are kept.
-const leaf = root.descendants().filter(d => d.data.avg !== undefined);
-
-
-// Create the SVG element inside the #chart div
-const svg = d3.select('#chart').append('svg').attr('width',width).attr('height',height);
+const width = 3000, height = 2000;
+const root = d3.pack().size([width, height]).padding(6)(d3.hierarchy(data).sum(d => d.value));
+const svg = d3.select('#chart').append('svg').attr('width', width).attr('height', height);
 
 
 // Render - using node.data.avg for coloring
