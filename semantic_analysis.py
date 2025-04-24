@@ -12,6 +12,7 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import os
+import sys
 
 from config_loader import load_confluence_settings
 
@@ -95,61 +96,56 @@ def compute_semantic_vectors(space_texts):
 
 
 def main():
-    settings = load_confluence_settings()
+    print("Starting semantic analysis data fetch process...")
+    try:
+        settings = load_confluence_settings()
+        api_base_url = settings['api_base_url']
+        auth = (settings['username'], settings['password'])
+        verify_ssl = settings['verify_ssl']
 
-    api_base_url = settings['api_base_url']
-    auth = (settings['username'], settings['password'])
-    verify_ssl = settings['verify_ssl']
+        # Load original data
+        if not os.path.exists(ORIGINAL_PICKLE):
+            print(f"Error: Original data file {ORIGINAL_PICKLE} not found", file=sys.stderr)
+            return
 
-    # Load original data
-    if not os.path.exists(ORIGINAL_PICKLE):
-        print(f"Error: Original data file {ORIGINAL_PICKLE} not found")
-        return
+        with open(ORIGINAL_PICKLE, "rb") as f:
+            original_data = pickle.load(f)
 
-    with open(ORIGINAL_PICKLE, "rb") as f:
-        original_data = pickle.load(f)
+        # Extract spaces from hierarchy
+        spaces = []
+        def extract_spaces(node):
+            if 'key' in node and 'avg' in node:
+                spaces.append(node)
+            if 'children' in node:
+                for child in node['children']:
+                    extract_spaces(child)
+        extract_spaces(original_data)
 
-    # Extract spaces from hierarchy
-    spaces = []
+        print(f"Found {len(spaces)} spaces. Extracting text from each...")
+        space_texts = process_spaces_parallel(spaces, api_base_url, auth, verify_ssl)
 
-    def extract_spaces(node):
-        if 'key' in node and 'avg' in node:
-            spaces.append(node)
-        if 'children' in node:
-            for child in node['children']:
-                extract_spaces(child)
+        print("Computing semantic vectors...")
+        vector_map, lsa_pipeline = compute_semantic_vectors(space_texts)
 
-    extract_spaces(original_data)
+        def add_vectors_to_data(node):
+            if 'key' in node and node['key'] in vector_map:
+                node['semantic_vector'] = vector_map[node['key']].tolist()
+            if 'children' in node:
+                for child in node['children']:
+                    add_vectors_to_data(child)
+        add_vectors_to_data(original_data)
 
+        print(f"Saving semantic data to {OUTPUT_PICKLE}...")
+        with open(OUTPUT_PICKLE, "wb") as f:
+            pickle.dump({
+                'data': original_data,
+                'vector_map': {k: v.tolist() for k, v in vector_map.items()},
+                'has_semantic': True
+            }, f)
+        print(f"Semantic analysis data successfully saved to {OUTPUT_PICKLE}")
 
-    # Process spaces to get text content
-    print("Extracting text from spaces...")
-    space_texts = process_spaces_parallel(spaces, api_base_url, auth, verify_ssl)
-
-    # Compute semantic vectors
-    print("Computing semantic vectors...")
-    vector_map, lsa_pipeline = compute_semantic_vectors(space_texts)
-
-    # Update original data with semantic vectors
-    def add_vectors_to_data(node):
-        if 'key' in node and node['key'] in vector_map:
-            node['semantic_vector'] = vector_map[node['key']].tolist()
-        if 'children' in node:
-            for child in node['children']:
-                add_vectors_to_data(child)
-
-    add_vectors_to_data(original_data)
-
-    # Save enhanced data
-    print(f"Saving semantic data to {OUTPUT_PICKLE}...")
-    with open(OUTPUT_PICKLE, "wb") as f:
-        pickle.dump({
-            'data': original_data,
-            'vector_map': {k: v.tolist() for k, v in vector_map.items()},
-            'has_semantic': True
-        }, f)
-
-    print("Semantic analysis completed successfully")
+    except Exception as e:
+        print(f"An error occurred during semantic analysis: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":
