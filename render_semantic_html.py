@@ -6,6 +6,7 @@ import webbrowser
 import numpy as np
 from datetime import datetime
 from scipy.spatial import distance
+import argparse
 
 from config_loader import load_confluence_settings
 
@@ -167,6 +168,10 @@ def reorganize_data_by_similarity(data, vector_map):
     return new_data
 
 def load_data_and_render():
+    parser = argparse.ArgumentParser(description="Render semantic Confluence visualization as HTML.")
+    parser.add_argument('--min-pages', type=int, default=0, help='Minimum number of pages for a space to be included')
+    args = parser.parse_args()
+
     with open(SEMANTIC_PICKLE, "rb") as f:
         pickle_data = pickle.load(f)
 
@@ -175,9 +180,21 @@ def load_data_and_render():
         data = pickle_data['data']
         vector_map = pickle_data['vector_map']
     else:
-        # Fall back to original format if needed
         data = pickle_data
         vector_map = {}
+
+    # Filter spaces with less than min-pages
+    def filter_spaces(node):
+        if 'children' in node:
+            node['children'] = [filter_spaces(child) for child in node['children'] if filter_spaces(child) is not None]
+        if 'value' in node and node['value'] < args.min_pages:
+            return None
+        return node
+    if args.min_pages > 0:
+        data = filter_spaces(data)
+        if data is None:
+            print(f"No spaces with >= {args.min_pages} pages.")
+            sys.exit(0)
 
     # Reorganize data based on semantic similarity
     semantic_data = reorganize_data_by_similarity(data, vector_map)
@@ -190,35 +207,35 @@ def load_data_and_render():
     percentile_thresholds_json = json.dumps(percentile_thresholds)
     color_range_hex_json = json.dumps(color_range_hex)
 
-    html = """<!DOCTYPE html>
+    html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>Semantic Confluence Circle Packing</title>
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <style>
-    body { margin:0; font-family:sans-serif; }
-    .node text { text-anchor:middle; alignment-baseline:middle; font-size:3pt; pointer-events:none; }
-    .group circle { stroke: #555; stroke-width: 1px; }
+    body {{ margin:0; font-family:sans-serif; }}
+    .node text {{ text-anchor:middle; alignment-baseline:middle; font-size:3pt; pointer-events:none; }}
+    .group circle {{ stroke: #555; stroke-width: 1px; }}
   </style>
 </head>
 <body>
 <div id="chart"></div>
 <script>
-const data = """ + data_json + """;
-const PERCENTILE_THRESHOLDS = """ + percentile_thresholds_json + """;
-const COLOR_RANGE_HEX = """ + color_range_hex_json + """;
-const GREY_COLOR_HEX = '""" + GREY_COLOR_HEX + """';
+const data = {data_json};
+const PERCENTILE_THRESHOLDS = {percentile_thresholds_json};
+const COLOR_RANGE_HEX = {color_range_hex_json};
+const GREY_COLOR_HEX = '{GREY_COLOR_HEX}';
 
 // Color scale based on thresholds
 const colorScale = d3.scaleThreshold()
   .domain(PERCENTILE_THRESHOLDS)
   .range(COLOR_RANGE_HEX);
 
-const width = 1000, height = 800;
+const width = 3000, height = 2000;
 const root = d3.pack()
   .size([width, height])
-  .padding(3)
+  .padding(6)
   (d3.hierarchy(data)
   .sum(d => d.value));
 

@@ -5,6 +5,7 @@ import sys
 import webbrowser
 import numpy as np
 from datetime import datetime
+import argparse
 
 OUTPUT_HTML = "confluence_treepack.html"
 OUTPUT_PICKLE = "confluence_data.pkl"
@@ -97,8 +98,25 @@ def calculate_color_data(data):
     return percentile_thresholds, color_range_hex
 
 def load_data_and_render():
+    parser = argparse.ArgumentParser(description="Render Confluence visualization as HTML.")
+    parser.add_argument('--min-pages', type=int, default=0, help='Minimum number of pages for a space to be included')
+    args = parser.parse_args()
+
     with open(OUTPUT_PICKLE, "rb") as f:
         data = pickle.load(f)
+
+    # Filter spaces with less than min-pages
+    def filter_spaces(node):
+        if 'children' in node:
+            node['children'] = [filter_spaces(child) for child in node['children'] if filter_spaces(child) is not None]
+        if 'value' in node and node['value'] < args.min_pages:
+            return None
+        return node
+    if args.min_pages > 0:
+        data = filter_spaces(data)
+        if data is None:
+            print(f"No spaces with >= {args.min_pages} pages.")
+            sys.exit(0)
 
     # Calculate color thresholds and gradient
     percentile_thresholds, color_range_hex = calculate_color_data(data)
