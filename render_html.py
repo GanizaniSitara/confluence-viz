@@ -132,8 +132,8 @@ const colorScale = d3.scaleThreshold()
   .domain(PERCENTILE_THRESHOLDS)
   .range(COLOR_RANGE_HEX);
 
-const width = 1000, height = 800;
-const root = d3.pack().size([width, height]).padding(3)(d3.hierarchy(data).sum(d => d.value));
+const width = 3000, height = 2000;
+const root = d3.pack().size([width, height]).padding(6)(d3.hierarchy(data).sum(d => d.value));
 const leaf = root.descendants().filter(d => d.data.avg !== undefined);
 const svg = d3.select('#chart').append('svg').attr('width',width).attr('height',height);
 const g = svg.selectAll('g').data(leaf).enter().append('g')
