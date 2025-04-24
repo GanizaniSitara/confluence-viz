@@ -1,3 +1,6 @@
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 import pickle
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
