@@ -174,7 +174,8 @@ def main():
             spaces.append(sp)
         if len(results) < 50:
             break
-        start += 50    print(f"Total spaces fetched: {len(spaces)}")
+        start += 50    
+        print(f"Total spaces fetched: {len(spaces)}")
     
     # Skip spaces that were already processed according to our checkpoint
     spaces_to_process = spaces
