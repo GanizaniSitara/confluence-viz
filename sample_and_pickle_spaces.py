@@ -1,10 +1,12 @@
 import os
 import pickle
+import json
 from collections import defaultdict
 from datetime import datetime
 import requests
 import time
 import urllib3
+import argparse
 from config_loader import load_confluence_settings
 
 # Load settings
@@ -34,6 +36,7 @@ TOP_N_ROOT = 20
 TOP_N_RECENT = 15
 TOP_N_FREQUENT = 15
 OUTPUT_DIR = 'temp'
+CHECKPOINT_FILE = 'confluence_checkpoint.json'
 
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
@@ -101,8 +104,53 @@ def sample_and_fetch_bodies(space_key, pages):
         p['body'] = fetch_page_body(p['id'])
     return deduped, len(pages)
 
+def load_checkpoint():
+    """Load the checkpoint file if it exists."""
+    if os.path.exists(CHECKPOINT_FILE):
+        try:
+            with open(CHECKPOINT_FILE, 'r') as f:
+                checkpoint = json.load(f)
+                print(f"Loaded checkpoint with {len(checkpoint.get('processed_spaces', []))} processed spaces")
+                return checkpoint
+        except Exception as e:
+            print(f"Error loading checkpoint file: {e}")
+    
+    # Return a new checkpoint structure if file doesn't exist or error occurred
+    return {
+        "total_spaces": 0,
+        "processed_spaces": [],
+        "last_position": 0,
+        "last_updated": datetime.now().isoformat()
+    }
+
+def save_checkpoint(checkpoint):
+    """Save the current checkpoint to disk."""
+    checkpoint["last_updated"] = datetime.now().isoformat()
+    try:
+        with open(CHECKPOINT_FILE, 'w') as f:
+            json.dump(checkpoint, f, indent=2)
+    except Exception as e:
+        print(f"Error saving checkpoint file: {e}")
+
 def main():
-    print("Starting Confluence sampling and pickling process...")
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Sample and pickle Confluence spaces")
+    parser.add_argument('--reset', action='store_true', help='Reset checkpoint and start from beginning')
+    args = parser.parse_args()
+    
+    # Initialize or load checkpoint
+    if args.reset and os.path.exists(CHECKPOINT_FILE):
+        print("Resetting checkpoint as requested")
+        os.remove(CHECKPOINT_FILE)
+        
+    checkpoint = load_checkpoint()
+    processed_space_keys = set(checkpoint.get("processed_spaces", []))
+    start_position = checkpoint.get("last_position", 0) if not args.reset else 0
+    
+    print(f"Starting Confluence sampling and pickling process...")
+    print(f"- Start position: {start_position}")
+    print(f"- Spaces already processed: {len(processed_space_keys)}")
+    
     # Fetch all spaces (reuse your fetch_all_spaces logic)
     spaces = []
     start = 0
@@ -126,20 +174,52 @@ def main():
             spaces.append(sp)
         if len(results) < 50:
             break
-        start += 50
-    print(f"Total spaces fetched: {len(spaces)}")
-    for idx, space in enumerate(spaces, start=1):
+        start += 50    print(f"Total spaces fetched: {len(spaces)}")
+    
+    # Skip spaces that were already processed according to our checkpoint
+    spaces_to_process = spaces
+    if start_position > 0:
+        print(f"Resuming from position {start_position} based on checkpoint")
+        spaces_to_process = spaces[start_position:]
+    
+    # Ensure checkpoint has the total spaces count
+    checkpoint["total_spaces"] = len(spaces)
+    save_checkpoint(checkpoint)
+    
+    # Process each space
+    for idx, space in enumerate(spaces_to_process, start=start_position + 1):
         space_key = space.get('key') or space.get('space_key')
         if not space_key:
             continue
-        print(f"Processing space {idx}/{len(spaces)}: {space_key}")
-        pages = fetch_page_metadata(space_key)
-        sampled, total_pages = sample_and_fetch_bodies(space_key, pages)
-        out_path = os.path.join(OUTPUT_DIR, f'{space_key}.pkl')
-        with open(out_path, 'wb') as f:
-            pickle.dump({'space_key': space_key, 'sampled_pages': sampled, 'total_pages': total_pages}, f)
-        print(f'  Wrote {len(sampled)} sampled pages (with bodies) for space {space_key} to {out_path} (total pages: {total_pages})')
+            
+        # Skip if already processed (additional check)
+        if space_key in processed_space_keys:
+            print(f"Skipping already processed space {idx}/{len(spaces)}: {space_key}")
+            continue
+            
+        try:
+            print(f"Processing space {idx}/{len(spaces)}: {space_key}")
+            pages = fetch_page_metadata(space_key)
+            sampled, total_pages = sample_and_fetch_bodies(space_key, pages)
+            out_path = os.path.join(OUTPUT_DIR, f'{space_key}.pkl')
+            with open(out_path, 'wb') as f:
+                pickle.dump({'space_key': space_key, 'sampled_pages': sampled, 'total_pages': total_pages}, f)
+            print(f'  Wrote {len(sampled)} sampled pages (with bodies) for space {space_key} to {out_path} (total pages: {total_pages})')
+            
+            # Update checkpoint after each successful space processing
+            checkpoint["processed_spaces"].append(space_key)
+            checkpoint["last_position"] = idx
+            save_checkpoint(checkpoint)
+            
+        except Exception as e:
+            print(f"Error processing space {space_key}: {e}")
+            # Still update the position even if an error occurred
+            checkpoint["last_position"] = idx 
+            save_checkpoint(checkpoint)
+            # Continue to the next space rather than breaking
+    
     print("All done!")
+    print(f"Processed {len(checkpoint['processed_spaces'])} spaces out of {len(spaces)} total spaces.")
 
 if __name__ == '__main__':
     main()
