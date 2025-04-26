@@ -20,13 +20,30 @@ if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def get_with_retry(url, params=None, auth=None, verify=False):
-    backoff = 1
     while True:
         resp = requests.get(url, params=params, auth=auth, verify=verify)
         if resp.status_code == 429:
-            print(f"Warning: Rate limited (429). Retrying {url} in {backoff}s...")
-            time.sleep(backoff)
-            backoff = min(backoff * 2, 60)
+            # Extract the Retry-After header value
+            retry_after = resp.headers.get('Retry-After')
+            
+            if retry_after:
+                # Retry-After can be either a number of seconds or a date
+                if retry_after.isdigit():
+                    wait_time = int(retry_after)
+                else:
+                    # Parse HTTP date format
+                    try:
+                        retry_date = datetime.strptime(retry_after, '%a, %d %b %Y %H:%M:%S %Z')
+                        wait_time = max(1, (retry_date - datetime.now()).total_seconds())
+                    except (ValueError, TypeError):
+                        # Fallback to 2 seconds if parsing fails
+                        wait_time = 2
+            else:
+                # Default to 2 seconds if no Retry-After header
+                wait_time = 2
+                
+            print(f"Warning: Rate limited (429). Retrying {url} in {wait_time}s as specified by server...")
+            time.sleep(wait_time)
             continue
         if resp.status_code >= 400:
             print(f"Error {resp.status_code} fetching {url}. Response: {resp.text}")
