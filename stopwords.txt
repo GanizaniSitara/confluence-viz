@@ -94,3 +94,15 @@ weekly
 releases
 phase
 reference
+image
+issues
+diagrams
+with
+from
+diagrams
+chef
+aws
+issues
+news
+onboarding
+apis
