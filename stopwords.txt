@@ -75,4 +75,11 @@ confluence
 reporting
 update
 the
-
+logs
+image
+solutions
+side
+file
+check
+ops
+security
