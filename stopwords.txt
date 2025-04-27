@@ -20,3 +20,14 @@ requirements
 design
 management
 home
+and
+for
+services
+notes
+strategy
+queries
+testing
+log
+services
+tracker
+report
