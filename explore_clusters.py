@@ -13,6 +13,24 @@ from datetime import datetime
 
 TEMP_DIR = 'temp'
 DEFAULT_MIN_PAGES = 0
+VERSION = '1.1'  # Updated version
+
+# Load stopwords from file
+def load_stopwords():
+    try:
+        stopwords_path = os.path.join(os.path.dirname(__file__), 'stopwords.txt')
+        with open(stopwords_path, 'r') as f:
+            return set(line.strip().lower() for line in f if line.strip())
+    except Exception as e:
+        print(f"Warning: Could not load stopwords file: {e}")
+        # Default stopwords if file can't be loaded
+        return {'and', 'the', 'in', 'of', 'to', 'a', 'for', 'with', 'on', 'at', 
+                'release', 'architecture', 'team', 'test', 'data', 'vcs', 'api', 
+                'enterprise', 'new', 'status', 'migration', 'design', '2025', 
+                'details', 'vision', 'sprint', 'requirements', 'management', 'home'}
+
+# Initialize stopwords
+STOPWORDS = load_stopwords()
 
 # Color constants
 GRADIENT_STEPS = 10  # Number of color steps
@@ -611,14 +629,12 @@ def suggest_tags_for_clusters(spaces, labels):
                 all_text.append(s['name'])
         
         # Join all text and split into words
-        text = ' '.join(all_text)
-        # Remove special characters and convert to lowercase
+        text = ' '.join(all_text)        # Remove special characters and convert to lowercase
         cleaned_text = re.sub(r'[^\w\s]', ' ', text.lower())
         words = cleaned_text.split()
         
-        # Filter out common stop words and short words
-        stop_words = {'and', 'the', 'in', 'of', 'to', 'a', 'for', 'with', 'on', 'at'}
-        filtered_words = [w for w in words if w not in stop_words and len(w) > 2]
+        # Filter out stopwords and short words using the loaded STOPWORDS
+        filtered_words = [w for w in words if w not in STOPWORDS and len(w) > 2]
         
         # Count word frequencies
         common = Counter(filtered_words).most_common(5)
