@@ -31,3 +31,4 @@ log
 services
 tracker
 report
+history
