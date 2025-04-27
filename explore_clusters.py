@@ -164,15 +164,18 @@ def get_vectors(spaces):
     valid_spaces = []
     spaces_with_content = 0
     total_spaces = len(spaces)
-    
-    for s in spaces:
+      for s in spaces:
         space_key = s.get('space_key', 'unknown')
         cleaned_texts = []
         
         # Process each page in the space
+        page_count = 0
+        pages_with_body = 0
         for p in s.get('sampled_pages', []):
+            page_count += 1
             body = p.get('body', '')
             if body:
+                pages_with_body += 1
                 cleaned_text = clean_html(body)
                 if cleaned_text:
                     cleaned_texts.append(cleaned_text)
@@ -185,7 +188,7 @@ def get_vectors(spaces):
             valid_spaces.append(s)
             spaces_with_content += 1
         else:
-            print(f"Space {space_key} has no usable text content after cleaning.")
+            print(f"Space {space_key}: No usable text content after cleaning. Total pages: {page_count}, Pages with body: {pages_with_body}")
     
     print(f"Found {spaces_with_content} out of {total_spaces} spaces with text content.")
     
