@@ -49,3 +49,17 @@ meeting
 2016
 tests
 weekly
+service
+change
+server
+setup
+feature
+business
+project
+guide
+user
+information
+update
+jira
+environment
+deployment
