@@ -196,7 +196,7 @@ def get_vectors(spaces):
     X = vectorizer.fit_transform(texts)
     return X, valid_spaces
 
-def cluster_spaces(spaces, method='agglomerative', n_clusters=5):
+def cluster_spaces(spaces, method='agglomerative', n_clusters=20):
     X, valid_spaces = get_vectors(spaces)
     if method == 'agglomerative':
         model = AgglomerativeClustering(n_clusters=n_clusters)
