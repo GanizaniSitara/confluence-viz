@@ -164,7 +164,7 @@ def get_vectors(spaces):
     valid_spaces = []
     spaces_with_content = 0
     total_spaces = len(spaces)
-      for s in spaces:
+    for s in spaces:
         space_key = s.get('space_key', 'unknown')
         cleaned_texts = []
         
