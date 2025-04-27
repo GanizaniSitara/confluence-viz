@@ -96,12 +96,13 @@ def load_spaces(temp_dir=TEMP_DIR, min_pages=0):
             with open(os.path.join(temp_dir, fname), 'rb') as f:
                 data = pickle.load(f)
                 if 'space_key' in data and 'sampled_pages' in data:
-                    if len(data['sampled_pages']) >= min_pages:
+                    # Use total_pages for filtering if available, otherwise fallback to sampled_pages length
+                    if data.get('total_pages', len(data['sampled_pages'])) >= min_pages:
                         spaces.append(data)
     return spaces
 
 def filter_spaces(spaces, min_pages):
-    return [s for s in spaces if len(s['sampled_pages']) >= min_pages]
+    return [s for s in spaces if s.get('total_pages', len(s['sampled_pages'])) >= min_pages]
 
 def search_spaces(spaces, term):
     results = []
