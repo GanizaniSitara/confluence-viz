@@ -111,3 +111,11 @@ app
 emea
 control
 analysis
+implementation
+scope
+code
+sql
+platform
+handover
+zzdaily
+engineering
