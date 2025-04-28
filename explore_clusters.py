@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from collections import Counter
 import json
 from datetime import datetime
+from config_loader import load_visualization_settings
 
 TEMP_DIR = 'temp'
 DEFAULT_MIN_PAGES = 0
@@ -322,6 +323,10 @@ def render_html(spaces, labels, method, tags=None):
     webbrowser.open('file://' + os.path.abspath(out_path))
 
 def render_d3_circle_packing(spaces, labels, method, tags=None):
+    # Load visualization settings
+    config = load_visualization_settings()
+    confluence_base_url = config['confluence_base_url']
+    
     # Calculate average timestamps for spaces if they don't already have them
     spaces = calculate_avg_timestamps(spaces)
     
@@ -357,13 +362,13 @@ def render_d3_circle_packing(spaces, labels, method, tags=None):
                     date_str = "Invalid date"
             else:
                 date_str = "No date"
-                
             cluster_node['children'].append({
                 'key': s['space_key'],
                 'name': s['space_key'],
                 'value': s.get('total_pages', len(s['sampled_pages'])),
                 'avg': avg_ts,  # Include avg timestamp for coloring
-                'date': date_str  # Include formatted date for tooltip
+                'date': date_str,  # Include formatted date for tooltip
+                'url': f"{confluence_base_url}/spaces/{s['space_key']}"  # Add URL for link to Confluence
             })
         d3_data['children'].append(cluster_node)
     data_json = json.dumps(d3_data)
@@ -395,8 +400,7 @@ def render_d3_circle_packing(spaces, labels, method, tags=None):
       stroke-linejoin: round;
       paint-order: stroke;
       fill: #000;
-    }
-    /* Tooltip styling */
+    }    /* Tooltip styling */
     .tooltip {
       position: absolute;
       background: #fff;
@@ -406,6 +410,8 @@ def render_d3_circle_packing(spaces, labels, method, tags=None):
       pointer-events: none;
       opacity: 0;
       transition: opacity 0.3s;
+      font-size: 11px;
+      max-width: 300px;
     }
   </style>
 </head>
@@ -440,12 +446,12 @@ const g = svg.selectAll('g')
   .data(root.descendants())
   .enter().append('g')
   .attr('transform', d => `translate(${d.x},${d.y})`)
-  .on("mouseover", function(event, d) {
+  .attr('cursor', d => !d.children && d.data.url ? 'pointer' : 'default')  .on("mouseover", function(event, d) {
     if (!d.children && d.data.date) {
       tooltip.transition()
         .duration(200)
         .style("opacity", 0.9);
-      tooltip.html(`<strong>${d.data.key}</strong><br>Pages: ${d.data.value}<br>Last Edit: ${d.data.date}`)
+      tooltip.html(`<strong>${d.data.key}</strong><br>Pages: ${d.data.value}<br>Last Edit: ${d.data.date}<br><br>Click to open: <span style="font-size:10px;word-break:break-all;">${d.data.url}</span>`)
         .style("left", (event.pageX + 10) + "px")
         .style("top", (event.pageY - 28) + "px");
     }
@@ -454,6 +460,12 @@ const g = svg.selectAll('g')
     tooltip.transition()
       .duration(500)
       .style("opacity", 0);
+  })
+  .on("click", function(event, d) {
+    // Only handle clicks on leaf nodes (spaces, not clusters)
+    if (!d.children && d.data.url) {
+      window.open(d.data.url, '_blank');
+    }
   });
 
 g.append('circle')
