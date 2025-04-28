@@ -451,7 +451,7 @@ const g = svg.selectAll('g')
       tooltip.transition()
         .duration(200)
         .style("opacity", 0.9);
-      tooltip.html(`<strong>${d.data.key}</strong><br>Pages: ${d.data.value}<br>Last Edit: ${d.data.date}<br><br>Click to open: <span style="font-size:10px;word-break:break-all;">${d.data.url}</span>`)
+      tooltip.html(`<strong>${d.data.key}</strong><br>Pages: ${d.data.value}<br>Blended Age: ${d.data.date}<br><br>Click to open: <span style="font-size:10px;word-break:break-all;">${d.data.url}</span>`)
         .style("left", (event.pageX + 10) + "px")
         .style("top", (event.pageY - 28) + "px");
     }
