@@ -363,12 +363,12 @@ def render_d3_circle_packing(spaces, labels, method, tags=None):
             else:
                 date_str = "No date"
             cluster_node['children'].append({
-                'key': s['space_key'],
+                'key': s['space_key'],                
                 'name': s['space_key'],
                 'value': s.get('total_pages', len(s['sampled_pages'])),
                 'avg': avg_ts,  # Include avg timestamp for coloring
                 'date': date_str,  # Include formatted date for tooltip
-                'url': f"{confluence_base_url}/spaces/{s['space_key']}"  # Add URL for link to Confluence
+                'url': f"{confluence_base_url}/display/{s['space_key']}"  # Add URL for link to Confluence
             })
         d3_data['children'].append(cluster_node)
     data_json = json.dumps(d3_data)
