@@ -106,3 +106,8 @@ issues
 news
 onboarding
 apis
+list
+app
+emea
+control
+analysis
