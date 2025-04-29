@@ -131,8 +131,8 @@ def make_api_request(session, url, method='GET', params=None, data=None, max_ret
 
 def get_current_user(session):
     """Get current user information"""
-    # Construct the URL using the standard /rest/api/myself endpoint
-    url = f"{CONFLUENCE_URL.rstrip('/')}/rest/api/myself"
+    # Construct the URL using the /rest/api/user/current endpoint
+    url = f"{CONFLUENCE_URL.rstrip('/')}/rest/api/user/current"
     return make_api_request(session, url)
 
 def get_all_spaces(session, space_type=None, limit=100):
