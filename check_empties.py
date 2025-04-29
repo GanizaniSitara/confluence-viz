@@ -7,6 +7,7 @@ import json
 import requests
 import base64
 import random
+import datetime
 from getpass import getpass # Use getpass if not using env vars for password
 
 # Import the config loader
@@ -103,18 +104,29 @@ def make_api_request(session, url, method='GET', params=None, data=None, max_ret
             if response.status_code != 429:
                 response.raise_for_status()  # Raise exception for 4xx/5xx (except 429)
                 return response.json()
-                
-            # Handle 429 Too Many Requests with exponential backoff
+                  # Handle 429 Too Many Requests with Retry-After header
             retry_count += 1
             
-            # Get retry-after header or use exponential backoff with jitter
+            # ALWAYS respect the Retry-After header if present (RFC 7231 compliance)
             retry_after = response.headers.get('Retry-After')
-            if retry_after and retry_after.isdigit():
-                wait_time = int(retry_after)
+            if retry_after:
+                # Retry-After can be a timestamp or number of seconds
+                if retry_after.isdigit():
+                    wait_time = int(retry_after)
+                else:
+                    # Try to parse HTTP date format (less common)
+                    try:
+                        from email.utils import parsedate_to_datetime
+                        retry_date = parsedate_to_datetime(retry_after)
+                        wait_time = max(0, (retry_date - datetime.now()).total_seconds())
+                    except (ImportError, ValueError, TypeError):
+                        # Fallback if date parsing fails
+                        wait_time = base_wait_time * (2 ** (retry_count - 1))
             else:
+                # Fallback to exponential backoff with jitter if no Retry-After header
                 wait_time = base_wait_time * (2 ** (retry_count - 1)) + random.uniform(0, 1)
             
-            print(f"Rate limited (429). Retrying in {wait_time:.2f} seconds... (Attempt {retry_count}/{max_retries})")
+            print(f"Rate limited (429). Server Retry-After: {retry_after or 'Not provided'}. Waiting {wait_time:.2f} seconds... (Attempt {retry_count}/{max_retries})")
             time.sleep(wait_time)
             
         except requests.exceptions.RequestException as e:
@@ -228,12 +240,7 @@ def get_attachments_from_content(session, content_id, limit=1):
     url = f"{CONFLUENCE_URL.rstrip('/')}/rest/api/content/{content_id}/child/attachment"
     params = {'limit': limit}
     
-    print(f"  API call: GET attachments for content ID {content_id}")
-    response_data = make_api_request(session, url, params=params)
-    attachment_count = len(response_data.get('results', []))
-    print(f"  ✓ Received {attachment_count} attachments for content ID {content_id}")
-    
-    return response_data
+    return make_api_request(session, url, params=params)
 
 # --- Main Logic ---
 
