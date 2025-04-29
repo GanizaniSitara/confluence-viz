@@ -357,12 +357,11 @@ def check_pages_in_space(space_key):
         # Note: 'body.storage' gets the raw Confluence format, which is best for checking emptiness.
         # Note: 'operations' includes actions the *current user* can perform on the page.
         print(f"Fetching pages from space '{space_key}' (this might take a while)...")
-        
         pages = get_all_pages_from_space(
             session,
             space_key,
             limit=100,  # Pages per request, adjusted for API
-            expand='body.storage,version,operations'  # Crucial expands
+            expand='body.storage,version,operations,attachments'  # Crucial expands including attachments
         )
         
         print(f"Found {len(pages)} pages in total. Checking each...")
@@ -374,21 +373,35 @@ def check_pages_in_space(space_key):
             page_link = page.get('_links', {}).get('webui', '')
             if not page_link and 'base' in page.get('_links', {}):
                  page_link = page['_links']['base'] + page.get('_links',{}).get('webui','')
-            
-            # Output counter and page name for tracking progress
+              # Output counter and page name for tracking progress
             print(f"Checking page {page_count}/{len(pages)}: '{page_title}' (ID: {page_id})")
 
             # 1. Check for empty content
             storage_value = page.get('body', {}).get('storage', {}).get('value', '').strip()
             is_content_empty = not storage_value
 
-            # 2. Check for attachments
+            if not is_content_empty:
+                continue  # Skip to next page if content is not empty
+
+            # 2. Check for delete permission
+            can_delete = False
+            for operation in page.get('operations', []):
+                if operation.get('operation') == 'delete':
+                    can_delete = True
+                    break
+            
+            if not can_delete:
+                continue  # Skip to next page if we don't have delete permission
+
+            # 3. Check for attachments - only if the page is empty and we have delete permission
+            has_no_attachments = False
             try:
-                attachments = get_attachments_from_content(session, page_id, limit=1)  # Only need to know if > 0
-                has_no_attachments = len(attachments.get('results', [])) == 0
+                # Use attachments from expanded data instead of making a separate API call
+                attachments = page.get('attachments', {}).get('results', [])
+                has_no_attachments = len(attachments) == 0
             except Exception as e:
                 print(f"Warning: Failed to check attachments for page '{page_title}': {e}")
-                has_no_attachments = False  # Assume it has attachments to be safe            # 3. Check for delete permission
+                has_no_attachments = False  # Assume it has attachments to be safe# 3. Check for delete permission
             can_delete = False
             for operation in page.get('operations', []):
                 if operation.get('operation') == 'delete':
