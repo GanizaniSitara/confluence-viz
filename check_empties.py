@@ -147,24 +147,33 @@ def get_all_spaces(session, space_type=None, limit=100):
         'start': 0
     }
     if space_type:
-        params['type'] = space_type
-
+        params['type'] = space_type    
     all_spaces = []
     more_results = True
+    page_count = 0
 
     print(f"Fetching spaces (type: {space_type or 'all'})...")
     while more_results:
         try:
+            page_count += 1
+            current_start = params['start']
+            print(f"  API call #{page_count}: GET {url} (start={current_start}, limit={limit}, type={space_type})")
+            
             response_data = make_api_request(session, url, params=params)
-
+            
             if 'results' in response_data:
+                results_count = len(response_data['results'])
                 all_spaces.extend(response_data['results'])
+                
+                print(f"  ✓ Received {results_count} spaces (total so far: {len(all_spaces)})")
 
                 # Check if there are more pages to fetch
                 if response_data.get('_links', {}).get('next'):
                     params['start'] += len(response_data['results']) # Increment start based on results received
+                    print(f"  → More spaces available, will fetch next page...")
                 else:
                     more_results = False
+                    print(f"  → No more spaces to fetch.")
             else:
                 print("Warning: Unexpected response structure for spaces, 'results' key missing.")
                 more_results = False
@@ -172,7 +181,7 @@ def get_all_spaces(session, space_type=None, limit=100):
             print(f"Error fetching spaces: {e}")
             more_results = False # Stop fetching on error
 
-    print(f"Found {len(all_spaces)} spaces.")
+    print(f"Completed fetching spaces. Found {len(all_spaces)} spaces in {page_count} API calls.")
     return all_spaces
 
 def get_all_pages_from_space(session, space_key, limit=100, expand=None):
@@ -219,7 +228,12 @@ def get_attachments_from_content(session, content_id, limit=1):
     url = f"{CONFLUENCE_URL.rstrip('/')}/rest/api/content/{content_id}/child/attachment"
     params = {'limit': limit}
     
-    return make_api_request(session, url, params=params)
+    print(f"  API call: GET attachments for content ID {content_id}")
+    response_data = make_api_request(session, url, params=params)
+    attachment_count = len(response_data.get('results', []))
+    print(f"  ✓ Received {attachment_count} attachments for content ID {content_id}")
+    
+    return response_data
 
 # --- Main Logic ---
 
