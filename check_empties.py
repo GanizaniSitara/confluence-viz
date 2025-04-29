@@ -196,6 +196,15 @@ def get_all_spaces(session, space_type=None, limit=100):
 def get_all_pages_from_space(session, space_key, limit=100, expand=None):
     """
     Get all pages from a Confluence space with pagination handling
+    
+    Args:
+        session: The requests session to use
+        space_key: The Confluence space key
+        limit: Number of results per page (default 100)
+        expand: Comma-separated list of properties to expand. If None, defaults to including attachments
+    
+    Returns:
+        List of page objects with requested expansions
     """
     # Construct the URL using the standard /rest/api/content endpoint
     url = f"{CONFLUENCE_URL.rstrip('/')}/rest/api/content"
@@ -207,8 +216,14 @@ def get_all_pages_from_space(session, space_key, limit=100, expand=None):
         'start': 0
     }
     
+    # Include attachments in the expansion by default if not specified
     if expand:
-        params['expand'] = expand
+        if 'attachments' not in expand:
+            params['expand'] = f"{expand},attachments"
+        else:
+            params['expand'] = expand
+    else:
+        params['expand'] = 'attachments'
     
     all_pages = []
     more_results = True
