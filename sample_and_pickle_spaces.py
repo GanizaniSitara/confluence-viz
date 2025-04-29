@@ -63,7 +63,7 @@ def fetch_page_metadata(space_key):
     pages = []
     start = 0
     while True:
-        url = f"{API_BASE_URL}/rest/api/content"
+        url = f"{BASE_URL}/rest/api/content"
         params = {"type": "page", "spaceKey": space_key, "start": start, "limit": 100, "expand": "version,ancestors"}
         r = get_with_retry(url, params=params, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
         if r.status_code != 200:
