@@ -19,6 +19,12 @@ settings.ini
 # Exclude HTML files - visualization outputs
 *.html
 
+# Exclude JSON files - data files
+*.json
+
+# Exclude CSV files - data files
+*.csv
+
 # Exclude PKL files - serialized data
 *.pkl
 
@@ -28,3 +34,6 @@ settings.ini
 # OS specific files
 .DS_Store
 Thumbs.db
+
+# IDE specific files
+.idea/
