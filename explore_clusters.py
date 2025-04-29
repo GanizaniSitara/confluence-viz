@@ -107,7 +107,7 @@ def calculate_color_data(spaces):
     return percentile_thresholds, color_range_hex
 
 # Load all pickles
-def load_spaces(temp_dir=TEMP_DIR, min_pages=0):
+def load_spaces(temp_dir=TEMP_DIR, min_pages=0, max_pages=None):
     spaces = []
     for fname in os.listdir(temp_dir):
         if fname.endswith('.pkl'):
@@ -115,12 +115,19 @@ def load_spaces(temp_dir=TEMP_DIR, min_pages=0):
                 data = pickle.load(f)
                 if 'space_key' in data and 'sampled_pages' in data:
                     # Use total_pages for filtering if available, otherwise fallback to sampled_pages length
-                    if data.get('total_pages', len(data['sampled_pages'])) >= min_pages:
+                    page_count = data.get('total_pages', len(data['sampled_pages']))
+                    # Apply both min and max filters
+                    meets_min = page_count >= min_pages
+                    meets_max = max_pages is None or page_count <= max_pages
+                    if meets_min and meets_max:
                         spaces.append(data)
     return spaces
 
-def filter_spaces(spaces, min_pages):
-    return [s for s in spaces if s.get('total_pages', len(s['sampled_pages'])) >= min_pages]
+def filter_spaces(spaces, min_pages, max_pages=None):
+    return [s for s in spaces if (
+        s.get('total_pages', len(s['sampled_pages'])) >= min_pages and
+        (max_pages is None or s.get('total_pages', len(s['sampled_pages'])) <= max_pages)
+    )]
 
 def search_spaces(spaces, term):
     results = []
@@ -673,6 +680,7 @@ def suggest_tags_for_clusters(spaces, labels):
 
 def main():
     min_pages = None
+    max_pages = None
     spaces = []
     n_clusters = 20  # Default number of clusters
     # Display a clear banner so we know the program is running
@@ -684,7 +692,7 @@ def main():
     │   ===========================                           │
     │                                                         │
     │   Analyze and visualize Confluence spaces               │
-    │   Version 1.2                                           │
+    │   Version 1.3                                           │
     │                                                         │
     └─────────────────────────────────────────────────────────┘
     """)
@@ -695,15 +703,16 @@ def main():
             print("\nYou must set a minimum pages filter before loading data.")
             inp = input("Enter minimum pages per space (0 for all): ").strip()
             min_pages = int(inp) if inp else 0
-            spaces = load_spaces(min_pages=min_pages)
+            spaces = load_spaces(min_pages=min_pages, max_pages=max_pages)
             print(f"Loaded {len(spaces)} spaces from {TEMP_DIR} with >= {min_pages} pages.")
-            continue
+            continue        
         print("\nMenu:")
         print("1. Change minimum pages filter and reload data (current: {} )".format(min_pages))
-        print("2. Search for space key")
-        print("3. Help (explain algorithms)")
-        print("4. Visualize total pages per space (bar chart)")
-        print(f"5. Set number of clusters manually (current: {n_clusters})")
+        print("2. Set maximum pages filter (current: {} )".format(max_pages if max_pages else "No limit"))
+        print("3. Search for space key")
+        print("4. Help (explain algorithms)")
+        print("5. Visualize total pages per space (bar chart)")
+        print(f"6. Set number of clusters manually (current: {n_clusters})")
         print("6. Semantic clustering and render HTML (Agglomerative)")
         print("7. Semantic clustering and render HTML (KMeans)")
         print("8. Semantic clustering and render HTML (DBSCAN)")
