@@ -727,15 +727,19 @@ def main():
             inp = input("Enter minimum pages per space (0 for all): ").strip()
             min_pages = int(inp) if inp else 0
             spaces = load_spaces(min_pages=min_pages)
-            print(f"Loaded {len(spaces)} spaces from {TEMP_DIR} with >= {min_pages} pages.")
-        elif choice == '2':
+            print(f"Loaded {len(spaces)} spaces from {TEMP_DIR} with >= {min_pages} pages.")        elif choice == '2':
             term = input("Enter search term: ").strip()
             results = search_spaces(spaces, term)
             if results:
+                print("\nSearch results:")
                 for k, n in results:
                     print(f"{k}: {n} pages")
+                print("\nPress Enter to continue...")
+                input()
             else:
                 print("No matches found.")
+                print("\nPress Enter to continue...")
+                input()
         elif choice == '3':
             explain_algorithms()
         elif choice == '4':
