@@ -38,9 +38,10 @@ except FileNotFoundError:
     VERIFY_SSL = False
 
 # --- Argument Parsing ---
-parser = argparse.ArgumentParser(description="Check for empty pages in a Confluence space OR list spaces.")
+parser = argparse.ArgumentParser(description="Check for empty pages in a Confluence space, a specific page OR list spaces.")
 group = parser.add_mutually_exclusive_group(required=True) # Ensure one action is chosen
 group.add_argument("--space-key", help="The key of the Confluence space to check (e.g., 'MYSPACE' or '~username').")
+group.add_argument("--page-id", help="The ID of a specific Confluence page to check.")
 group.add_argument(
     "--list-spaces",
     choices=['all', 'user', 'space'],
@@ -52,8 +53,9 @@ group.add_argument(
 # parser.add_argument("--url", help="Confluence URL (overrides CONFLUENCE_URL env var)")
 
 args = parser.parse_args()
-# SPACE_KEY is now potentially None if --list-spaces is used
+# SPACE_KEY is now potentially None if --list-spaces or --page-id is used
 SPACE_KEY = args.space_key
+PAGE_ID = args.page_id
 
 # --- Credential Handling ---
 # Override env vars if command-line args are provided (if you add them to argparse)
@@ -237,6 +239,18 @@ def get_attachments_from_content(session, content_id, limit=1):
     
     return make_api_request(session, url, params=params)
 
+def get_page_by_id(session, page_id, expand=None):
+    """
+    Get a specific page by its ID with optional expanded properties
+    """
+    url = f"{CONFLUENCE_URL.rstrip('/')}/rest/api/content/{page_id}"
+    params = {}
+    
+    if expand:
+        params['expand'] = expand
+    
+    return make_api_request(session, url, params=params)
+
 # --- Main Logic ---
 
 def list_spaces(space_filter):
@@ -385,13 +399,98 @@ def check_pages_in_space(space_key):
     else:
         print(f"No pages found in space '{space_key}' that are both empty and deletable by the current user.")
 
+def check_single_page(page_id):
+    """
+    Connects to Confluence and checks a specific page by ID for emptiness
+    and delete permissions.
+    """
+    print(f"Connecting to Confluence at: {CONFLUENCE_URL}")
+    print(f"Using username: {CONFLUENCE_USERNAME}")
+    print(f"Checking page ID: {page_id}")
+    if not VERIFY_SSL:
+        print("SSL verification is DISABLED.")
+    print("-" * 30)
+
+    try:
+        # Create a session for all requests
+        session = create_session()
+        
+        # Verify connection by getting current user info
+        user_info = get_current_user(session)
+        print(f"Successfully connected as: {user_info.get('displayName', CONFLUENCE_USERNAME)}")
+        print("-" * 30)
+
+    except Exception as e:
+        print(f"\nError connecting to Confluence: {e}")
+        print("Please check URL, credentials, network connectivity, and ensure the Confluence instance is running.")
+        sys.exit(1)
+
+    try:
+        # Fetch the specific page with expanded data
+        print(f"Fetching page with ID '{page_id}'...")
+        
+        try:
+            page = get_page_by_id(
+                session,
+                page_id,
+                expand='body.storage,version,operations'  # Crucial expands
+            )
+            
+            page_title = page['title']
+            page_link = page.get('_links', {}).get('webui', '')
+            if not page_link and 'base' in page.get('_links', {}):
+                page_link = page['_links']['base'] + page.get('_links',{}).get('webui','')
+            
+            print(f"Found page: '{page_title}' (ID: {page_id})")
+
+            # 1. Check for empty content
+            storage_value = page.get('body', {}).get('storage', {}).get('value', '').strip()
+            is_content_empty = not storage_value
+
+            # 2. Check for attachments
+            try:
+                attachments = get_attachments_from_content(session, page_id, limit=1)  # Only need to know if > 0
+                has_no_attachments = len(attachments.get('results', [])) == 0
+            except Exception as e:
+                print(f"Warning: Failed to check attachments for page '{page_title}': {e}")
+                has_no_attachments = False  # Assume it has attachments to be safe
+
+            # 3. Check for delete permission
+            can_delete = False
+            for operation in page.get('operations', []):
+                if operation.get('operation') == 'delete' and operation.get('rel') == 'delete':
+                    can_delete = True
+                    break
+
+            # Display detailed results
+            print(f"\nAnalysis for page '{page_title}' (ID: {page_id}):")
+            print(f"- Content is empty: {'YES' if is_content_empty else 'NO'}")
+            print(f"- Has no attachments: {'YES' if has_no_attachments else 'NO'}")
+            print(f"- Current user can delete: {'YES' if can_delete else 'NO'}")
+            print(f"- Link: {CONFLUENCE_URL}{page_link}")
+
+            # Combine checks
+            if is_content_empty and has_no_attachments and can_delete:
+                print(f"\nCONCLUSION: This page is EMPTY and DELETABLE.")
+            else:
+                print(f"\nCONCLUSION: This page is {'NOT EMPTY' if not is_content_empty else 'empty'}, {'HAS ATTACHMENTS' if not has_no_attachments else 'has no attachments'}, and {'NOT DELETABLE' if not can_delete else 'deletable'}.")
+
+        except Exception as e:
+            print(f"Error: Failed to fetch or process page with ID '{page_id}': {e}")
+            sys.exit(1)
+
+    except Exception as e:
+        print(f"\nAn error occurred during page processing: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     if args.list_spaces:
         list_spaces(args.list_spaces)
     elif args.space_key:
         check_pages_in_space(args.space_key)
+    elif args.page_id:
+        check_single_page(args.page_id)
     else:
-        print("Error: No action specified. Use --space-key or --list-spaces.")
+        print("Error: No action specified. Use --space-key, --page-id, or --list-spaces.")
         parser.print_help()
         sys.exit(1)
