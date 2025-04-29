@@ -131,8 +131,8 @@ def make_api_request(session, url, method='GET', params=None, data=None, max_ret
 
 def get_current_user(session):
     """Get current user information"""
-    # Construct the URL relative to the base API URL
-    url = f"{CONFLUENCE_URL.rstrip('/')}/user/current"
+    # Construct the URL using the standard /rest/api/myself endpoint
+    url = f"{CONFLUENCE_URL.rstrip('/')}/rest/api/myself"
     return make_api_request(session, url)
 
 def get_all_spaces(session, space_type=None, limit=100):
@@ -140,8 +140,8 @@ def get_all_spaces(session, space_type=None, limit=100):
     Get all spaces from Confluence with pagination handling.
     Can filter by type ('global' or 'personal').
     """
-    # Construct the URL relative to the base API URL
-    url = f"{CONFLUENCE_URL.rstrip('/')}/space"
+    # Construct the URL using the standard /rest/api/space endpoint
+    url = f"{CONFLUENCE_URL.rstrip('/')}/rest/api/space"
     params = {
         'limit': limit,
         'start': 0
@@ -179,8 +179,8 @@ def get_all_pages_from_space(session, space_key, limit=100, expand=None):
     """
     Get all pages from a Confluence space with pagination handling
     """
-    # Construct the URL relative to the base API URL
-    url = f"{CONFLUENCE_URL.rstrip('/')}/content"
+    # Construct the URL using the standard /rest/api/content endpoint
+    url = f"{CONFLUENCE_URL.rstrip('/')}/rest/api/content"
     params = {
         'spaceKey': space_key,
         'type': 'page',
@@ -215,8 +215,8 @@ def get_attachments_from_content(session, content_id, limit=1):
     """
     Get attachments for a content ID
     """
-    # Construct the URL relative to the base API URL
-    url = f"{CONFLUENCE_URL.rstrip('/')}/content/{content_id}/child/attachment"
+    # Construct the URL using the standard /rest/api/content/{id}/child/attachment endpoint
+    url = f"{CONFLUENCE_URL.rstrip('/')}/rest/api/content/{content_id}/child/attachment"
     params = {'limit': limit}
     
     return make_api_request(session, url, params=params)
