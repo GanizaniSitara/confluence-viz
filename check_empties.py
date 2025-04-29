@@ -373,12 +373,10 @@ def check_pages_in_space(space_key):
                 has_no_attachments = len(attachments.get('results', [])) == 0
             except Exception as e:
                 print(f"Warning: Failed to check attachments for page '{page_title}': {e}")
-                has_no_attachments = False  # Assume it has attachments to be safe
-
-            # 3. Check for delete permission
+                has_no_attachments = False  # Assume it has attachments to be safe            # 3. Check for delete permission
             can_delete = False
             for operation in page.get('operations', []):
-                if operation.get('operation') == 'delete' and operation.get('rel') == 'delete':
+                if operation.get('operation') == 'delete':
                     can_delete = True
                     break
 
@@ -458,7 +456,7 @@ def check_single_page(page_id):
             # 3. Check for delete permission
             can_delete = False
             for operation in page.get('operations', []):
-                if operation.get('operation') == 'delete' and operation.get('rel') == 'delete':
+                if operation.get('operation'):
                     can_delete = True
                     break
 
