@@ -37,15 +37,22 @@ except FileNotFoundError:
     VERIFY_SSL = False
 
 # --- Argument Parsing ---
-parser = argparse.ArgumentParser(description="Find empty, deletable pages in a Confluence space.")
-parser.add_argument("space_key", help="The key of the Confluence space to check (e.g., 'MYSPACE').")
+parser = argparse.ArgumentParser(description="Check for empty pages in a Confluence space OR list spaces.")
+group = parser.add_mutually_exclusive_group(required=True) # Ensure one action is chosen
+group.add_argument("--space-key", help="The key of the Confluence space to check (e.g., 'MYSPACE' or '~username').")
+group.add_argument(
+    "--list-spaces",
+    choices=['all', 'user', 'space'],
+    help="List spaces instead of checking pages. 'user' lists personal spaces (~key), 'space' lists global spaces, 'all' lists both."
+)
 # Optional: Add arguments for credentials if not using environment variables
 # parser.add_argument("-u", "--user", help="Confluence username (overrides CONFLUENCE_USER env var)")
 # parser.add_argument("-p", "--password", help="Confluence password (overrides CONFLUENCE_PASSWORD env var)")
 # parser.add_argument("--url", help="Confluence URL (overrides CONFLUENCE_URL env var)")
 
 args = parser.parse_args()
-SPACE_KEY = args.space_key.upper() # Confluence space keys are typically uppercase
+# SPACE_KEY is now potentially None if --list-spaces is used
+SPACE_KEY = args.space_key
 
 # --- Credential Handling ---
 # Override env vars if command-line args are provided (if you add them to argparse)
@@ -124,14 +131,56 @@ def make_api_request(session, url, method='GET', params=None, data=None, max_ret
 
 def get_current_user(session):
     """Get current user information"""
-    url = f"{CONFLUENCE_URL}/rest/api/user/current"
+    # Construct the URL relative to the base API URL
+    url = f"{CONFLUENCE_URL.rstrip('/')}/user/current"
     return make_api_request(session, url)
+
+def get_all_spaces(session, space_type=None, limit=100):
+    """
+    Get all spaces from Confluence with pagination handling.
+    Can filter by type ('global' or 'personal').
+    """
+    # Construct the URL relative to the base API URL
+    url = f"{CONFLUENCE_URL.rstrip('/')}/space"
+    params = {
+        'limit': limit,
+        'start': 0
+    }
+    if space_type:
+        params['type'] = space_type
+
+    all_spaces = []
+    more_results = True
+
+    print(f"Fetching spaces (type: {space_type or 'all'})...")
+    while more_results:
+        try:
+            response_data = make_api_request(session, url, params=params)
+
+            if 'results' in response_data:
+                all_spaces.extend(response_data['results'])
+
+                # Check if there are more pages to fetch
+                if response_data.get('_links', {}).get('next'):
+                    params['start'] += len(response_data['results']) # Increment start based on results received
+                else:
+                    more_results = False
+            else:
+                print("Warning: Unexpected response structure for spaces, 'results' key missing.")
+                more_results = False
+        except Exception as e:
+            print(f"Error fetching spaces: {e}")
+            more_results = False # Stop fetching on error
+
+    print(f"Found {len(all_spaces)} spaces.")
+    return all_spaces
 
 def get_all_pages_from_space(session, space_key, limit=100, expand=None):
     """
     Get all pages from a Confluence space with pagination handling
     """
-    url = f"{CONFLUENCE_URL}/rest/api/content"
+    # Construct the URL relative to the base API URL
+    url = f"{CONFLUENCE_URL.rstrip('/')}/content"
     params = {
         'spaceKey': space_key,
         'type': 'page',
@@ -166,12 +215,68 @@ def get_attachments_from_content(session, content_id, limit=1):
     """
     Get attachments for a content ID
     """
-    url = f"{CONFLUENCE_URL}/rest/api/content/{content_id}/child/attachment"
+    # Construct the URL relative to the base API URL
+    url = f"{CONFLUENCE_URL.rstrip('/')}/content/{content_id}/child/attachment"
     params = {'limit': limit}
     
     return make_api_request(session, url, params=params)
 
 # --- Main Logic ---
+
+def list_spaces(space_filter):
+    """Connects to Confluence and lists spaces based on the filter."""
+    print(f"Connecting to Confluence at: {CONFLUENCE_URL}")
+    print(f"Using username: {CONFLUENCE_USERNAME}")
+    print(f"Listing spaces: {space_filter}")
+    if not VERIFY_SSL:
+        print("SSL verification is DISABLED.")
+    print("-" * 30)
+
+    try:
+        session = create_session()
+        user_info = get_current_user(session)
+        print(f"Successfully connected as: {user_info.get('displayName', CONFLUENCE_USERNAME)}")
+        print("-" * 30)
+
+        api_space_type = None
+        if space_filter == 'user':
+            api_space_type = 'personal'
+        elif space_filter == 'space':
+            api_space_type = 'global'
+        # 'all' uses api_space_type = None
+
+        spaces = get_all_spaces(session, space_type=api_space_type)
+
+        if not spaces:
+            print(f"No spaces found matching filter '{space_filter}'.")
+            return
+
+        print(f"\n--- {space_filter.capitalize()} Spaces ---")
+        count = 0
+        for space in spaces:
+            key = space.get('key')
+            name = space.get('name')
+            is_personal = key and key.startswith('~')
+
+            should_list = False
+            if space_filter == 'all':
+                should_list = True
+            elif space_filter == 'user' and is_personal:
+                should_list = True
+            elif space_filter == 'space' and not is_personal:
+                should_list = True
+
+            if should_list:
+                print(f"  Key: {key:<15} Name: {name}")
+                count += 1
+
+        print(f"\nListed {count} {space_filter} space(s).")
+        print("-" * 30)
+
+    except Exception as e:
+        print(f"\nAn error occurred: {e}")
+        sys.exit(1)
+
 def check_pages_in_space(space_key):
     """
     Connects to Confluence, finds pages in the space, and checks emptiness
@@ -224,11 +329,7 @@ def check_pages_in_space(space_key):
                  page_link = page['_links']['base'] + page.get('_links',{}).get('webui','')
 
             # 1. Check for empty content
-            # An empty page might have no 'body', no 'storage', or an empty 'value'
-            # or a value containing only whitespace or basic empty tags like <p></p>.
             storage_value = page.get('body', {}).get('storage', {}).get('value', '').strip()
-            # Basic check: is the stripped storage value empty?
-            # More advanced: could parse HTML/XML to check for meaningful content beyond empty tags
             is_content_empty = not storage_value
 
             # 2. Check for attachments
@@ -240,10 +341,8 @@ def check_pages_in_space(space_key):
                 has_no_attachments = False  # Assume it has attachments to be safe
 
             # 3. Check for delete permission
-            # Look through the 'operations' array provided by the expand parameter.
             can_delete = False
             for operation in page.get('operations', []):
-                # Check both 'operation' and 'rel' for robustness, usually 'delete' for both
                 if operation.get('operation') == 'delete' and operation.get('rel') == 'delete':
                     can_delete = True
                     break
@@ -254,17 +353,9 @@ def check_pages_in_space(space_key):
                 print(f"     Link: {CONFLUENCE_URL}{page_link}")
                 found_eligible_page = True
                 eligible_count += 1
-            # else:
-            #     # Optional: Add verbose logging for pages that don't meet criteria
-            #     details = []
-            #     if not is_content_empty: details.append("has content")
-            #     if not has_no_attachments: details.append("has attachments")
-            #     if not can_delete: details.append("delete permission missing")
-            #     print(f"INFO: Page '{page_title}' (ID: {page_id}) is not eligible ({', '.join(details)})")
 
     except Exception as e:
         print(f"\nAn error occurred during page processing: {e}")
-        # You might want more specific error handling here (e.g., for 404 Not Found if space doesn't exist)
 
     print("-" * 30)
     print(f"Checked {page_count} pages in space '{space_key}'.")
@@ -275,4 +366,11 @@ def check_pages_in_space(space_key):
 
 
 if __name__ == "__main__":
-    check_pages_in_space(SPACE_KEY)
+    if args.list_spaces:
+        list_spaces(args.list_spaces)
+    elif args.space_key:
+        check_pages_in_space(args.space_key)
+    else:
+        print("Error: No action specified. Use --space-key or --list-spaces.")
+        parser.print_help()
+        sys.exit(1)

@@ -131,6 +131,10 @@ if space_data and 'totalSize' in space_data:
     print(f"Successfully retrieved total {space_filter_desc} spaces.")
 elif space_data is not None:
     print("Response structure unexpected: 'totalSize' not found in space data.")
+    # Add debugging: Print the keys to see what is available
+    print(f"DEBUG: Available keys in space data response: {list(space_data.keys())}")
+    # Optionally print the whole structure if keys aren't enough
+    # print(f"DEBUG: Full space data response: {space_data}")
 
 
 # --- Get Total Pages ---
@@ -149,6 +153,10 @@ if page_data and 'totalSize' in page_data:
     print(f"Successfully retrieved total pages.")
 elif page_data is not None:
      print("Response structure unexpected: 'totalSize' not found in page data.")
+     # Add debugging: Print the keys to see what is available
+     print(f"DEBUG: Available keys in page data response: {list(page_data.keys())}")
+     # Optionally print the whole structure if keys aren't enough
+     # print(f"DEBUG: Full page data response: {page_data}")
 
 
 # --- Print Results ---
