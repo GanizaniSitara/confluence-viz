@@ -47,6 +47,11 @@ group.add_argument(
     choices=['all', 'user', 'space'],
     help="List spaces instead of checking pages. 'user' lists personal spaces (~key), 'space' lists global spaces, 'all' lists both."
 )
+group.add_argument(
+    "--check-all-spaces",
+    action="store_true",
+    help="Check all spaces for empty pages. This will loop through all non-user spaces in the Confluence instance."
+)
 # Optional: Add arguments for credentials if not using environment variables
 # parser.add_argument("-u", "--user", help="Confluence username (overrides CONFLUENCE_USER env var)")
 # parser.add_argument("-p", "--password", help="Confluence password (overrides CONFLUENCE_PASSWORD env var)")
@@ -140,8 +145,16 @@ def make_api_request(session, url, method='GET', params=None, data=None, max_ret
 
 def get_current_user(session):
     """Get current user information"""
-    # Construct the URL using the /rest/api/user/current endpoint
-    url = f"{CONFLUENCE_URL.rstrip('/')}/rest/api/user/current"
+    # Check if CONFLUENCE_URL already contains /rest/api
+    base_url = CONFLUENCE_URL.rstrip('/')
+    if base_url.endswith('/rest/api'):
+        url = f"{base_url}/user/current"
+    else:
+        url = f"{base_url}/rest/api/user/current"
+    
+    # Debug output to check the constructed URL
+    print(f"Debug - Current user URL: {url}")
+    
     return make_api_request(session, url)
 
 def get_all_spaces(session, space_type=None, limit=100):
@@ -149,8 +162,13 @@ def get_all_spaces(session, space_type=None, limit=100):
     Get all spaces from Confluence with pagination handling.
     Can filter by type ('global' or 'personal').
     """
-    # Construct the URL using the standard /rest/api/space endpoint
-    url = f"{CONFLUENCE_URL.rstrip('/')}/rest/api/space"
+    # Check if CONFLUENCE_URL already contains /rest/api
+    base_url = CONFLUENCE_URL.rstrip('/')
+    if base_url.endswith('/rest/api'):
+        url = f"{base_url}/space"
+    else:
+        url = f"{base_url}/rest/api/space"
+    
     params = {
         'limit': limit,
         'start': 0
@@ -206,8 +224,13 @@ def get_all_pages_from_space(session, space_key, limit=100, expand=None):
     Returns:
         List of page objects with requested expansions
     """
-    # Construct the URL using the standard /rest/api/content endpoint
-    url = f"{CONFLUENCE_URL.rstrip('/')}/rest/api/content"
+    # Check if CONFLUENCE_URL already contains /rest/api
+    base_url = CONFLUENCE_URL.rstrip('/')
+    if base_url.endswith('/rest/api'):
+        url = f"{base_url}/content"
+    else:
+        url = f"{base_url}/rest/api/content"
+    
     params = {
         'spaceKey': space_key,
         'type': 'page',
@@ -248,8 +271,13 @@ def get_attachments_from_content(session, content_id, limit=1):
     """
     Get attachments for a content ID
     """
-    # Construct the URL using the standard /rest/api/content/{id}/child/attachment endpoint
-    url = f"{CONFLUENCE_URL.rstrip('/')}/rest/api/content/{content_id}/child/attachment"
+    # Check if CONFLUENCE_URL already contains /rest/api
+    base_url = CONFLUENCE_URL.rstrip('/')
+    if base_url.endswith('/rest/api'):
+        url = f"{base_url}/content/{content_id}/child/attachment"
+    else:
+        url = f"{base_url}/rest/api/content/{content_id}/child/attachment"
+    
     params = {'limit': limit}
     
     return make_api_request(session, url, params=params)
@@ -258,7 +286,13 @@ def get_page_by_id(session, page_id, expand=None):
     """
     Get a specific page by its ID with optional expanded properties
     """
-    url = f"{CONFLUENCE_URL.rstrip('/')}/rest/api/content/{page_id}"
+    # Check if CONFLUENCE_URL already contains /rest/api
+    base_url = CONFLUENCE_URL.rstrip('/')
+    if base_url.endswith('/rest/api'):
+        url = f"{base_url}/content/{page_id}"
+    else:
+        url = f"{base_url}/rest/api/content/{page_id}"
+    
     params = {}
     
     if expand:
@@ -509,6 +543,116 @@ def check_single_page(page_id):
         print(f"\nAn error occurred during page processing: {e}")
         sys.exit(1)
 
+def check_all_spaces():
+    """Connects to Confluence, fetches all non-user spaces, and checks each for empty pages."""
+    print(f"Connecting to Confluence at: {CONFLUENCE_URL}")
+    print(f"Using username: {CONFLUENCE_USERNAME}")
+    print(f"Checking ALL non-user spaces for empty pages")
+    if not VERIFY_SSL:
+        print("SSL verification is DISABLED.")
+    print("-" * 60)
+
+    try:
+        # Create a session for all requests
+        session = create_session()
+        
+        # Verify connection by getting current user info
+        user_info = get_current_user(session)
+        print(f"Successfully connected as: {user_info.get('displayName', CONFLUENCE_USERNAME)}")
+        print("-" * 60)
+
+        # Fetch all global (non-user) spaces
+        print("Fetching all global spaces...")
+        spaces = get_all_spaces(session, space_type='global')
+        
+        if not spaces:
+            print("No spaces found. Exiting.")
+            return
+
+        print(f"\nFound {len(spaces)} spaces to check.")
+        print("-" * 60)
+        
+        # Process each space
+        total_eligible_pages = 0
+        for idx, space in enumerate(spaces, 1):
+            space_key = space.get('key')
+            space_name = space.get('name')
+            
+            print(f"\n[{idx}/{len(spaces)}] Processing space: {space_name} (key: {space_key})")
+            print("-" * 60)
+            
+            try:
+                # Fetch pages with expanded data
+                print(f"Fetching pages from space '{space_key}' (this might take a while)...")
+                pages = get_all_pages_from_space(
+                    session,
+                    space_key,
+                    limit=100,
+                    expand='body.storage,version,operations,attachments'
+                )
+                
+                print(f"Found {len(pages)} pages in total. Checking each...")
+                
+                space_eligible_count = 0
+                for page_idx, page in enumerate(pages, 1):
+                    page_id = page['id']
+                    page_title = page['title']
+                    page_link = page.get('_links', {}).get('webui', '')
+                    if not page_link and 'base' in page.get('_links', {}):
+                        page_link = page['_links']['base'] + page.get('_links',{}).get('webui','')
+                    
+                    # Output progress for larger spaces
+                    if len(pages) > 10 and page_idx % 10 == 0:
+                        print(f"  Progress: Checked {page_idx}/{len(pages)} pages in space '{space_key}'")
+                    
+                    # 1. Check for empty content
+                    storage_value = page.get('body', {}).get('storage', {}).get('value', '').strip()
+                    is_content_empty = not storage_value
+                    
+                    if not is_content_empty:
+                        continue  # Skip to next page if content is not empty
+                    
+                    # 2. Check for delete permission
+                    can_delete = False
+                    for operation in page.get('operations', []):
+                        if operation.get('operation') == 'delete':
+                            can_delete = True
+                            break
+                    
+                    if not can_delete:
+                        continue  # Skip to next page if we don't have delete permission
+                    
+                    # 3. Check for attachments
+                    has_no_attachments = False
+                    try:
+                        attachments = page.get('attachments', {}).get('results', [])
+                        has_no_attachments = len(attachments) == 0
+                    except Exception as e:
+                        print(f"  Warning: Failed to check attachments for page '{page_title}': {e}")
+                        has_no_attachments = False  # Assume it has attachments to be safe
+                    
+                    # Combine checks
+                    if is_content_empty and has_no_attachments and can_delete:
+                        print(f"  YES: Page '{page_title}' (ID: {page_id}) is empty and deletable.")
+                        print(f"       Link: {CONFLUENCE_URL}{page_link}")
+                        space_eligible_count += 1
+                        total_eligible_pages += 1
+                
+                print(f"\nFinished checking space '{space_key}'. Found {space_eligible_count} eligible pages for deletion.")
+            
+            except Exception as e:
+                print(f"\nError processing space '{space_key}': {e}")
+        
+        # Final summary
+        print("\n" + "=" * 60)
+        print(f"SUMMARY: Checked {len(spaces)} spaces.")
+        print(f"Found {total_eligible_pages} pages that are empty and deletable across all spaces.")
+        print("=" * 60)
+    
+    except Exception as e:
+        print(f"\nAn error occurred: {e}")
+        sys.exit(1)
+
 if __name__ == "__main__":
     if args.list_spaces:
         list_spaces(args.list_spaces)
@@ -516,7 +660,9 @@ if __name__ == "__main__":
         check_pages_in_space(args.space_key)
     elif args.page_id:
         check_single_page(args.page_id)
+    elif args.check_all_spaces:
+        check_all_spaces()
     else:
-        print("Error: No action specified. Use --space-key, --page-id, or --list-spaces.")
+        print("Error: No action specified. Use --space-key, --page-id, --list-spaces, or --check-all-spaces.")
         parser.print_help()
         sys.exit(1)
