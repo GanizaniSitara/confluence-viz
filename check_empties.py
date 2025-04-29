@@ -99,34 +99,43 @@ def make_api_request(session, url, method='GET', params=None, data=None, max_ret
                 response = session.post(url, json=data, params=params)
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
-            
-            # If successful or non-429 error, return immediately
+              # If successful or non-429 error, return immediately
             if response.status_code != 429:
                 response.raise_for_status()  # Raise exception for 4xx/5xx (except 429)
                 return response.json()
-                  # Handle 429 Too Many Requests with Retry-After header
+                
+            # Handle 429 Too Many Requests with Retry-After header
             retry_count += 1
             
             # ALWAYS respect the Retry-After header if present (RFC 7231 compliance)
             retry_after = response.headers.get('Retry-After')
+            
             if retry_after:
                 # Retry-After can be a timestamp or number of seconds
                 if retry_after.isdigit():
                     wait_time = int(retry_after)
+                    print(f"Rate limited (429). Server Retry-After: {retry_after}s. Waiting exactly {wait_time}s as specified... (Attempt {retry_count}/{max_retries})")
                 else:
-                    # Try to parse HTTP date format (less common)
+                    # Try to parse HTTP date format
                     try:
-                        from email.utils import parsedate_to_datetime
-                        retry_date = parsedate_to_datetime(retry_after)
-                        wait_time = max(0, (retry_date - datetime.now()).total_seconds())
-                    except (ImportError, ValueError, TypeError):
-                        # Fallback if date parsing fails
-                        wait_time = base_wait_time * (2 ** (retry_count - 1))
+                        # First try standard HTTP date format
+                        retry_date = datetime.datetime.strptime(retry_after, '%a, %d %b %Y %H:%M:%S %Z')
+                        wait_time = max(1, (retry_date - datetime.datetime.now()).total_seconds())
+                    except (ValueError, TypeError):
+                        try:
+                            # If that fails, try with email.utils parser which is more flexible
+                            from email.utils import parsedate_to_datetime
+                            retry_date = parsedate_to_datetime(retry_after)
+                            wait_time = max(1, (retry_date - datetime.datetime.now()).total_seconds())
+                        except (ImportError, ValueError, TypeError):
+                            # Fallback if all parsing fails
+                            wait_time = base_wait_time * (2 ** (retry_count - 1))
+                    
+                    print(f"Rate limited (429). Server Retry-After: '{retry_after}' (date format). Waiting {wait_time:.2f}s... (Attempt {retry_count}/{max_retries})")
             else:
                 # Fallback to exponential backoff with jitter if no Retry-After header
                 wait_time = base_wait_time * (2 ** (retry_count - 1)) + random.uniform(0, 1)
-            
-            print(f"Rate limited (429). Server Retry-After: {retry_after or 'Not provided'}. Waiting {wait_time:.2f} seconds... (Attempt {retry_count}/{max_retries})")
+                print(f"Rate limited (429). No Retry-After header provided. Using backoff strategy: {wait_time:.2f}s... (Attempt {retry_count}/{max_retries})")
             time.sleep(wait_time)
             
         except requests.exceptions.RequestException as e:
