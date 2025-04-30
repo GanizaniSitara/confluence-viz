@@ -14,7 +14,7 @@ from config_loader import load_visualization_settings
 
 TEMP_DIR = 'temp'
 DEFAULT_MIN_PAGES = 0
-VERSION = '1.2'  # Updated version
+VERSION = '1.4'  # Updated version
 
 # Load stopwords from file
 def load_stopwords():
@@ -678,6 +678,166 @@ def suggest_tags_for_clusters(spaces, labels):
     
     return tags
 
+def search_for_applications(spaces):
+    """
+    Search for applications in Confluence spaces using application_search_list.txt
+    and generate HTML report showing which spaces contain which applications.
+    """
+    # Check if application search list exists
+    app_search_path = os.path.join(os.path.dirname(__file__), 'application_search_list.txt')
+    if not os.path.exists(app_search_path):
+        print(f"Error: application_search_list.txt not found at {app_search_path}")
+        print("Please create this file with one application name per line.")
+        return
+
+    # Load application search terms
+    try:
+        with open(app_search_path, 'r') as f:
+            # Skip lines starting with # (comments) and empty lines
+            search_terms = [line.strip() for line in f 
+                           if line.strip() and not line.strip().startswith('#')]
+    except Exception as e:
+        print(f"Error reading application_search_list.txt: {e}")
+        return
+
+    if not search_terms:
+        print("No search terms found in application_search_list.txt")
+        print("Please add at least one application name per line.")
+        return
+
+    print(f"Loaded {len(search_terms)} application search terms.")
+    print(f"Searching {len(spaces)} spaces for these applications...")
+
+    # Dictionary to hold results
+    # Format: {app_term: [(space_key, hit_count, matched_pages), ...]}
+    app_hits = defaultdict(list)
+
+    # Track spaces that have at least one hit
+    spaces_with_hits = set()
+
+    for s in spaces:
+        space_key = s.get('space_key', 'unknown')
+        
+        for term in search_terms:
+            # Track matches for this term in this space
+            matched_pages = []
+            term_lower = term.lower()
+            
+            for page in s.get('sampled_pages', []):
+                # Check title
+                if 'title' in page and term_lower in page.get('title', '').lower():
+                    matched_pages.append(page.get('title', ''))
+                    continue
+                    
+                # Check body content if we haven't already matched the title
+                body = page.get('body', '')
+                if body and term_lower in body.lower():
+                    matched_pages.append(page.get('title', 'Untitled'))
+            
+            # If we have matches, add them to our results
+            if matched_pages:
+                hit_count = len(matched_pages)
+                app_hits[term].append((space_key, hit_count, matched_pages[:5]))  # Store up to 5 matched pages for display
+                spaces_with_hits.add(space_key)
+
+    # Generate HTML report
+    html = ['<html><head><title>Application Search Results</title>',
+            '<style>',
+            'body { font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; }',
+            'h1 { color: #2c3e50; }',
+            'h2 { color: #3498db; margin-top: 30px; }',
+            'table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }',
+            'th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }',
+            'th { background-color: #f2f2f2; position: sticky; top: 0; }',
+            'tr:nth-child(even) { background-color: #f9f9f9; }',
+            'tr:hover { background-color: #f1f1f1; }',
+            '.summary { margin-bottom: 30px; padding: 10px; background-color: #eaf2f8; border-radius: 5px; }',
+            '.hit-count { font-weight: bold; color: #2980b9; }',
+            '.matched-pages { font-size: 0.9em; color: #7f8c8d; max-width: 400px; }',
+            '</style>',
+            '</head><body>']
+
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    html.append(f'<h1>Application Search Results</h1>')
+    html.append(f'<p>Generated: {timestamp}</p>')
+    
+    # Summary section
+    html.append('<div class="summary">')
+    html.append(f'<p>Searched <b>{len(spaces)}</b> Confluence spaces for <b>{len(search_terms)}</b> application terms.</p>')
+    html.append(f'<p>Found matches in <b>{len(spaces_with_hits)}</b> spaces.</p>')
+    html.append('<p>Applications with most mentions:</p><ul>')
+    
+    # Show top 5 applications by total hit count
+    sorted_apps = sorted(app_hits.items(), key=lambda x: sum(count for _, count, _ in x[1]), reverse=True)
+    for app, hits in sorted_apps[:5]:
+        total_hits = sum(count for _, count, _ in hits)
+        html.append(f'<li><b>{app}</b>: {total_hits} mentions in {len(hits)} spaces</li>')
+    
+    html.append('</ul></div>')
+    
+    # First table: Application-centric view
+    html.append('<h2>Applications and Where They Appear</h2>')
+    html.append('<table>')
+    html.append('<tr><th>Application</th><th>Space Key</th><th>Hit Count</th><th>Sample Matched Pages</th></tr>')
+    
+    for app, hits in sorted_apps:
+        # Sort by hit count for this application
+        sorted_hits = sorted(hits, key=lambda x: x[1], reverse=True)
+        if sorted_hits:
+            # First row includes application name
+            space, count, pages = sorted_hits[0]
+            html.append(f'<tr><td rowspan="{len(sorted_hits)}">{app}</td><td>{space}</td><td class="hit-count">{count}</td>')
+            html.append(f'<td class="matched-pages">{", ".join(pages[:5])}')
+            if len(pages) > 5:
+                html.append(' <i>(and more...)</i>')
+            html.append('</td></tr>')
+            
+            # Remaining rows for this application
+            for space, count, pages in sorted_hits[1:]:
+                html.append(f'<tr><td>{space}</td><td class="hit-count">{count}</td>')
+                html.append(f'<td class="matched-pages">{", ".join(pages[:5])}')
+                if len(pages) > 5:
+                    html.append(' <i>(and more...)</i>')
+                html.append('</td></tr>')
+    
+    html.append('</table>')
+    
+    # Second table: Space-centric view
+    html.append('<h2>Spaces and Applications They Contain</h2>')
+    html.append('<table>')
+    html.append('<tr><th>Space Key</th><th>Applications Found</th><th>Total Mentions</th></tr>')
+    
+    # Build space-centric data
+    space_data = defaultdict(list)
+    for app, hits in app_hits.items():
+        for space, count, _ in hits:
+            space_data[space].append((app, count))
+    
+    # Sort spaces by total hit count
+    sorted_spaces = sorted(space_data.items(), 
+                          key=lambda x: sum(count for _, count in x[1]), 
+                          reverse=True)
+    
+    for space, app_list in sorted_spaces:
+        total_hits = sum(count for _, count in app_list)
+        app_formatted = ', '.join([f"{app} ({count})" for app, count in 
+                                  sorted(app_list, key=lambda x: x[1], reverse=True)])
+        html.append(f'<tr><td>{space}</td><td>{app_formatted}</td><td>{total_hits}</td></tr>')
+    
+    html.append('</table>')
+    html.append('</body></html>')
+    
+    # Write to file
+    out_path = 'application_search_results.html'
+    with open(out_path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(html))
+    
+    print(f'\nSearch complete! Results written to {out_path}')
+    print(f'Found {len(spaces_with_hits)} spaces with matches to your search terms.')
+    
+    # Open the HTML file in the browser
+    webbrowser.open('file://' + os.path.abspath(out_path))
+
 def main():
     min_pages = None
     max_pages = None
@@ -692,7 +852,7 @@ def main():
     │   ===========================                           │
     │                                                         │
     │   Analyze and visualize Confluence spaces               │
-    │   Version 1.3                                           │
+    │   Version 1.4                                           │
     │                                                         │
     └─────────────────────────────────────────────────────────┘
     """)
@@ -713,12 +873,13 @@ def main():
         print("4. Help (explain algorithms)")
         print("5. Visualize total pages per space (bar chart)")
         print(f"6. Set number of clusters manually (current: {n_clusters})")
-        print("6. Semantic clustering and render HTML (Agglomerative)")
-        print("7. Semantic clustering and render HTML (KMeans)")
-        print("8. Semantic clustering and render HTML (DBSCAN)")
-        print("9. Semantic clustering and D3 Circle Packing (Agglomerative)")
-        print("10. Semantic clustering and D3 Circle Packing (KMeans)")
-        print("11. Semantic clustering and D3 Circle Packing (DBSCAN)")
+        print("7. Semantic clustering and render HTML (Agglomerative)")
+        print("8. Semantic clustering and render HTML (KMeans)")
+        print("9. Semantic clustering and render HTML (DBSCAN)")
+        print("10. Semantic clustering and D3 Circle Packing (Agglomerative)")
+        print("11. Semantic clustering and D3 Circle Packing (KMeans)")
+        print("12. Semantic clustering and D3 Circle Packing (DBSCAN)")
+        print("13. Search for applications in spaces")
         print("Q. Quit")
         
         choice = input("Select option: ").strip()
@@ -726,8 +887,15 @@ def main():
         if choice == '1':
             inp = input("Enter minimum pages per space (0 for all): ").strip()
             min_pages = int(inp) if inp else 0
-            spaces = load_spaces(min_pages=min_pages)
-            print(f"Loaded {len(spaces)} spaces from {TEMP_DIR} with >= {min_pages} pages.")        elif choice == '2':
+            spaces = load_spaces(min_pages=min_pages, max_pages=max_pages)
+            print(f"Loaded {len(spaces)} spaces from {TEMP_DIR} with >= {min_pages} pages.")
+        elif choice == '2':
+            inp = input("Enter maximum pages per space (leave empty for no limit): ").strip()
+            max_pages = int(inp) if inp else None
+            spaces = load_spaces(min_pages=min_pages, max_pages=max_pages)
+            print(f"Loaded {len(spaces)} spaces from {TEMP_DIR} with >= {min_pages} pages" + 
+                  (f" and <= {max_pages} pages." if max_pages else "."))
+        elif choice == '3':
             term = input("Enter search term: ").strip()
             results = search_spaces(spaces, term)
             if results:
@@ -740,11 +908,11 @@ def main():
                 print("No matches found.")
                 print("\nPress Enter to continue...")
                 input()
-        elif choice == '3':
-            explain_algorithms()
         elif choice == '4':
-            visualize_total_pages(spaces)
+            explain_algorithms()
         elif choice == '5':
+            visualize_total_pages(spaces)
+        elif choice == '6':
             try:
                 new_clusters = int(input("Enter number of clusters (5-50 recommended): ").strip())
                 if new_clusters < 2:
@@ -754,10 +922,7 @@ def main():
                     print(f"Number of clusters set to {n_clusters}")
             except ValueError:
                 print("Please enter a valid number")
-        elif choice.upper() == 'Q':
-            print("Goodbye!")
-            break
-        elif choice == '6':
+        elif choice == '7':
             try:
                 print(f"Clustering {len(spaces)} spaces using semantic vectors (Agglomerative) into {n_clusters} clusters...")
                 if not spaces:
@@ -776,7 +941,7 @@ def main():
                     print(f"Clustering Error: {e}")
             except Exception as e:
                 print(f"An unexpected error occurred: {e}")
-        elif choice == '7':
+        elif choice == '8':
             try:
                 print(f"Clustering {len(spaces)} spaces using semantic vectors (KMeans) into {n_clusters} clusters...")
                 if not spaces:
@@ -795,7 +960,7 @@ def main():
                     print(f"Clustering Error: {e}")
             except Exception as e:
                 print(f"An unexpected error occurred: {e}")
-        elif choice == '8':
+        elif choice == '9':
             try:
                 print(f"Clustering {len(spaces)} spaces using semantic vectors (DBSCAN)...")
                 if not spaces:
@@ -814,7 +979,7 @@ def main():
                     print(f"Clustering Error: {e}")
             except Exception as e:
                 print(f"An unexpected error occurred: {e}")
-        elif choice == '9':
+        elif choice == '10':
             try:
                 print(f"Clustering {len(spaces)} spaces for D3 visualization (Agglomerative) into {n_clusters} clusters...")
                 if not spaces:
@@ -833,7 +998,7 @@ def main():
                     print(f"Clustering Error: {e}")
             except Exception as e:
                 print(f"An unexpected error occurred: {e}")
-        elif choice == '10':
+        elif choice == '11':
             try:
                 print(f"Clustering {len(spaces)} spaces for D3 visualization (KMeans) into {n_clusters} clusters...")
                 if not spaces:
@@ -852,7 +1017,7 @@ def main():
                     print(f"Clustering Error: {e}")
             except Exception as e:
                 print(f"An unexpected error occurred: {e}")
-        elif choice == '11':
+        elif choice == '12':
             try:
                 print(f"Clustering {len(spaces)} spaces for D3 visualization (DBSCAN)...")
                 if not spaces:
@@ -871,6 +1036,11 @@ def main():
                     print(f"Clustering Error: {e}")
             except Exception as e:
                 print(f"An unexpected error occurred: {e}")
+        elif choice == '13':
+            search_for_applications(spaces)
+        elif choice.upper() == 'Q':
+            print("Goodbye!")
+            break
         else:
             print("Invalid option.")
 

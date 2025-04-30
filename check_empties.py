@@ -368,6 +368,12 @@ def check_pages_in_space(space_key):
         print("SSL verification is DISABLED.")
     print("-" * 30)
 
+    # Open file for writing deletable pages
+    deletable_file = open("deletable_pages.txt", "w")
+    deletable_file.write("# Deletable pages in Confluence\n")
+    deletable_file.write(f"# Generated: {datetime.datetime.now()}\n")
+    deletable_file.write("# Format: SPACE,URL\n\n")
+
     try:
         # Create a session for all requests
         session = create_session()
@@ -380,6 +386,7 @@ def check_pages_in_space(space_key):
     except Exception as e:
         print(f"\nError connecting to Confluence: {e}")
         print("Please check URL, credentials, network connectivity, and ensure the Confluence instance is running.")
+        deletable_file.close()
         sys.exit(1)
 
     found_eligible_page = False
@@ -444,18 +451,24 @@ def check_pages_in_space(space_key):
 
             # Combine checks
             if is_content_empty and has_no_attachments and can_delete:
+                full_link = f"{CONFLUENCE_URL}{page_link}"
                 print(f"YES: Page '{page_title}' (ID: {page_id}) is empty and deletable.")
-                print(f"     Link: {CONFLUENCE_URL}{page_link}")
+                print(f"     Link: {full_link}")
+                # Write to file: SPACE,URL
+                deletable_file.write(f"{space_key},{full_link}\n")
                 found_eligible_page = True
                 eligible_count += 1
 
     except Exception as e:
         print(f"\nAn error occurred during page processing: {e}")
+    finally:
+        deletable_file.close()
 
     print("-" * 30)
     print(f"Checked {page_count} pages in space '{space_key}'.")
     if found_eligible_page:
         print(f"Found {eligible_count} page(s) that are empty and deletable by the current user.")
+        print(f"Results written to: deletable_pages.txt")
     else:
         print(f"No pages found in space '{space_key}' that are both empty and deletable by the current user.")
 
@@ -471,6 +484,12 @@ def check_single_page(page_id):
         print("SSL verification is DISABLED.")
     print("-" * 30)
 
+    # Open file for writing deletable pages
+    deletable_file = open("deletable_pages.txt", "w")
+    deletable_file.write("# Deletable pages in Confluence\n")
+    deletable_file.write(f"# Generated: {datetime.datetime.now()}\n")
+    deletable_file.write("# Format: SPACE,URL\n\n")
+
     try:
         # Create a session for all requests
         session = create_session()
@@ -483,6 +502,7 @@ def check_single_page(page_id):
     except Exception as e:
         print(f"\nError connecting to Confluence: {e}")
         print("Please check URL, credentials, network connectivity, and ensure the Confluence instance is running.")
+        deletable_file.close()
         sys.exit(1)
 
     try:
@@ -497,6 +517,7 @@ def check_single_page(page_id):
             )
             
             page_title = page['title']
+            space_key = page.get('space', {}).get('key', 'UNKNOWN')
             page_link = page.get('_links', {}).get('webui', '')
             if not page_link and 'base' in page.get('_links', {}):
                 page_link = page['_links']['base'] + page.get('_links',{}).get('webui','')
@@ -527,11 +548,15 @@ def check_single_page(page_id):
             print(f"- Content is empty: {'YES' if is_content_empty else 'NO'}")
             print(f"- Has no attachments: {'YES' if has_no_attachments else 'NO'}")
             print(f"- Current user can delete: {'YES' if can_delete else 'NO'}")
-            print(f"- Link: {CONFLUENCE_URL}{page_link}")
+            full_link = f"{CONFLUENCE_URL}{page_link}"
+            print(f"- Link: {full_link}")
 
             # Combine checks
             if is_content_empty and has_no_attachments and can_delete:
                 print(f"\nCONCLUSION: This page is EMPTY and DELETABLE.")
+                # Write to file: SPACE,URL
+                deletable_file.write(f"{space_key},{full_link}\n")
+                print(f"Result written to: deletable_pages.txt")
             else:
                 print(f"\nCONCLUSION: This page is {'NOT EMPTY' if not is_content_empty else 'empty'}, {'HAS ATTACHMENTS' if not has_no_attachments else 'has no attachments'}, and {'NOT DELETABLE' if not can_delete else 'deletable'}.")
 
@@ -542,6 +567,8 @@ def check_single_page(page_id):
     except Exception as e:
         print(f"\nAn error occurred during page processing: {e}")
         sys.exit(1)
+    finally:
+        deletable_file.close()
 
 def check_all_spaces():
     """Connects to Confluence, fetches all non-user spaces, and checks each for empty pages."""
@@ -551,6 +578,12 @@ def check_all_spaces():
     if not VERIFY_SSL:
         print("SSL verification is DISABLED.")
     print("-" * 60)
+
+    # Open file for writing deletable pages
+    deletable_file = open("deletable_pages.txt", "w")
+    deletable_file.write("# Deletable pages in Confluence\n")
+    deletable_file.write(f"# Generated: {datetime.datetime.now()}\n")
+    deletable_file.write("# Format: SPACE,URL\n\n")
 
     try:
         # Create a session for all requests
@@ -567,6 +600,7 @@ def check_all_spaces():
         
         if not spaces:
             print("No spaces found. Exiting.")
+            deletable_file.close()
             return
 
         print(f"\nFound {len(spaces)} spaces to check.")
@@ -633,8 +667,11 @@ def check_all_spaces():
                     
                     # Combine checks
                     if is_content_empty and has_no_attachments and can_delete:
+                        full_link = f"{CONFLUENCE_URL}{page_link}"
                         print(f"  YES: Page '{page_title}' (ID: {page_id}) is empty and deletable.")
-                        print(f"       Link: {CONFLUENCE_URL}{page_link}")
+                        print(f"       Link: {full_link}")
+                        # Write to file: SPACE,URL
+                        deletable_file.write(f"{space_key},{full_link}\n")
                         space_eligible_count += 1
                         total_eligible_pages += 1
                 
@@ -647,11 +684,14 @@ def check_all_spaces():
         print("\n" + "=" * 60)
         print(f"SUMMARY: Checked {len(spaces)} spaces.")
         print(f"Found {total_eligible_pages} pages that are empty and deletable across all spaces.")
+        print(f"Results written to: deletable_pages.txt")
         print("=" * 60)
     
     except Exception as e:
         print(f"\nAn error occurred: {e}")
         sys.exit(1)
+    finally:
+        deletable_file.close()
 
 if __name__ == "__main__":
     if args.list_spaces:
