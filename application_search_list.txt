@@ -1,0 +1,10 @@
+# Application search terms list
+# Format: One search term per line
+# Example:
+Customer Portal
+Payment Gateway
+CRM System
+Data Warehouse
+Mobile App
+Legacy System
+API Gateway
