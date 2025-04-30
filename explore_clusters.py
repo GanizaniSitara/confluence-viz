@@ -681,24 +681,22 @@ def suggest_tags_for_clusters(spaces, labels):
 
 def search_for_applications(spaces):
     """
-    Search for applications in Confluence spaces using application_search_list.txt
+    Search for applications in Confluence spaces using app_search.txt
     and generate HTML report showing which spaces contain which applications.
     """
     # Check if application search list exists
-    app_search_path = os.path.join(os.path.dirname(__file__), 'application_search_list.txt')
+    app_search_path = os.path.join(os.path.dirname(__file__), 'app_search.txt')
     if not os.path.exists(app_search_path):
-        print(f"Error: application_search_list.txt not found at {app_search_path}")
+        print(f"Error: app_search.txt not found at {app_search_path}")
         print("Please create this file with one application name per line.")
-        return
-
-    # Load application search terms
+        return    # Load application search terms
     try:
         with open(app_search_path, 'r') as f:
             # Skip lines starting with # (comments) and empty lines
             search_terms = [line.strip() for line in f 
                            if line.strip() and not line.strip().startswith('#')]
     except Exception as e:
-        print(f"Error reading application_search_list.txt: {e}")
+        print(f"Error reading app_search.txt: {e}")
         return
 
     if not search_terms:
