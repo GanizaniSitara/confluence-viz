@@ -114,19 +114,23 @@ parser.add_argument(
          'WARNING: If using https://, SSL verification is disabled (--verify=False).'
 )
 parser.add_argument(
-    '--space-filter',
-    choices=['global', 'personal', 'both'],
-    default='both',
-    help='Filter spaces by type.\n'
-         '  global: Count only non-personal spaces.\n'
-         '  personal: Count only personal spaces.\n'
-         '  both: Count both global and personal spaces (default).'
+    '--all',
+    action='store_true',
+    help='Count both personal and non-personal spaces.\n'
+         'By default, only non-personal spaces are counted.'
+)
+parser.add_argument(
+    '--personal',
+    action='store_true',
+    help='Count only personal spaces.\n'
+         'By default, only non-personal spaces are counted.\n'
+         'Takes precedence over --all if both are specified.'
 )
 parser.add_argument(
     '--space-key',
     help='Specific space key to count pages for (e.g., "TEST").\n'
          'When specified, only counts pages in this space.\n'
-         'Takes precedence over --space-filter.'
+         'Takes precedence over --all and --personal.'
 )
 
 args = parser.parse_args()
@@ -206,6 +210,17 @@ def get_all_items(base_url, params, item_type="items"):
     print(f"Base URL: {base_url}")
     print(f"Initial parameters: {params}")
     
+    # Check if we're filtering spaces and need to apply additional personal space filtering
+    # Default behavior is to exclude personal spaces unless --personal or --all is specified
+    exclude_personal = (base_url == API_SPACE_ENDPOINT and 
+                       'space' in item_type.lower() and 
+                       not args.personal and 
+                       not args.all and
+                       not args.space_key)
+    
+    if exclude_personal:
+        print("Extra filter: Excluding personal spaces (those with keys starting with '~')")
+    
     all_items_count = 0
     start = 0
     limit = params.get('limit', 100)
@@ -231,9 +246,30 @@ def get_all_items(base_url, params, item_type="items"):
             if 'message' in response_data:
                 print(f"Error message: {response_data['message']}")
             break
+        
+        results = response_data['results']
+        
+        # Apply additional filtering for personal spaces if needed
+        if exclude_personal:
+            # Count before filtering
+            original_count = len(results)
             
-        # Count items in this page
-        items_in_page = len(response_data['results'])
+            # Filter out personal spaces (those with keys starting with '~')
+            filtered_results = [space for space in results if 'key' not in space or not space['key'].startswith('~')]
+            
+            # Count after filtering
+            filtered_count = len(filtered_results)
+            filtered_out = original_count - filtered_count
+            
+            if filtered_out > 0:
+                print(f"Filtered out {filtered_out} personal spaces (keys starting with '~')")
+            
+            # Update the count for this page
+            items_in_page = filtered_count
+        else:
+            # No additional filtering needed
+            items_in_page = len(results)
+        
         all_items_count += items_in_page
         
         # Check if there are more pages
@@ -262,16 +298,20 @@ print("\n" + "=" * 50)
 print("COUNTING CONFLUENCE SPACES")
 print("=" * 50)
 
-# We still use the spaces endpoint for counting spaces
-space_filter_desc = "all" # Default description
+# Determine the space filter based on command-line arguments
 space_params = {'limit': 100}  # Get spaces in batches of 100
 
-if args.space_filter == 'global':
-    space_params['type'] = 'global'
-    space_filter_desc = "non-personal (global)"
-elif args.space_filter == 'personal':
-    space_params['type'] = 'personal'
+# Default is to count only non-personal spaces
+space_filter_desc = "non-personal (global)"
+space_params['type'] = 'global'
+
+# Override default if --personal or --all is specified
+if args.personal:
     space_filter_desc = "personal"
+    space_params['type'] = 'personal'
+elif args.all:
+    space_filter_desc = "all"
+    # Don't specify type parameter to get all spaces
 
 print(f"Space filter: {space_filter_desc}")
 total_spaces = get_all_items(API_SPACE_ENDPOINT, space_params, f"{space_filter_desc} spaces")
@@ -287,6 +327,12 @@ if args.space_key:
     # Count pages in a specific space using CQL
     print(f"Counting pages in specific space: {args.space_key}")
     
+    # Check if the space key is a personal space
+    if args.space_key.startswith('~') and not (args.all or args.personal):
+        print(f"Warning: Space key '{args.space_key}' appears to be a personal space (starts with '~')")
+        print(f"By default, only non-personal spaces are counted.")
+        print(f"Continuing with the specific space as requested...")
+    
     # Try CQL approach first (faster)
     cql_query = f"space = {args.space_key} AND type = page"
     total_pages = count_using_cql(cql_query, f"pages in space {args.space_key}")
@@ -294,15 +340,23 @@ if args.space_key:
     # Description for output
     page_count_desc = f"in space {args.space_key}"
 else:
-    # Count all pages using CQL
-    print("Counting pages across all spaces")
-    
-    # Try CQL approach first (faster)
-    cql_query = "type = page"
-    total_pages = count_using_cql(cql_query, "pages across all spaces")
-    
-    # Description for output
-    page_count_desc = "across all visible spaces"
+    # Count all pages using CQL based on space filter
+    if args.personal:
+        print("Counting pages in personal spaces only")
+        cql_query = "type = page AND space.type = 'personal'"
+        total_pages = count_using_cql(cql_query, "pages in personal spaces")
+        page_count_desc = "across all personal spaces"
+    elif args.all:
+        print("Counting pages across all spaces (personal and non-personal)")
+        cql_query = "type = page"
+        total_pages = count_using_cql(cql_query, "pages across all spaces")
+        page_count_desc = "across all spaces (personal and non-personal)"
+    else:
+        # Default: count non-personal spaces only
+        print("Counting pages across non-personal spaces only")
+        cql_query = "type = page AND space.type = 'global'"
+        total_pages = count_using_cql(cql_query, "pages in non-personal spaces")
+        page_count_desc = "across all non-personal spaces"
 
 # If CQL counting fails, fall back to the original method
 if total_pages is None:
@@ -323,6 +377,13 @@ if total_pages is None:
             'type': 'page',
             'limit': 100
         }
+        
+        # Apply space type filtering for the fallback method
+        if args.personal:
+            content_params['spaceType'] = 'personal'
+        elif not args.all:
+            content_params['spaceType'] = 'global'
+            
         total_pages = get_all_items(API_CONTENT_ENDPOINT, content_params, "pages")
 
 
