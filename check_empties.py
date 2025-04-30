@@ -9,6 +9,7 @@ import requests
 import base64
 import random
 import datetime
+import pickle  # Required for loading pickled spaces
 from getpass import getpass # Use getpass if not using env vars for password
 
 # Import the config loader
@@ -38,10 +39,10 @@ except FileNotFoundError:
     CONFLUENCE_PASSWORD = os.environ.get('CONFLUENCE_PASSWORD')
     VERIFY_SSL = False
 
-# Filter defaults
+# --- Settings ---
+TEMP_DIR = 'temp'  # Directory where pickled space data is stored
 DEFAULT_MIN_PAGES = 0
 DEFAULT_MAX_PAGES = None
-DEFAULT_DATE_FILTER = None
 
 # --- Argument Parsing ---
 parser = argparse.ArgumentParser(description="Check for empty pages in a Confluence space, a specific page OR list spaces.")
@@ -58,20 +59,17 @@ group.add_argument(
     action="store_true",
     help="Check all spaces for empty pages. This will loop through all non-user spaces in the Confluence instance."
 )
-# Add arguments for filters
-parser.add_argument("--min-pages", type=int, default=DEFAULT_MIN_PAGES, help="Minimum number of pages a space must have")
-parser.add_argument("--max-pages", type=int, default=None, help="Maximum number of pages a space can have")
-parser.add_argument("--date-filter", help="Date filter in format >YYYY-MM-DD or <YYYY-MM-DD")
 
 args = parser.parse_args()
 # SPACE_KEY is now potentially None if --list-spaces or --page-id is used
 SPACE_KEY = args.space_key
 PAGE_ID = args.page_id
 
-# Set initial filter values from arguments
-min_pages = args.min_pages if args.min_pages is not None else DEFAULT_MIN_PAGES
-max_pages = args.max_pages
-date_filter = args.date_filter
+# Initialize filter values
+min_pages = DEFAULT_MIN_PAGES
+max_pages = DEFAULT_MAX_PAGES
+date_filter = None
+cached_spaces = []  # Will store spaces loaded from pickle files
 
 # --- Credential Handling ---
 # Validate essential configuration
@@ -307,61 +305,82 @@ def get_page_by_id(session, page_id, expand=None):
     return make_api_request(session, url, params=params)
 
 # --- Space Filtering Functions ---
-def filter_spaces_by_size(spaces, min_pages=0, max_pages=None):
+def load_spaces(temp_dir=TEMP_DIR, min_pages=0, max_pages=None):
     """
-    Filter spaces based on number of pages.
-    Returns a list of spaces that match the criteria.
+    Load spaces from pickled files in the temp directory.
+    Filters based on page count.
     """
-    filtered_spaces = []
-    for space in spaces:
-        # Get the total pages count
-        page_count = space.get('_expandable', {}).get('page', '')
-        if 'page/no-content?' in page_count:
-            # Extract the page count from the URL
-            count_part = page_count.split('=')[-1]
+    spaces = []
+    if not os.path.exists(temp_dir):
+        print(f"Error: Temp directory '{temp_dir}' not found.")
+        return spaces
+
+    print(f"Loading spaces from {temp_dir}...")
+    pkl_count = 0
+    loaded_count = 0
+    
+    for fname in os.listdir(temp_dir):
+        if fname.endswith('.pkl'):
+            pkl_count += 1
             try:
-                page_count = int(count_part)
-            except ValueError:
-                # If we can't extract the count, estimate using the description or skip
-                description = space.get('description', {}).get('plain', {}).get('value', '')
-                if 'pages' in description:
-                    try:
-                        # Try to find a number followed by "pages" in the description
-                        import re
-                        matches = re.findall(r'(\d+)\s*pages', description)
-                        if matches:
-                            page_count = int(matches[0])
-                        else:
-                            page_count = 0
-                    except:
-                        page_count = 0
-                else:
-                    page_count = 0
-        else:
-            # If we can't determine the count, default to 0
-            page_count = 0
-            
-        # Store the page count in the space object for later use
-        space['page_count'] = page_count
-            
-        # Apply size filters
-        meets_min = page_count >= min_pages
-        meets_max = max_pages is None or page_count <= max_pages
-        if meets_min and meets_max:
-            filtered_spaces.append(space)
-            
-    return filtered_spaces
+                with open(os.path.join(temp_dir, fname), 'rb') as f:
+                    data = pickle.load(f)
+                    if 'space_key' in data and 'sampled_pages' in data:
+                        # Use total_pages for filtering if available, otherwise fallback to sampled_pages length
+                        page_count = data.get('total_pages', len(data['sampled_pages']))
+                        # Apply both min and max filters
+                        meets_min = page_count >= min_pages
+                        meets_max = max_pages is None or page_count <= max_pages
+                        if meets_min and meets_max:
+                            spaces.append(data)
+                            loaded_count += 1
+            except Exception as e:
+                print(f"Error loading {fname}: {e}")
+    
+    print(f"Loaded {loaded_count} spaces from {pkl_count} pickle files.")
+    return spaces
+
+def calculate_avg_timestamps(spaces):
+    """Calculate average timestamp for each space from page timestamps if available"""
+    print("Calculating average timestamps for spaces...")
+    for space in spaces:
+        timestamps = []
+        for page in space.get('sampled_pages', []):
+            # Check 'updated' field which is set by sample_and_pickle_spaces.py
+            when = page.get('updated')
+            if not when and 'version' in page:
+                # Fallback to version.when format if updated isn't available
+                when = page.get('version', {}).get('when')
+                
+            if when:
+                try:
+                    # Parse ISO format timestamp and convert to unix timestamp
+                    ts = datetime.fromisoformat(when.replace("Z", "+00:00")).timestamp()
+                    timestamps.append(ts)
+                except ValueError:
+                    pass
+        
+        # Calculate average timestamp if we have any valid timestamps
+        avg_ts = sum(timestamps) / len(timestamps) if timestamps else 0
+        space['avg'] = avg_ts  # Store avg timestamp for color mapping
+    
+    return spaces
 
 def filter_spaces_by_date(spaces, date_filter):
     """
-    Filter spaces based on average last update date.
+    Filter spaces based on average date.
     date_filter should be a string in format '>YYYY-MM-DD' or '<YYYY-MM-DD'.
     Returns filtered spaces list.
     """
+    # Check if spaces have avg timestamps, if not, calculate them
+    if any('avg' not in s for s in spaces):
+        spaces = calculate_avg_timestamps(spaces)
+    
+    filtered_spaces = []
+    
+    # Parse filter
     if not date_filter:
         return spaces  # No filter, return all spaces
-        
-    filtered_spaces = []
     
     try:
         # Extract the operator and date string
@@ -369,27 +388,20 @@ def filter_spaces_by_date(spaces, date_filter):
         date_str = date_filter[1:].strip()
         
         # Parse the target date string
-        target_date = datetime.datetime.strptime(date_str, '%Y-%m-%d')
-        target_timestamp = datetime.datetime.timestamp(target_date)
+        target_date = datetime.strptime(date_str, '%Y-%m-%d')
+        target_timestamp = target_date.timestamp()
         
+        # Apply filter
         for space in spaces:
-            # Get the last update date from the space metadata
-            last_updated = space.get('metadata', {}).get('updated', '')
-            if last_updated:
-                try:
-                    # Parse the ISO format timestamp
-                    update_date = datetime.datetime.fromisoformat(last_updated.replace("Z", "+00:00"))
-                    update_timestamp = datetime.datetime.timestamp(update_date)
-                    
-                    # Apply date filter
-                    if operator == '>' and update_timestamp > target_timestamp:
-                        filtered_spaces.append(space)
-                    elif operator == '<' and update_timestamp < target_timestamp:
-                        filtered_spaces.append(space)
-                except (ValueError, AttributeError):
-                    # Skip spaces with unparseable dates
-                    pass
-            
+            avg_ts = space.get('avg', 0)
+            if avg_ts > 0:  # Only include spaces with valid timestamps
+                if operator == '>' and avg_ts > target_timestamp:
+                    filtered_spaces.append(space)
+                elif operator == '<' and avg_ts < target_timestamp:
+                    filtered_spaces.append(space)
+        
+        print(f"Applied date filter {date_filter}: {len(filtered_spaces)} spaces match (from {len(spaces)} total)")
+        
     except (ValueError, IndexError) as e:
         print(f"Error parsing date filter: {e}")
         print("Format should be >YYYY-MM-DD or <YYYY-MM-DD")
@@ -414,9 +426,28 @@ def get_filter_info():
         return "No filters applied"
 
 # --- Interactive Menu Functions ---
+def ensure_data_loaded():
+    """Load cached data only when needed, applying current filters"""
+    global cached_spaces, min_pages, max_pages, date_filter
+    
+    print(f"\nLoading space data with filter: >= {min_pages} pages" + 
+          (f" and <= {max_pages} pages" if max_pages else "") + 
+          (f" and date {date_filter}" if date_filter else "") + "...")
+    
+    # Load spaces with page count filter already applied
+    cached_spaces = load_spaces(min_pages=min_pages, max_pages=max_pages)
+    
+    # Apply date filter if specified
+    if date_filter:
+        initial_count = len(cached_spaces)
+        cached_spaces = filter_spaces_by_date(cached_spaces, date_filter)
+        print(f"After date filter: {len(cached_spaces)} out of {initial_count} spaces match.")
+    
+    return cached_spaces
+
 def show_filter_menu():
     """Show the interactive filter menu and handle user input"""
-    global min_pages, max_pages, date_filter
+    global min_pages, max_pages, date_filter, cached_spaces
     
     while True:
         print("\n--- Filter Settings ---")
@@ -435,6 +466,7 @@ def show_filter_menu():
                 inp = input("Enter minimum pages per space (0 for all): ").strip()
                 min_pages = int(inp) if inp else 0
                 print(f"Minimum pages filter set to {min_pages}")
+                cached_spaces = []  # Clear cache to force reload
             except ValueError:
                 print("Invalid input. Please enter a number.")
         elif choice == '2':
@@ -442,10 +474,11 @@ def show_filter_menu():
                 inp = input("Enter maximum pages per space (leave empty for no limit): ").strip()
                 max_pages = int(inp) if inp else None
                 print(f"Maximum pages filter set to {max_pages if max_pages else 'No limit'}")
+                cached_spaces = []  # Clear cache to force reload
             except ValueError:
                 print("Invalid input. Please enter a number.")
         elif choice == '3':
-            print("\nSet date filter to include spaces with last updates before/after a specific date.")
+            print("\nSet date filter to include spaces with average dates before/after a specific date.")
             print("Format: >YYYY-MM-DD (after date) or <YYYY-MM-DD (before date)")
             print("Examples: >2017-01-01 (spaces updated after Jan 1, 2017)")
             print("          <2020-03-15 (spaces updated before March 15, 2020)")
@@ -459,11 +492,16 @@ def show_filter_menu():
                 else:
                     date_filter = date_input
                     print(f"Date filter set to {date_filter}")
+                    cached_spaces = []  # Clear cache to force reload
             else:
                 date_filter = None
                 print("Date filter cleared")
+                cached_spaces = []  # Clear cache to force reload
         elif choice == '4':
+            # Load data with new filters
+            ensure_data_loaded()
             print(f"\nApplying filters: {get_filter_info()}")
+            print(f"Found {len(cached_spaces)} spaces after applying filters.")
             return True
         elif choice.upper() == 'Q':
             print("Exiting...")
@@ -527,7 +565,7 @@ def show_main_menu():
 # --- Main Logic ---
 def list_spaces(space_filter):
     """Connects to Confluence and lists spaces based on the filter."""
-    global min_pages, max_pages, date_filter
+    global min_pages, max_pages, date_filter, cached_spaces
     
     print(f"Connecting to Confluence at: {CONFLUENCE_URL}")
     print(f"Using username: {CONFLUENCE_USERNAME}")
@@ -536,8 +574,9 @@ def list_spaces(space_filter):
         print("SSL verification is DISABLED.")
     print("-" * 30)
     
-    # Show filter menu
+    # Show filter menu and load data
     show_filter_menu()
+    spaces = cached_spaces  # Use already loaded and filtered spaces
 
     try:
         session = create_session()
@@ -545,49 +584,42 @@ def list_spaces(space_filter):
         print(f"Successfully connected as: {user_info.get('displayName', CONFLUENCE_USERNAME)}")
         print("-" * 30)
 
-        api_space_type = None
-        if space_filter == 'user':
-            api_space_type = 'personal'
-        elif space_filter == 'space':
-            api_space_type = 'global'
-        # 'all' uses api_space_type = None
+        # If using cached data, filter by space type
+        filtered_spaces = []
+        for s in spaces:
+            space_key = s.get('space_key', '')
+            is_personal = space_key and space_key.startswith('~')
+            
+            if space_filter == 'all':
+                filtered_spaces.append(s)
+            elif space_filter == 'user' and is_personal:
+                filtered_spaces.append(s)
+            elif space_filter == 'space' and not is_personal:
+                filtered_spaces.append(s)
+        
+        # Sort spaces alphabetically by key
+        filtered_spaces.sort(key=lambda s: s.get('space_key', ''))
 
-        spaces = get_all_spaces(session, space_type=api_space_type)
-
-        if not spaces:
+        if not filtered_spaces:
             print(f"No spaces found matching filter '{space_filter}'.")
             return
-            
-        # Apply filters
-        if min_pages > 0 or max_pages is not None:
-            filtered_count = len(spaces)
-            spaces = filter_spaces_by_size(spaces, min_pages, max_pages)
-            print(f"After size filter: {len(spaces)} out of {filtered_count} spaces match.")
-            
-        if date_filter:
-            filtered_count = len(spaces)
-            spaces = filter_spaces_by_date(spaces, date_filter)
-            print(f"After date filter: {len(spaces)} out of {filtered_count} spaces match.")
 
-        print(f"\n--- {space_filter.capitalize()} Spaces ({len(spaces)}) ---")
+        print(f"\n--- {space_filter.capitalize()} Spaces ({len(filtered_spaces)}) ---")
         count = 0
-        for space in spaces:
-            key = space.get('key')
-            name = space.get('name')
-            is_personal = key and key.startswith('~')
-            page_count = space.get('page_count', '?')
+        for space in filtered_spaces:
+            key = space.get('space_key', '')
+            name = space.get('space_name', key)  # Fallback to key if no name
+            page_count = space.get('total_pages', len(space.get('sampled_pages', [])))
+            
+            # Format the date if available
+            avg_timestamp = space.get('avg', 0)
+            if avg_timestamp > 0:
+                date_str = datetime.fromtimestamp(avg_timestamp).strftime('%Y-%m-%d')
+            else:
+                date_str = "No date"
 
-            should_list = False
-            if space_filter == 'all':
-                should_list = True
-            elif space_filter == 'user' and is_personal:
-                should_list = True
-            elif space_filter == 'space' and not is_personal:
-                should_list = True
-
-            if should_list:
-                print(f"  Key: {key:<15} Pages: {page_count:<5} Name: {name}")
-                count += 1
+            print(f"  Key: {key:<15} Pages: {page_count:<5} Avg Last Edit: {date_str} Name: {name}")
+            count += 1
 
         print(f"\nListed {count} {space_filter} space(s) after applying filters.")
         print("-" * 30)
@@ -806,24 +838,28 @@ def check_single_page(page_id):
         deletable_file.close()
 
 def check_all_spaces():
-    """Connects to Confluence, fetches all non-user spaces, and checks each for empty pages."""
-    global min_pages, max_pages, date_filter
+    """Connects to Confluence, uses filtered spaces from pickle files, and checks each for empty pages."""
+    global min_pages, max_pages, date_filter, cached_spaces
     
     print(f"Connecting to Confluence at: {CONFLUENCE_URL}")
     print(f"Using username: {CONFLUENCE_USERNAME}")
-    print(f"Checking ALL non-user spaces for empty pages")
+    print(f"Checking spaces for empty pages")
     if not VERIFY_SSL:
         print("SSL verification is DISABLED.")
     print("-" * 60)
     
-    # Show filter menu
+    # Show filter menu and ensure data is loaded
     show_filter_menu()
-    print(f"Applying filters: {get_filter_info()}")
+    spaces = cached_spaces  # Use already loaded and filtered spaces
+    
+    # Filter to only non-personal spaces
+    filtered_spaces = [s for s in spaces if not s.get('space_key', '').startswith('~')]
+    print(f"Focusing on {len(filtered_spaces)} non-personal spaces from {len(spaces)} total spaces.")
 
     # Open file for writing deletable pages
     deletable_file = open("deletable_pages.txt", "w")
     deletable_file.write("# Deletable pages in Confluence\n")
-    deletable_file.write(f"# Generated: {datetime.datetime.now()}\n")
+    deletable_file.write(f"# Generated: {datetime.now()}\n")
     deletable_file.write(f"# Filters: {get_filter_info()}\n")
     deletable_file.write("# Format: SPACE,URL\n\n")
 
@@ -836,38 +872,13 @@ def check_all_spaces():
         print(f"Successfully connected as: {user_info.get('displayName', CONFLUENCE_USERNAME)}")
         print("-" * 60)
 
-        # Fetch all global (non-user) spaces
-        print("Fetching all global spaces...")
-        spaces = get_all_spaces(session, space_type='global')
-        
-        if not spaces:
-            print("No spaces found. Exiting.")
-            deletable_file.close()
-            return
-            
-        # Apply filters
-        initial_count = len(spaces)
-        
-        if min_pages > 0 or max_pages is not None:
-            filtered_count = len(spaces)
-            spaces = filter_spaces_by_size(spaces, min_pages, max_pages)
-            print(f"After size filter: {len(spaces)} out of {filtered_count} spaces match.")
-            
-        if date_filter:
-            filtered_count = len(spaces)
-            spaces = filter_spaces_by_date(spaces, date_filter)
-            print(f"After date filter: {len(spaces)} out of {filtered_count} spaces match.")
-
-        print(f"\nFound {len(spaces)} spaces to check after applying filters (original: {initial_count}).")
-        print("-" * 60)
-        
-        # Process each space
+        # Process each space from the pickled data
         total_eligible_pages = 0
-        for idx, space in enumerate(spaces, 1):
-            space_key = space.get('key')
-            space_name = space.get('name')
+        for idx, space in enumerate(filtered_spaces, 1):
+            space_key = space.get('space_key')
+            space_name = space.get('space_name', space_key)
             
-            print(f"\n[{idx}/{len(spaces)}] Processing space: {space_name} (key: {space_key})")
+            print(f"\n[{idx}/{len(filtered_spaces)}] Processing space: {space_name} (key: {space_key})")
             print("-" * 60)
             
             try:
@@ -937,7 +948,7 @@ def check_all_spaces():
         
         # Final summary
         print("\n" + "=" * 60)
-        print(f"SUMMARY: Checked {len(spaces)} spaces after applying filters.")
+        print(f"SUMMARY: Checked {len(filtered_spaces)} spaces after applying filters.")
         print(f"Found {total_eligible_pages} pages that are empty and deletable across all spaces.")
         print(f"Results written to: deletable_pages.txt")
         print("=" * 60)
@@ -954,6 +965,19 @@ if __name__ == "__main__":
     
     if not has_args:
         # No arguments provided, show interactive menu
+        print("\n" + "="*80)
+        print("""
+    ┌─────────────────────────────────────────────────────────┐
+    │                                                         │
+    │   CONFLUENCE EMPTY PAGES TOOL                           │
+    │   =========================                             │
+    │                                                         │
+    │   Find and manage empty Confluence pages                │
+    │                                                         │
+    └─────────────────────────────────────────────────────────┘
+    """)    
+        print("="*80 + "\n")
+        
         show_main_menu()
     else:
         # Process command line arguments
