@@ -112,8 +112,54 @@ API_SPACE_ENDPOINT = f'{CONFLUENCE_BASE_URL}/rest/api/space'
 API_CONTENT_ENDPOINT = f'{CONFLUENCE_BASE_URL}/rest/api/content'
 
 
+def get_all_items(base_url, params, item_type="items"):
+    """
+    Handles pagination to get all items from a Confluence API endpoint.
+    
+    Args:
+        base_url: The API endpoint URL
+        params: Request parameters
+        item_type: Description of the items being fetched (for logging)
+        
+    Returns:
+        The total count of items across all pages
+    """
+    all_items_count = 0
+    start = 0
+    limit = params.get('limit', 100)
+    
+    while True:
+        # Update start parameter for pagination
+        current_params = params.copy()
+        current_params['start'] = start
+        
+        # Make the API request
+        print(f"Fetching {item_type} (start={start}, limit={limit})...")
+        response_data = make_api_request(base_url, params=current_params)
+        
+        # Check if we got valid data
+        if not response_data or 'results' not in response_data:
+            print(f"Failed to retrieve {item_type} or unexpected response structure")
+            break
+            
+        # Count items in this page
+        items_in_page = len(response_data['results'])
+        all_items_count += items_in_page
+        
+        # Check if there are more pages
+        if '_links' in response_data and 'next' in response_data['_links'] and response_data['_links']['next']:
+            # Move to next page
+            start += limit
+            print(f"Found {items_in_page} {item_type} in current page, moving to next page...")
+        else:
+            # No more pages
+            print(f"Retrieved all {item_type}: {all_items_count} total")
+            break
+            
+    return all_items_count
+
 # --- Get Total Spaces ---
-space_params = {'limit': 1} # Always limit to 1 to get totalSize efficiently
+space_params = {'limit': 100}  # Get spaces in batches of 100
 space_filter_desc = "all" # Default description
 if args.space_filter == 'global':
     space_params['type'] = 'global'
@@ -123,18 +169,7 @@ elif args.space_filter == 'personal':
     space_filter_desc = "personal"
 
 print(f"\nFetching total number of {space_filter_desc} spaces...")
-space_data = make_api_request(API_SPACE_ENDPOINT, params=space_params)
-
-total_spaces = None
-if space_data and 'totalSize' in space_data:
-    total_spaces = space_data['totalSize']
-    print(f"Successfully retrieved total {space_filter_desc} spaces.")
-elif space_data is not None:
-    print("Response structure unexpected: 'totalSize' not found in space data.")
-    # Add debugging: Print the keys to see what is available
-    print(f"DEBUG: Available keys in space data response: {list(space_data.keys())}")
-    # Optionally print the whole structure if keys aren't enough
-    # print(f"DEBUG: Full space data response: {space_data}")
+total_spaces = get_all_items(API_SPACE_ENDPOINT, space_params, f"{space_filter_desc} spaces")
 
 
 # --- Get Total Pages ---
@@ -143,20 +178,9 @@ elif space_data is not None:
 print("\nFetching total number of pages (across all visible spaces)...")
 content_params = {
     'type': 'page',
-    'limit': 1 # We only need the metadata, fetching 1 item is sufficient
+    'limit': 100  # Get pages in batches of 100
 }
-page_data = make_api_request(API_CONTENT_ENDPOINT, params=content_params)
-
-total_pages = None
-if page_data and 'totalSize' in page_data:
-    total_pages = page_data['totalSize']
-    print(f"Successfully retrieved total pages.")
-elif page_data is not None:
-     print("Response structure unexpected: 'totalSize' not found in page data.")
-     # Add debugging: Print the keys to see what is available
-     print(f"DEBUG: Available keys in page data response: {list(page_data.keys())}")
-     # Optionally print the whole structure if keys aren't enough
-     # print(f"DEBUG: Full page data response: {page_data}")
+total_pages = get_all_items(API_CONTENT_ENDPOINT, content_params, "pages")
 
 
 # --- Print Results ---
