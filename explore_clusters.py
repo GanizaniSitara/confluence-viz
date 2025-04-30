@@ -11,9 +11,24 @@ import matplotlib.pyplot as plt
 from collections import Counter
 import json
 from datetime import datetime
+import shutil
 from config_loader import load_visualization_settings
 
+# Try to import Whoosh (will be used for options 14 and 15)
+try:
+    import whoosh
+    from whoosh.fields import Schema, TEXT, ID, KEYWORD
+    from whoosh.analysis import StemmingAnalyzer
+    from whoosh.index import create_in, open_dir, exists_in
+    from whoosh.qparser import QueryParser, MultifieldParser
+    WHOOSH_AVAILABLE = True
+except ImportError:
+    WHOOSH_AVAILABLE = False
+    print("Whoosh library not found. Options 14 and 15 will not be available.")
+    print("Install Whoosh with: pip install whoosh")
+
 TEMP_DIR = 'temp'
+WHOOSH_INDEX_DIR = 'whoosh_index'  # Directory to store Whoosh index
 DEFAULT_MIN_PAGES = 0
 VERSION = '1.4'  # Updated version
 
@@ -129,6 +144,48 @@ def filter_spaces(spaces, min_pages, max_pages=None):
         s.get('total_pages', len(s['sampled_pages'])) >= min_pages and
         (max_pages is None or s.get('total_pages', len(s['sampled_pages'])) <= max_pages)
     )]
+
+def filter_spaces_by_date(spaces, date_filter):
+    """
+    Filter spaces based on average date.
+    date_filter should be a string in format '>YYYY-MM-DD' or '<YYYY-MM-DD'.
+    Returns filtered spaces list.
+    """
+    # Check if spaces have avg timestamps, if not, calculate them
+    if any('avg' not in s for s in spaces):
+        spaces = calculate_avg_timestamps(spaces)
+    
+    filtered_spaces = []
+    
+    # Parse filter
+    if not date_filter:
+        return spaces  # No filter, return all spaces
+    
+    try:
+        # Extract the operator and date string
+        operator = date_filter[0]  # '>' or '<'
+        date_str = date_filter[1:].strip()
+        
+        # Parse the target date string
+        target_date = datetime.strptime(date_str, '%Y-%m-%d')
+        target_timestamp = target_date.timestamp()
+          # Apply filter
+        for space in spaces:
+            avg_ts = space.get('avg', 0)
+            if avg_ts > 0:  # Only include spaces with valid timestamps
+                if operator == '>' and avg_ts > target_timestamp:
+                    filtered_spaces.append(space)
+                elif operator == '<' and avg_ts < target_timestamp:
+                    filtered_spaces.append(space)
+        
+        # Removed the print statement here as we now print this in ensure_data_loaded
+        
+    except (ValueError, IndexError) as e:
+        print(f"Error parsing date filter: {e}")
+        print("Format should be >YYYY-MM-DD or <YYYY-MM-DD")
+        return spaces  # Return original spaces on error
+    
+    return filtered_spaces
 
 def search_spaces(spaces, term):
     results = []
@@ -700,7 +757,7 @@ def search_for_applications(spaces):
         return
 
     if not search_terms:
-        print("No search terms found in application_search_list.txt")
+        print("No search terms found in app_search.txt")
         print("Please add at least one application name per line.")
         return
 
@@ -837,9 +894,276 @@ def search_for_applications(spaces):
     # Open the HTML file in the browser
     webbrowser.open('file://' + os.path.abspath(out_path))
 
+def preprocess_application_search_index(spaces):
+    """
+    Preprocess and index all spaces and pages using Whoosh for faster application search.
+    """
+    if not WHOOSH_AVAILABLE:
+        print("Error: Whoosh library is not installed. Please install it with:")
+        print("pip install whoosh")
+        return
+        
+    # Check if application search list exists
+    app_search_path = os.path.join(os.path.dirname(__file__), 'app_search.txt')
+    if not os.path.exists(app_search_path):
+        print(f"Error: app_search.txt not found at {app_search_path}")
+        print("Please create this file with one application name per line.")
+        return
+        
+    # Load application search terms
+    try:
+        with open(app_search_path, 'r') as f:
+            # Skip lines starting with # (comments) and empty lines
+            search_terms = [line.strip() for line in f 
+                           if line.strip() and not line.strip().startswith('#')]
+    except Exception as e:
+        print(f"Error reading app_search.txt: {e}")
+        return
+        
+    if not search_terms:
+        print("No search terms found in app_search.txt")
+        print("Please add at least one application name per line.")
+        return
+    
+    print(f"Loaded {len(search_terms)} application search terms.")
+    print(f"Indexing content from {len(spaces)} spaces...")
+    
+    # Create whoosh index directory if it doesn't exist
+    if not os.path.exists(WHOOSH_INDEX_DIR):
+        os.makedirs(WHOOSH_INDEX_DIR)
+    else:
+        # Clean existing index
+        print("Cleaning existing index...")
+        shutil.rmtree(WHOOSH_INDEX_DIR)
+        os.makedirs(WHOOSH_INDEX_DIR)
+    
+    # Define schema for the index
+    schema = Schema(
+        space_key=ID(stored=True),
+        page_id=ID(stored=True),
+        page_title=TEXT(stored=True, analyzer=StemmingAnalyzer()),
+        page_content=TEXT(analyzer=StemmingAnalyzer()),
+        app_terms=KEYWORD(stored=True, commas=True)
+    )
+    
+    # Create the index
+    ix = create_in(WHOOSH_INDEX_DIR, schema)
+    
+    # Start indexing
+    writer = ix.writer()
+    
+    total_pages = 0
+    pages_with_terms = 0
+    
+    for space in spaces:
+        space_key = space.get('space_key', 'unknown')
+        print(f"Indexing space: {space_key}")
+        
+        for page in space.get('sampled_pages', []):
+            total_pages += 1
+            page_id = page.get('id', f"unknown_{total_pages}")
+            page_title = page.get('title', 'Untitled')
+            
+            # Get page content (body)
+            body = page.get('body', '')
+            
+            # Find which application terms match this page
+            matching_terms = []
+            body_lower = body.lower() if body else ""
+            title_lower = page_title.lower()
+            
+            for term in search_terms:
+                term_lower = term.lower()
+                if term_lower in title_lower or term_lower in body_lower:
+                    matching_terms.append(term)
+            
+            # Only index pages that have at least one matching term
+            if matching_terms:
+                pages_with_terms += 1
+                writer.add_document(
+                    space_key=space_key,
+                    page_id=str(page_id),
+                    page_title=page_title,
+                    page_content=body,
+                    app_terms=", ".join(matching_terms)
+                )
+    
+    writer.commit()
+    
+    # Save search terms for later use
+    with open(os.path.join(WHOOSH_INDEX_DIR, 'search_terms.pkl'), 'wb') as f:
+        pickle.dump(search_terms, f)
+    
+    print(f"\nIndexing complete!")
+    print(f"Analyzed {total_pages} pages across {len(spaces)} spaces.")
+    print(f"Found {pages_with_terms} pages containing at least one search term.")
+    print(f"Index stored in {os.path.abspath(WHOOSH_INDEX_DIR)}")
+
+def search_applications_indexed():
+    """
+    Search for applications using the Whoosh index (much faster than direct search).
+    """
+    if not WHOOSH_AVAILABLE:
+        print("Error: Whoosh library is not installed. Please install it with:")
+        print("pip install whoosh")
+        return
+    
+    # Check if index exists
+    if not os.path.exists(WHOOSH_INDEX_DIR) or not exists_in(WHOOSH_INDEX_DIR):
+        print(f"Error: Whoosh index not found in {WHOOSH_INDEX_DIR}")
+        print("Please run option 14 first to create the search index.")
+        return
+    
+    # Load search terms
+    search_terms_path = os.path.join(WHOOSH_INDEX_DIR, 'search_terms.pkl')
+    if not os.path.exists(search_terms_path):
+        print("Error: Search terms not found in the index directory.")
+        print("Please run option 14 first to create the search index.")
+        return
+    
+    with open(search_terms_path, 'rb') as f:
+        search_terms = pickle.load(f)
+    
+    print(f"Loaded {len(search_terms)} application search terms from the index.")
+    
+    # Open the index
+    ix = open_dir(WHOOSH_INDEX_DIR)
+    
+    # Dictionary to hold results
+    # Format: {app_term: [(space_key, hit_count, matched_pages), ...]}
+    app_hits = defaultdict(list)
+    
+    # Track spaces that have at least one hit
+    spaces_with_hits = set()
+    
+    # Search for each term and collect results
+    with ix.searcher() as searcher:
+        print("Searching indexed data (this is much faster than direct search)...")
+        
+        for term in search_terms:
+            # Create a query that searches both title and content
+            query_parser = MultifieldParser(["page_title", "page_content"], ix.schema)
+            query = query_parser.parse(term)
+            
+            # Execute the search
+            results = searcher.search(query, limit=None)
+            
+            # Process results for this term
+            term_spaces = defaultdict(list)
+            
+            for result in results:
+                space_key = result["space_key"]
+                page_title = result["page_title"]
+                spaces_with_hits.add(space_key)
+                term_spaces[space_key].append(page_title)
+            
+            # Add to overall results
+            for space_key, matched_pages in term_spaces.items():
+                hit_count = len(matched_pages)
+                app_hits[term].append((space_key, hit_count, matched_pages[:5]))
+    
+    # Generate HTML report
+    html = ['<html><head><title>Indexed Application Search Results</title>',
+            '<style>',
+            'body { font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; }',
+            'h1 { color: #2c3e50; }',
+            'h2 { color: #3498db; margin-top: 30px; }',
+            'table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }',
+            'th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }',
+            'th { background-color: #f2f2f2; position: sticky; top: 0; }',
+            'tr:nth-child(even) { background-color: #f9f9f9; }',
+            'tr:hover { background-color: #f1f1f1; }',
+            '.summary { margin-bottom: 30px; padding: 10px; background-color: #eaf2f8; border-radius: 5px; }',
+            '.hit-count { font-weight: bold; color: #2980b9; }',
+            '.matched-pages { font-size: 0.9em; color: #7f8c8d; max-width: 400px; }',
+            '</style>',
+            '</head><body>']
+
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    html.append(f'<h1>Indexed Application Search Results</h1>')
+    html.append(f'<p>Generated: {timestamp}</p>')
+    
+    # Summary section
+    html.append('<div class="summary">')
+    html.append(f'<p>Searched the Whoosh index for <b>{len(search_terms)}</b> application terms.</p>')
+    html.append(f'<p>Found matches in <b>{len(spaces_with_hits)}</b> spaces.</p>')
+    html.append('<p>Applications with most mentions:</p><ul>')
+    
+    # Show top 5 applications by total hit count
+    sorted_apps = sorted(app_hits.items(), key=lambda x: sum(count for _, count, _ in x[1]), reverse=True)
+    for app, hits in sorted_apps[:5]:
+        total_hits = sum(count for _, count, _ in hits)
+        html.append(f'<li><b>{app}</b>: {total_hits} mentions in {len(hits)} spaces</li>')
+    
+    html.append('</ul></div>')
+    
+    # First table: Application-centric view
+    html.append('<h2>Applications and Where They Appear</h2>')
+    html.append('<table>')
+    html.append('<tr><th>Application</th><th>Space Key</th><th>Hit Count</th><th>Sample Matched Pages</th></tr>')
+    
+    for app, hits in sorted_apps:
+        # Sort by hit count for this application
+        sorted_hits = sorted(hits, key=lambda x: x[1], reverse=True)
+        if sorted_hits:
+            # First row includes application name
+            space, count, pages = sorted_hits[0]
+            html.append(f'<tr><td rowspan="{len(sorted_hits)}">{app}</td><td>{space}</td><td class="hit-count">{count}</td>')
+            html.append(f'<td class="matched-pages">{", ".join(pages[:5])}')
+            if len(pages) > 5:
+                html.append(' <i>(and more...)</i>')
+            html.append('</td></tr>')
+            
+            # Remaining rows for this application
+            for space, count, pages in sorted_hits[1:]:
+                html.append(f'<tr><td>{space}</td><td class="hit-count">{count}</td>')
+                html.append(f'<td class="matched-pages">{", ".join(pages[:5])}')
+                if len(pages) > 5:
+                    html.append(' <i>(and more...)</i>')
+                html.append('</td></tr>')
+    
+    html.append('</table>')
+    
+    # Second table: Space-centric view
+    html.append('<h2>Spaces and Applications They Contain</h2>')
+    html.append('<table>')
+    html.append('<tr><th>Space Key</th><th>Applications Found</th><th>Total Mentions</th></tr>')
+    
+    # Build space-centric data
+    space_data = defaultdict(list)
+    for app, hits in app_hits.items():
+        for space, count, _ in hits:
+            space_data[space].append((app, count))
+    
+    # Sort spaces by total hit count
+    sorted_spaces = sorted(space_data.items(), 
+                          key=lambda x: sum(count for _, count in x[1]), 
+                          reverse=True)
+    
+    for space, app_list in sorted_spaces:
+        total_hits = sum(count for _, count in app_list)
+        app_formatted = ', '.join([f"{app} ({count})" for app, count in 
+                                  sorted(app_list, key=lambda x: x[1], reverse=True)])
+        html.append(f'<tr><td>{space}</td><td>{app_formatted}</td><td>{total_hits}</td></tr>')
+    
+    html.append('</table>')
+    html.append('</body></html>')
+    
+    # Write to file
+    out_path = 'indexed_application_search_results.html'
+    with open(out_path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(html))
+    
+    print(f'\nSearch complete! Results written to {out_path}')
+    print(f'Found {len(spaces_with_hits)} spaces with matches to your search terms.')
+    
+    # Open the HTML file in the browser
+    webbrowser.open('file://' + os.path.abspath(out_path))
+
 def main():
     min_pages = DEFAULT_MIN_PAGES
     max_pages = None
+    date_filter = None  # New variable for date filtering
     spaces = []
     data_loaded = False
     n_clusters = 20  # Default number of clusters
@@ -855,18 +1179,26 @@ def main():
     │   Version 1.4                                           │
     │                                                         │
     └─────────────────────────────────────────────────────────┘
-    """)
+    """)    
     print("="*80 + "\n")
     print("Welcome to the Confluence Cluster Explorer!")
     
     # Helper function to load data only when needed
     def ensure_data_loaded():
-        nonlocal spaces, data_loaded, min_pages, max_pages
+        nonlocal spaces, data_loaded, min_pages, max_pages, date_filter
         if not data_loaded:
             print(f"\nLoading space data with filter: >= {min_pages} pages" + 
-                  (f" and <= {max_pages} pages" if max_pages else "") + "...")
+                  (f" and <= {max_pages} pages" if max_pages else "") + 
+                  (f" and date {date_filter}" if date_filter else "") + "...")
             spaces = load_spaces(min_pages=min_pages, max_pages=max_pages)
             print(f"Loaded {len(spaces)} spaces from {TEMP_DIR}.")
+            
+            # Apply date filter if specified
+            if date_filter:
+                initial_count = len(spaces)
+                spaces = filter_spaces_by_date(spaces, date_filter)
+                print(f"After date filter: {len(spaces)} out of {initial_count} spaces match.")
+                
             data_loaded = True
         return spaces
     
@@ -881,10 +1213,13 @@ def main():
         print("7. Semantic clustering and render HTML (Agglomerative)")
         print("8. Semantic clustering and render HTML (KMeans)")
         print("9. Semantic clustering and render HTML (DBSCAN)")
-        print("10. Semantic clustering and D3 Circle Packing (Agglomerative)")
+        print("10. Semantic clustering and D3 Circle Packing (Agglomerative)")        
         print("11. Semantic clustering and D3 Circle Packing (KMeans)")
         print("12. Semantic clustering and D3 Circle Packing (DBSCAN)")
-        print("13. Search for applications in spaces")
+        print("13. Search for applications in spaces (slow)")
+        print("14. Preprocess application search index (Whoosh)")
+        print("15. Search applications using indexed data (fast using Whoosh)")
+        print(f"16. Set date filter (current: {date_filter if date_filter else 'None'} )")
         print("Q. Quit")
         
         choice = input("Select option: ").strip()
@@ -1043,14 +1378,39 @@ def main():
                     print(f"Error: {e}")
                     print("This might be because the loaded spaces have no text content in their pages,")
                     print(f"or the 'min_pages' filter ({min_pages}) is too high, excluding spaces with content.")
-                    print("Try adjusting the filter (Option 1) or check the data in the .pkl files.")
+                    print("Try adjusting the filter (Option 1) or check the data in the .pkl files.")               
                 else:
                     print(f"Clustering Error: {e}")
             except Exception as e:
-                print(f"An unexpected error occurred: {e}")
+                print(f"An unexpected error occurred: {e}")        
         elif choice == '13':
             ensure_data_loaded()  # Make sure data is loaded before searching for applications
             search_for_applications(spaces)
+        elif choice == '14':
+            ensure_data_loaded()  # Make sure data is loaded before building Whoosh index
+            preprocess_application_search_index(spaces)
+        elif choice == '15':
+            search_applications_indexed()
+        elif choice == '16':
+            print("\nSet date filter to include spaces with average dates before/after a specific date.")
+            print("Format: >YYYY-MM-DD (after date) or <YYYY-MM-DD (before date)")
+            print("Examples: >2017-01-01 (spaces updated after Jan 1, 2017)")
+            print("          <2020-03-15 (spaces updated before March 15, 2020)")
+            print("Enter an empty string to clear the filter.")
+            
+            date_input = input("Enter date filter: ").strip()
+            if date_input:
+                if date_input[0] not in ['<', '>']:
+                    print("Error: Date filter must start with < or >")
+                    print("Format should be >YYYY-MM-DD or <YYYY-MM-DD")                
+                else:
+                    date_filter = date_input
+                    data_loaded = False  # Mark data as needing to be reloaded
+                    print(f"Date filter set to {date_filter}. Data will be loaded when needed.")
+            else:
+                date_filter = None
+                data_loaded = False  # Mark data as needing to be reloaded
+                print("Date filter cleared. Data will be loaded when needed.")
         elif choice.upper() == 'Q':
             print("Goodbye!")
             break
