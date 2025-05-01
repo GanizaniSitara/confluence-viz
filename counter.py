@@ -350,7 +350,6 @@ def get_all_items(base_url, params, item_type="items"):
     exclude_personal = (base_url == API_SPACE_ENDPOINT and 
                        'space' in item_type.lower() and 
                        not args.personal and 
-                       not args.all and
                        not args.space_key)
     
     if exclude_personal:
@@ -401,6 +400,9 @@ def get_all_items(base_url, params, item_type="items"):
             
             # Update the count for this page
             items_in_page = filtered_count
+            
+            # Replace the original results with filtered results
+            results = filtered_results
         else:
             # No additional filtering needed
             items_in_page = len(results)
@@ -428,28 +430,9 @@ def get_all_items(base_url, params, item_type="items"):
     return all_items_count
 
 
-# --- Get Total Spaces ---
-print("\n" + "=" * 50)
-print("COUNTING CONFLUENCE SPACES")
-print("=" * 50)
-
-# Determine the space filter based on command-line arguments
-space_params = {'limit': 100}  # Get spaces in batches of 100
-
-# Default is to count only non-personal spaces
-space_filter_desc = "non-personal (global)"
-space_params['type'] = 'global'
-
-# Override default if --personal or --all is specified
-if args.personal:
-    space_filter_desc = "personal"
-    space_params['type'] = 'personal'
-elif args.all:
-    space_filter_desc = "all"
-    # Don't specify type parameter to get all spaces
-
-print(f"Space filter: {space_filter_desc}")
-total_spaces = get_all_items(API_SPACE_ENDPOINT, space_params, f"{space_filter_desc} spaces")
+# We no longer need to load spaces at startup
+# We'll only fetch spaces when the user chooses to run the pickling process
+# This improves startup performance and reduces unnecessary API calls
 
 
 
@@ -463,6 +446,15 @@ print("COUNTING CONFLUENCE PAGES")
 print("=" * 50)
 
 def get_pages_for_space(space_key, date_filter=None):
+    """
+    Fetch pages for a specific space.
+    Personal spaces are always excluded.
+    """
+    # Skip personal spaces
+    if space_key.startswith('~'):
+        print(f"Skipping personal space {space_key}")
+        return []
+        
     # Try to load from pickle first
     pages = load_pages_pickle(space_key)
     if pages is not None:
@@ -489,16 +481,18 @@ def get_pages_for_space(space_key, date_filter=None):
             print(f"Error fetching pages for space {space_key}: {str(e)}")
             # If we can't fetch, return an empty list to avoid breaking the process
             pages = []
+    
     if date_filter:
         filtered = filter_pages_by_date(pages, date_filter)
         print(f"Filtered pages by date: {len(filtered)} of {len(pages)} remain.")
-    return filtered
+        return filtered
     return pages
 
 
 def count_pages_from_pickle(date_filter=None):
     """
     Count pages from pickled data, applying the specified date filter.
+    Personal spaces are always excluded.
     """
     print("\n" + "=" * 50)
     print("COUNTING PAGES FROM PICKLED DATA")
@@ -506,6 +500,8 @@ def count_pages_from_pickle(date_filter=None):
     
     if date_filter:
         print(f"Applying date filter: {date_filter}")
+    
+    print("Personal spaces (those with keys starting with '~') will be excluded.")
     
     # Get list of pickled space files
     pickle_dir = 'temp_counter'
@@ -523,10 +519,19 @@ def count_pages_from_pickle(date_filter=None):
             print(f"No pickle files found in directory '{pickle_dir}'.")
             return
             
-        print(f"Found {len(pickle_files)} pickled space files.")
-        total_spaces = len(pickle_files)
+        print(f"Found {len(pickle_files)} total pickled space files.")
         
-        for pkl_file in pickle_files:
+        # Always filter out personal spaces
+        original_count = len(pickle_files)
+        non_personal_files = [f for f in pickle_files if not os.path.splitext(f)[0].startswith('~')]
+        filtered_out = original_count - len(non_personal_files)
+        if filtered_out > 0:
+            print(f"Filtered out {filtered_out} personal spaces (keys starting with '~')")
+            print(f"Proceeding with {len(non_personal_files)} non-personal spaces")
+        
+        total_spaces = len(non_personal_files)
+        
+        for pkl_file in non_personal_files:
             space_key = os.path.splitext(pkl_file)[0]
             try:
                 pages = load_pages_pickle(space_key)
@@ -550,12 +555,12 @@ def count_pages_from_pickle(date_filter=None):
         print("\n" + "=" * 50)
         print("COUNTING RESULTS")
         print("=" * 50)
-        print(f"Total Spaces: {total_spaces}")
-        print(f"Total Pages (before filtering): {total_pages}")
+        print(f"Total Spaces (excluding personal): {total_spaces}")
+        print(f"Total Pages (before date filtering): {total_pages}")
         
         if date_filter:
-            print(f"Total Pages (after applying filter '{date_filter}'): {filtered_pages}")
-            print(f"Filtered out: {total_pages - filtered_pages} pages ({(total_pages - filtered_pages) / total_pages * 100:.1f}% of total)")
+            print(f"Total Pages (after date filter '{date_filter}'): {filtered_pages}")
+            print(f"Filtered out by date: {total_pages - filtered_pages} pages ({(total_pages - filtered_pages) / total_pages * 100:.1f}% of total)")
         
         print("=" * 50)
         print(f"Counting completed at: {time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -571,10 +576,11 @@ def show_main_menu():
         print("\n==== Confluence Counter Main Menu ====")
         print(f"Current date filter: {date_filter if date_filter else 'None'}")
         print("1. Set/clear date filter")
-        print("2. Run pickling process (uses current date filter)")
-        print("3. Count pages from pickled data (uses current date filter)")
+        print("2. Run pickling process (excludes personal spaces)")
+        print("3. Count pages from pickled data (excludes personal spaces)")
         print("Q. Quit")
         choice = input("Select option: ").strip().lower()
+
         if choice == '1':
             date_filter = get_date_filter_interactive(date_filter)
             if date_filter:
@@ -582,8 +588,9 @@ def show_main_menu():
             else:
                 print("Date filter cleared.")
         elif choice == '2':
-            print("Fetching all spaces...")
-            params = {'limit': 100}
+            print("Fetching non-personal spaces only...")
+            params = {'limit': 100, 'type': 'global'}  # Exclude personal spaces
+            
             all_spaces = []
             start = 0
             while True:
@@ -591,12 +598,17 @@ def show_main_menu():
                 resp = make_api_request(API_SPACE_ENDPOINT, params=params)
                 if not resp or 'results' not in resp:
                     break
+                
                 batch = resp['results']
+                # Double-check to filter out any personal spaces
+                batch = [space for space in batch if 'key' in space and not space['key'].startswith('~')]
                 all_spaces.extend(batch)
                 if len(batch) < 100:
                     break
+                
                 start += 100
-            print(f"Found {len(all_spaces)} spaces.")
+            
+            print(f"Found {len(all_spaces)} non-personal spaces.")
             for space in all_spaces:
                 key = space.get('key')
                 if not key:
