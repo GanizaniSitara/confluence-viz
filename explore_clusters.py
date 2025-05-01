@@ -1,4 +1,3 @@
-# filepath: c:\Solutions\PythonProject\confluence_visualization\explore_clusters.py
 import os
 import pickle
 import sys
@@ -406,15 +405,17 @@ def render_d3_circle_packing(spaces, labels, method, tags=None):
         'key': 'root',
         'name': f'Clustered Spaces ({method})',
         'children': []
-    }    
+    }
     for label, group in clusters.items():
         tag_str = ', '.join(tags[label]) if tags and label in tags else ''
+        total_pages = sum(s.get('total_pages', len(s['sampled_pages'])) for s in group)
+        print(f"Cluster {label}: Total pages = {total_pages}")
         cluster_node = {
             'key': f'cluster_{label}',
             'name': f'Cluster {label}',  # Just the cluster ID
             'tags': tag_str,  # Store tags separately
             'children': [],
-            'value': sum(s.get('total_pages', len(s['sampled_pages'])) for s in group)
+            'value': total_pages
         }
         for s in group:
             # Format the date if average timestamp is available
@@ -435,6 +436,7 @@ def render_d3_circle_packing(spaces, labels, method, tags=None):
                 'date': date_str,  # Include formatted date for tooltip
                 'url': f"{confluence_base_url}/display/{s['space_key']}"  # Add URL for link to Confluence
             })
+        d3_data['children'].append(cluster_node)
         d3_data['children'].append(cluster_node)
     data_json = json.dumps(d3_data)
     percentile_thresholds_json = json.dumps(percentile_thresholds)
