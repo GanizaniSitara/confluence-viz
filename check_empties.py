@@ -355,7 +355,7 @@ def calculate_avg_timestamps(spaces):
             if when:
                 try:
                     # Parse ISO format timestamp and convert to unix timestamp
-                    ts = datetime.fromisoformat(when.replace("Z", "+00:00")).timestamp()
+                    ts = datetime.datetime.fromisoformat(when.replace("Z", "+00:00")).timestamp()
                     timestamps.append(ts)
                 except ValueError:
                     pass
@@ -388,7 +388,7 @@ def filter_spaces_by_date(spaces, date_filter):
         date_str = date_filter[1:].strip()
         
         # Parse the target date string
-        target_date = datetime.strptime(date_str, '%Y-%m-%d')
+        target_date = datetime.datetime.strptime(date_str, '%Y-%m-%d')
         target_timestamp = target_date.timestamp()
         
         # Apply filter
@@ -445,38 +445,41 @@ def ensure_data_loaded():
     
     return cached_spaces
 
-def show_filter_menu():
-    """Show the interactive filter menu and handle user input"""
+def show_main_menu():
+    """Show the main interactive menu and handle user input"""
     global min_pages, max_pages, date_filter, cached_spaces
     
     while True:
-        print("\n--- Filter Settings ---")
-        print(get_filter_info())
-        print("\nOptions:")
+        print("\nMenu:")
         print("1. Set minimum pages filter (current: {})".format(min_pages))
-        print("2. Set maximum pages filter (current: {})".format(max_pages if max_pages else "No limit"))
-        print("3. Set date filter (current: {})".format(date_filter if date_filter else "None"))
-        print("4. Apply filters and continue")
+        print("2. Set maximum pages filter (current: {})".format(max_pages if max_pages else "No limit")) 
+        print(f"3. Set date filter (current: {date_filter if date_filter else 'None'})")
+        print("4. List spaces")
+        print("5. Check a specific space for empty pages")
+        print("6. Check a specific page")
+        print("7. Check all spaces for empty pages")
         print("Q. Quit")
         
         choice = input("\nSelect option: ").strip()
         
         if choice == '1':
+            inp = input("Enter minimum pages per space (0 for all): ").strip()
             try:
-                inp = input("Enter minimum pages per space (0 for all): ").strip()
                 min_pages = int(inp) if inp else 0
-                print(f"Minimum pages filter set to {min_pages}")
                 cached_spaces = []  # Clear cache to force reload
+                print(f"Minimum pages filter set to {min_pages}. Data will be loaded when needed.")
             except ValueError:
                 print("Invalid input. Please enter a number.")
+                
         elif choice == '2':
+            inp = input("Enter maximum pages per space (leave empty for no limit): ").strip()
             try:
-                inp = input("Enter maximum pages per space (leave empty for no limit): ").strip()
                 max_pages = int(inp) if inp else None
-                print(f"Maximum pages filter set to {max_pages if max_pages else 'No limit'}")
                 cached_spaces = []  # Clear cache to force reload
+                print(f"Maximum pages filter set to {max_pages if max_pages else 'No limit'}. Data will be loaded when needed.")
             except ValueError:
                 print("Invalid input. Please enter a number.")
+                
         elif choice == '3':
             print("\nSet date filter to include spaces with average dates before/after a specific date.")
             print("Format: >YYYY-MM-DD (after date) or <YYYY-MM-DD (before date)")
@@ -491,38 +494,14 @@ def show_filter_menu():
                     print("Format should be >YYYY-MM-DD or <YYYY-MM-DD")                
                 else:
                     date_filter = date_input
-                    print(f"Date filter set to {date_filter}")
                     cached_spaces = []  # Clear cache to force reload
+                    print(f"Date filter set to {date_filter}. Data will be loaded when needed.")
             else:
                 date_filter = None
-                print("Date filter cleared")
                 cached_spaces = []  # Clear cache to force reload
+                print("Date filter cleared. Data will be loaded when needed.")
+                
         elif choice == '4':
-            # Load data with new filters
-            ensure_data_loaded()
-            print(f"\nApplying filters: {get_filter_info()}")
-            print(f"Found {len(cached_spaces)} spaces after applying filters.")
-            return True
-        elif choice.upper() == 'Q':
-            print("Exiting...")
-            sys.exit(0)
-        else:
-            print("Invalid option.")
-
-def show_main_menu():
-    """Show the main interactive menu and handle user input"""
-    while True:
-        print("\n=== Confluence Empty Pages Tool ===")
-        print("Choose an action:")
-        print("1. List spaces")
-        print("2. Check a specific space for empty pages")
-        print("3. Check a specific page")
-        print("4. Check all spaces for empty pages")
-        print("Q. Quit")
-        
-        choice = input("\nSelect option: ").strip()
-        
-        if choice == '1':
             print("\nWhich spaces to list?")
             print("1. All spaces")
             print("2. User spaces")
@@ -538,21 +517,21 @@ def show_main_menu():
             else:
                 print("Invalid choice.")
                 
-        elif choice == '2':
+        elif choice == '5':
             space_key = input("\nEnter the space key (e.g., 'MYSPACE' or '~username'): ").strip()
             if space_key:
                 check_pages_in_space(space_key)
             else:
                 print("No space key provided.")
                 
-        elif choice == '3':
+        elif choice == '6':
             page_id = input("\nEnter the page ID: ").strip()
             if page_id:
                 check_single_page(page_id)
             else:
                 print("No page ID provided.")
                 
-        elif choice == '4':
+        elif choice == '7':
             check_all_spaces()
             
         elif choice.upper() == 'Q':
@@ -574,9 +553,8 @@ def list_spaces(space_filter):
         print("SSL verification is DISABLED.")
     print("-" * 30)
     
-    # Show filter menu and load data
-    show_filter_menu()
-    spaces = cached_spaces  # Use already loaded and filtered spaces
+    # Load data with current filters
+    spaces = ensure_data_loaded()
 
     try:
         session = create_session()
@@ -614,7 +592,7 @@ def list_spaces(space_filter):
             # Format the date if available
             avg_timestamp = space.get('avg', 0)
             if avg_timestamp > 0:
-                date_str = datetime.fromtimestamp(avg_timestamp).strftime('%Y-%m-%d')
+                date_str = datetime.datetime.fromtimestamp(avg_timestamp).strftime('%Y-%m-%d')
             else:
                 date_str = "No date"
 
@@ -847,19 +825,15 @@ def check_all_spaces():
     if not VERIFY_SSL:
         print("SSL verification is DISABLED.")
     print("-" * 60)
-    
-    # Show filter menu and ensure data is loaded
-    show_filter_menu()
-    spaces = cached_spaces  # Use already loaded and filtered spaces
+      # Load data with current filters
+    spaces = ensure_data_loaded()
     
     # Filter to only non-personal spaces
     filtered_spaces = [s for s in spaces if not s.get('space_key', '').startswith('~')]
-    print(f"Focusing on {len(filtered_spaces)} non-personal spaces from {len(spaces)} total spaces.")
-
-    # Open file for writing deletable pages
+    print(f"Focusing on {len(filtered_spaces)} non-personal spaces from {len(spaces)} total spaces.")    # Open file for writing deletable pages
     deletable_file = open("deletable_pages.txt", "w")
     deletable_file.write("# Deletable pages in Confluence\n")
-    deletable_file.write(f"# Generated: {datetime.now()}\n")
+    deletable_file.write(f"# Generated: {datetime.datetime.now()}\n")
     deletable_file.write(f"# Filters: {get_filter_info()}\n")
     deletable_file.write("# Format: SPACE,URL\n\n")
 
@@ -966,11 +940,11 @@ if __name__ == "__main__":
     if not has_args:
         # No arguments provided, show interactive menu
         print("\n" + "="*80)
-        print("""
+        print(f"""
     ┌─────────────────────────────────────────────────────────┐
     │                                                         │
-    │   CONFLUENCE EMPTY PAGES TOOL                           │
-    │   =========================                             │
+    │   CONFLUENCE EMPTY PAGES TOOL v1.0                      │
+    │   ===========================                           │
     │                                                         │
     │   Find and manage empty Confluence pages                │
     │                                                         │
