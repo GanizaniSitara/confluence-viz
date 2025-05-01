@@ -188,20 +188,64 @@ def filter_pages_by_date(pages, date_filter):
     except Exception as e:
         print(f"Invalid date filter: {date_filter} - Error: {e}")
         return pages
+    
     filtered = []
     for page in pages:
-        lastmod = page.get('version', {}).get('when') or page.get('lastModified')
-        if not lastmod:
+        # Try multiple fields that might contain date information
+        date_fields = [
+            page.get('lastModified'),
+            page.get('version', {}).get('when'),
+            page.get('history', {}).get('lastUpdated', {}).get('when'),
+            page.get('history', {}).get('createdDate')
+        ]
+        
+        # Use the first non-empty date field
+        page_date_str = next((d for d in date_fields if d), None)
+        
+        if not page_date_str:
             continue
+            
         try:
-            # Try ISO format first
-            page_ts = datetime.datetime.fromisoformat(lastmod[:19]).timestamp()
-        except Exception:
+            # Debug the date format we're working with
+            print(f"Page {page.get('id')} date: {page_date_str[:30]}...")
+            
+            # First try ISO format parsing (2020-01-01T12:00:00.000Z)
+            if 'T' in page_date_str:
+                # Remove any timezone indicator and milliseconds
+                date_part = page_date_str.split('T')[0]
+                time_part = page_date_str.split('T')[1].split('.')[0]
+                page_date_str = f"{date_part}T{time_part}"
+                page_date = datetime.datetime.fromisoformat(page_date_str.replace('Z', '+00:00'))
+            else:
+                # Try various formats
+                for fmt in ['%Y-%m-%d', '%Y/%m/%d', '%d-%m-%Y', '%d/%m/%Y']:
+                    try:
+                        page_date = datetime.datetime.strptime(page_date_str, fmt)
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    # If no format worked, skip this page
+                    continue
+                    
+            page_ts = page_date.timestamp()
+            print(f"  -> Converted to timestamp: {page_ts}")
+            
+            if operator == '>' and page_ts > target_ts:
+                filtered.append(page)
+                print(f"  -> INCLUDED (newer than filter)")
+            elif operator == '<' and page_ts < target_ts:
+                filtered.append(page)
+                print(f"  -> INCLUDED (older than filter)")
+            else:
+                print(f"  -> EXCLUDED (doesn't match filter)")
+                
+        except Exception as e:
+            print(f"  -> Error parsing date '{page_date_str[:30]}': {e}")
             continue
-        if operator == '>' and page_ts > target_ts:
-            filtered.append(page)
-        elif operator == '<' and page_ts < target_ts:
-            filtered.append(page)
+    
+    # Print summary of filtering
+    print(f"Filtered {len(filtered)} of {len(pages)} pages")
     return filtered
 
 # --- Pickle helpers ---
