@@ -254,13 +254,13 @@ def get_all_pages_from_space(session, space_key, limit=100, expand=None):
     
     all_pages = []
     more_results = True
-    
     while more_results:
+        # Debug print to show the full URL and params being used
+        print(f"DEBUG: Fetching pages URL: {url} with params: {params}")
         response_data = make_api_request(session, url, params=params)
         
         if 'results' in response_data:
             all_pages.extend(response_data['results'])
-            
             # Check if there are more pages to fetch
             if response_data.get('_links', {}).get('next'):
                 params['start'] += limit
@@ -268,7 +268,7 @@ def get_all_pages_from_space(session, space_key, limit=100, expand=None):
                 more_results = False
         else:
             more_results = False
-    
+    return all_pages
     return all_pages
 
 def get_attachments_from_content(session, content_id, limit=1):
@@ -623,6 +623,7 @@ def check_pages_in_space(space_key):
     deletable_file.write("# Deletable pages in Confluence\n")
     deletable_file.write(f"# Generated: {datetime.datetime.now()}\n")
     deletable_file.write("# Format: SPACE,URL\n\n")
+    deletable_file.flush()
 
     try:
         # Create a session for all requests
@@ -701,6 +702,7 @@ def check_pages_in_space(space_key):
                 print(f"     Link: {full_link}")
                 # Write to file: SPACE,URL
                 deletable_file.write(f"{space_key},{full_link}\n")
+                deletable_file.flush()  # Ensure data is written immediately
                 found_eligible_page = True
                 eligible_count += 1
 
@@ -734,6 +736,7 @@ def check_single_page(page_id):
     deletable_file.write("# Deletable pages in Confluence\n")
     deletable_file.write(f"# Generated: {datetime.datetime.now()}\n")
     deletable_file.write("# Format: SPACE,URL\n\n")
+    deletable_file.flush()
 
     try:
         # Create a session for all requests
@@ -801,6 +804,7 @@ def check_single_page(page_id):
                 print(f"\nCONCLUSION: This page is EMPTY and DELETABLE.")
                 # Write to file: SPACE,URL
                 deletable_file.write(f"{space_key},{full_link}\n")
+                deletable_file.flush()  # Ensure data is written immediately
                 print(f"Result written to: deletable_pages.txt")
             else:
                 print(f"\nCONCLUSION: This page is {'NOT EMPTY' if not is_content_empty else 'empty'}, {'HAS ATTACHMENTS' if not has_no_attachments else 'has no attachments'}, and {'NOT DELETABLE' if not can_delete else 'deletable'}.")
@@ -836,6 +840,7 @@ def check_all_spaces():
     deletable_file.write(f"# Generated: {datetime.datetime.now()}\n")
     deletable_file.write(f"# Filters: {get_filter_info()}\n")
     deletable_file.write("# Format: SPACE,URL\n\n")
+    deletable_file.flush()
 
     try:
         # Create a session for all requests
@@ -912,6 +917,7 @@ def check_all_spaces():
                         print(f"       Link: {full_link}")
                         # Write to file: SPACE,URL
                         deletable_file.write(f"{space_key},{full_link}\n")
+                        deletable_file.flush()  # Ensure data is written immediately
                         space_eligible_count += 1
                         total_eligible_pages += 1
                 

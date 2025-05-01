@@ -387,6 +387,513 @@ def render_html(spaces, labels, method, tags=None):
     print(f'HTML written to {out_path}')
     webbrowser.open('file://' + os.path.abspath(out_path))
 
+def render_d3_circle_packing(spaces, labels, method, tags=None):
+    # Load visualization settings
+    config = load_visualization_settings()
+    confluence_base_url = config['confluence_base_url']
+    
+    # Calculate average timestamps for spaces if they don't already have them
+    spaces = calculate_avg_timestamps(spaces)
+    
+    # Calculate color thresholds and gradient
+    percentile_thresholds, color_range_hex = calculate_color_data(spaces)
+    
+    # Build hierarchical data structure for D3
+    clusters = defaultdict(list)
+    for s, label in zip(spaces, labels):
+        clusters[label].append(s)
+    d3_data = {
+        'key': 'root',
+        'name': f'Clustered Spaces ({method})',
+        'children': []
+    }    
+    for label, group in clusters.items():
+        tag_str = ', '.join(tags[label]) if tags and label in tags else ''
+        cluster_node = {
+            'key': f'cluster_{label}',
+            'name': f'Cluster {label}',  # Just the cluster ID
+            'tags': tag_str,  # Store tags separately
+            'children': [],
+            'value': sum(s.get('total_pages', len(s['sampled_pages'])) for s in group)
+        }
+        for s in group:
+            # Format the date if average timestamp is available
+            avg_ts = s.get('avg', 0)
+            date_str = ""
+            if avg_ts > 0:
+                try:
+                    date_str = datetime.fromtimestamp(avg_ts).strftime('%Y-%m-%d')
+                except (ValueError, OSError):
+                    date_str = "Invalid date"
+            else:
+                date_str = "No date"
+            cluster_node['children'].append({
+                'key': s['space_key'],                
+                'name': s['space_key'],
+                'value': s.get('total_pages', len(s['sampled_pages'])),
+                'avg': avg_ts,  # Include avg timestamp for coloring
+                'date': date_str,  # Include formatted date for tooltip
+                'url': f"{confluence_base_url}/display/{s['space_key']}"  # Add URL for link to Confluence
+            })
+        d3_data['children'].append(cluster_node)
+    data_json = json.dumps(d3_data)
+    percentile_thresholds_json = json.dumps(percentile_thresholds)
+    color_range_hex_json = json.dumps(color_range_hex)
+    
+    # Use triple quotes with normal string, then format at the end to avoid f-string issues with #
+    html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Clustered Spaces Circle Packing</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body { margin:0; font-family:sans-serif; }
+    .node text { text-anchor:middle; alignment-baseline:middle; font-size:6pt; pointer-events:none; }
+    .group circle { stroke: #555; stroke-width: 1px; }
+    /* Enhanced styles for cluster labels */
+    .cluster-label { 
+      font-size: 14pt; 
+      font-weight: bold; 
+      fill: #000; 
+      text-anchor: middle; 
+      dominant-baseline: middle;
+    }
+    .cluster-label-bg { 
+      stroke: white; 
+      stroke-width: 5px; 
+      stroke-linejoin: round;
+      paint-order: stroke;
+      fill: #000;
+    }    /* Tooltip styling */
+    .tooltip {
+      position: absolute;
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 10px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s;
+      font-size: 11px;
+      max-width: 300px;
+    }
+  </style>
+</head>
+<body>
+<div id="chart"></div>
+<script>
+const data = DATA_JSON_PLACEHOLDER;
+const PERCENTILE_THRESHOLDS = PERCENTILE_THRESHOLDS_PLACEHOLDER;
+const COLOR_RANGE_HEX = COLOR_RANGE_HEX_PLACEHOLDER;
+const GREY_COLOR_HEX = 'GREY_COLOR_HEX_PLACEHOLDER';
+
+// Color scale based on thresholds
+const colorScale = d3.scaleThreshold()
+  .domain(PERCENTILE_THRESHOLDS)
+  .range(COLOR_RANGE_HEX);
+
+const width = 1800, height = 1200;
+const root = d3.pack()
+  .size([width, height])
+  .padding(6)
+  (d3.hierarchy(data)
+  .sum(d => d.value));
+const svg = d3.select('#chart').append('svg')
+  .attr('width', width)
+  .attr('height', height);
+
+// Create tooltip div
+const tooltip = d3.select("body").append("div")
+  .attr("class", "tooltip");
+
+const g = svg.selectAll('g')
+  .data(root.descendants())
+  .enter().append('g')
+  .attr('transform', d => `translate(${d.x},${d.y})`)
+  .attr('cursor', d => !d.children && d.data.url ? 'pointer' : 'default')  .on("mouseover", function(event, d) {
+    if (!d.children && d.data.date) {
+      tooltip.transition()
+        .duration(200)
+        .style("opacity", 0.9);
+      tooltip.html(`<strong>${d.data.key}</strong><br>Pages: ${d.data.value}<br>Blended Age: ${d.data.date}<br><br>Click to open: <span style="font-size:10px;word-break:break-all;">${d.data.url}</span>`)
+        .style("left", (event.pageX + 10) + "px")
+        .style("top", (event.pageY - 28) + "px");
+    }
+  })
+  .on("mouseout", function() {
+    tooltip.transition()
+      .duration(500)
+      .style("opacity", 0);
+  })
+  .on("click", function(event, d) {
+    // Only handle clicks on leaf nodes (spaces, not clusters)
+    if (!d.children && d.data.url) {
+      window.open(d.data.url, '_blank');
+    }
+  });
+
+g.append('circle')
+  .attr('r', d => d.r)
+  .attr('fill', d => {
+    // For non-leaf nodes (clusters), use light gray
+    if (d.children) return '#f8f8f8';
+    
+    // For leaf nodes (spaces)
+    if (!d.data.avg || d.data.avg <= 0) return GREY_COLOR_HEX;
+    return colorScale(d.data.avg);
+  })
+  .attr('class', d => d.children ? 'group' : 'leaf');
+
+const leafNodes = g.filter(d => !d.children);
+leafNodes.append('text')
+  .attr('dy','-0.35em')
+  .attr('text-anchor', 'middle')
+  .attr('style', 'font-size:6pt;')
+  .text(d => d.data.key);
+
+leafNodes.append('text')
+  .attr('dy','0.75em')
+  .attr('text-anchor', 'middle')
+  .attr('style', 'font-size:6pt;')
+  .text(d => d.data.value);
+
+// Create separate layer for cluster labels to ensure they're on top
+const clusterLabels = svg.append('g')
+  .attr('class', 'cluster-labels')
+  .attr('pointer-events', 'none');  // Make sure it doesn't block interactions
+
+// Add labels for cluster nodes
+g.filter(d => d.depth > 0 && d.children).each(function(d) {
+  // Create a text element for the cluster ID (first line)
+  clusterLabels.append('text')
+    .attr('x', d.x)
+    .attr('y', d.y)
+    .attr('dy', '-0.4em')  // Position above center
+    .attr('text-anchor', 'middle')
+    .attr('class', 'cluster-label')
+    .text(d.data.name || d.data.key)  // Simply use the name directly
+    .style('font-size', '14pt')
+    .style('font-weight', 'bold')
+    .style('stroke', 'white')    
+    .style('stroke-width', '3px')
+    .style('stroke-linejoin', 'round')
+    .style('paint-order', 'stroke')
+    .style('fill', '#000000');
+    
+  // Add second line with just the tags in brackets
+  if (d.data.tags && d.data.tags.length > 0) {
+    clusterLabels.append('text')
+      .attr('x', d.x)
+      .attr('y', d.y)
+      .attr('dy', '1.1em')  // Position below center
+      .attr('text-anchor', 'middle')
+      .attr('class', 'cluster-label')
+      .text(`[${d.data.tags}]`)
+      .style('font-size', '12pt')  // Slightly smaller font for tags
+      .style('font-weight', 'bold')
+      .style('stroke', 'white')    
+      .style('stroke-width', '2px')
+      .style('stroke-linejoin', 'round')
+      .style('paint-order', 'stroke')
+      .style('fill', '#000000');
+  }
+});
+
+// Add legend for color scale
+const legendWidth = 200;
+const legendHeight = 20;
+const legendX = width - legendWidth - 20;
+const legendY = 20;
+
+// Create legend title
+svg.append('text')
+  .attr('x', legendX)
+  .attr('y', legendY - 7)
+  .style('font-size', '12px')
+  .text('Page Age (by Last Edit)');
+
+// Create gradient for legend
+const gradient = svg.append('linearGradient')
+  .attr('id', 'legend-gradient')
+  .attr('x1', '0%')
+  .attr('x2', '100%')
+  .attr('y1', '0%')
+  .attr('y2', '0%');
+
+COLOR_RANGE_HEX.forEach((color, i) => {
+  gradient.append('stop')
+    .attr('offset', `${i * 100 / (COLOR_RANGE_HEX.length - 1)}%`)
+    .attr('stop-color', color);
+});
+
+// Add rectangle with gradient
+svg.append('rect')
+  .attr('x', legendX)
+  .attr('y', legendY)
+  .attr('width', legendWidth)
+  .attr('height', legendHeight)
+  .style('fill', 'url(#legend-gradient)');
+
+// Add labels for oldest and newest
+svg.append('text')
+  .attr('x', legendX)
+  .attr('y', legendY + legendHeight + 15)
+  .style('font-size', '10px')
+  .text('Oldest');
+
+svg.append('text')
+  .attr('x', legendX + legendWidth)
+  .attr('y', legendY + legendHeight + 15)
+  .style('font-size', '10px')
+  .attr('text-anchor', 'end')
+  .text('Newest');
+</script>
+</body>
+</html>"""
+
+    # Replace placeholders with actual data
+    html = html.replace('DATA_JSON_PLACEHOLDER', data_json)
+    html = html.replace('PERCENTILE_THRESHOLDS_PLACEHOLDER', percentile_thresholds_json)
+    html = html.replace('COLOR_RANGE_HEX_PLACEHOLDER', color_range_hex_json)
+    html = html.replace('GREY_COLOR_HEX_PLACEHOLDER', GREY_COLOR_HEX)
+    
+    out_path = 'clustered_spaces_d3.html'
+    with open(out_path, 'w', encoding='utf-8') as f:
+        f.write(html)
+    print(f'D3 circle packing HTML written to {out_path}')
+    webbrowser.open('file://' + os.path.abspath(out_path))
+
+def explain_algorithms():
+    print("\nClustering Algorithm Help:")
+    print("1. Agglomerative: Hierarchical clustering that merges similar spaces into clusters based on their features (e.g., page count). Good for discovering nested/grouped structure.")
+    print("2. KMeans: Partitions spaces into a fixed number of clusters by minimizing within-cluster variance. Good for even-sized, well-separated groups.")
+    print("3. DBSCAN: Groups spaces based on density (how close together they are). Good for finding clusters of varying size and ignoring noise/outliers.")
+    print("4. Visualization: Shows a bar chart of total number of pages per space, sorted descending.")
+    print("5. Topic Naming/Tags: After clustering, the script will suggest tags for each cluster based on the most common words in the space keys (or you can extend to use semantic data).\n")
+
+def visualize_total_pages(spaces):
+    # Bar chart of total pages per space
+    keys = [s['space_key'] for s in spaces]
+    totals = [s.get('total_pages', len(s['sampled_pages'])) for s in spaces]
+    sorted_pairs = sorted(zip(keys, totals), key=lambda x: x[1], reverse=True)
+    keys_sorted, totals_sorted = zip(*sorted_pairs)
+    plt.figure(figsize=(12, 6))
+    plt.bar(keys_sorted, totals_sorted)
+    plt.xticks(rotation=90, fontsize=8)
+    plt.ylabel('Total Pages')
+    plt.title('Total Number of Pages per Space')
+    plt.tight_layout()
+    plt.show()
+
+def suggest_tags_for_clusters(spaces, labels):
+    clusters = defaultdict(list)
+    for s, label in zip(spaces, labels):
+        clusters[label].append(s)
+    tags = {}
+    
+    for label, group in clusters.items():
+        # Get text from page titles and space names if available
+        all_text = []
+        
+        for s in group:
+            # Add space key (still useful as a backup)
+            all_text.append(s['space_key'])
+            
+            # Extract titles from pages if available
+            for page in s.get('sampled_pages', []):
+                if 'title' in page and page['title']:
+                    all_text.append(page['title'])
+            
+            # Look for a space name if present
+            if 'name' in s and s['name']:
+                all_text.append(s['name'])
+        
+        # Join all text and split into words
+        text = ' '.join(all_text)
+        # Remove special characters and convert to lowercase
+        cleaned_text = re.sub(r'[^\w\s]', ' ', text.lower())
+        words = cleaned_text.split()
+        
+        # Filter out stopwords and short words using the loaded STOPWORDS
+        filtered_words = [w for w in words if w not in STOPWORDS and len(w) > 2]
+        
+        # Count word frequencies
+        common = Counter(filtered_words).most_common(5)
+        
+        # Select most common words
+        top_words = [w for w, _ in common][:3]  # Limit to top 3
+        
+        if not top_words and all('space_key' in s for s in group):
+            # Fall back to space keys if no meaningful words found
+            key_parts = []
+            for s in group:
+                key_parts.extend(s['space_key'].split('-'))
+            fallback_common = Counter(key_parts).most_common(3)
+            top_words = [w for w, _ in fallback_common]
+        
+        tags[label] = top_words
+    
+    return tags
+
+def search_for_applications(spaces):
+    """
+    Search for applications in Confluence spaces using app_search.txt
+    and generate HTML report showing which spaces contain which applications.
+    """
+    # Check if application search list exists
+    app_search_path = os.path.join(os.path.dirname(__file__), 'app_search.txt')
+    if not os.path.exists(app_search_path):
+        print(f"Error: app_search.txt not found at {app_search_path}")
+        print("Please create this file with one application name per line.")
+        return    # Load application search terms
+    try:
+        with open(app_search_path, 'r') as f:
+            # Skip lines starting with # (comments) and empty lines
+            search_terms = [line.strip() for line in f 
+                           if line.strip() and not line.strip().startswith('#')]
+    except Exception as e:
+        print(f"Error reading app_search.txt: {e}")
+        return
+
+    if not search_terms:
+        print("No search terms found in app_search.txt")
+        print("Please add at least one application name per line.")
+        return
+
+    print(f"Loaded {len(search_terms)} application search terms.")
+    print(f"Searching {len(spaces)} spaces for these applications...")
+
+    # Dictionary to hold results
+    # Format: {app_term: [(space_key, hit_count, matched_pages), ...]}
+    app_hits = defaultdict(list)
+
+    # Track spaces that have at least one hit
+    spaces_with_hits = set()
+
+    for s in spaces:
+        space_key = s.get('space_key', 'unknown')
+        
+        for term in search_terms:
+            # Track matches for this term in this space
+            matched_pages = []
+            term_lower = term.lower()
+            
+            for page in s.get('sampled_pages', []):
+                # Check title
+                if 'title' in page and term_lower in page.get('title', '').lower():
+                    matched_pages.append(page.get('title', ''))
+                    continue
+                    
+                # Check body content if we haven't already matched the title
+                body = page.get('body', '')
+                if body and term_lower in body.lower():
+                    matched_pages.append(page.get('title', 'Untitled'))
+            
+            # If we have matches, add them to our results
+            if matched_pages:
+                hit_count = len(matched_pages)
+                app_hits[term].append((space_key, hit_count, matched_pages[:5]))  # Store up to 5 matched pages for display
+                spaces_with_hits.add(space_key)
+
+    # Generate HTML report
+    html = ['<html><head><title>Application Search Results</title>',
+            '<style>',
+            'body { font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; }',
+            'h1 { color: #2c3e50; }',
+            'h2 { color: #3498db; margin-top: 30px; }',
+            'table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }',
+            'th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }',
+            'th { background-color: #f2f2f2; position: sticky; top: 0; }',
+            'tr:nth-child(even) { background-color: #f9f9f9; }',
+            'tr:hover { background-color: #f1f1f1; }',
+            '.summary { margin-bottom: 30px; padding: 10px; background-color: #eaf2f8; border-radius: 5px; }',
+            '.hit-count { font-weight: bold; color: #2980b9; }',
+            '.matched-pages { font-size: 0.9em; color: #7f8c8d; max-width: 400px; }',
+            '</style>',
+            '</head><body>']
+
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    html.append(f'<h1>Application Search Results</h1>')
+    html.append(f'<p>Generated: {timestamp}</p>')
+    
+    # Summary section
+    html.append('<div class="summary">')
+    html.append(f'<p>Searched <b>{len(spaces)}</b> Confluence spaces for <b>{len(search_terms)}</b> application terms.</p>')
+    html.append(f'<p>Found matches in <b>{len(spaces_with_hits)}</b> spaces.</p>')
+    html.append('<p>Applications with most mentions:</p><ul>')
+    
+    # Show top 5 applications by total hit count
+    sorted_apps = sorted(app_hits.items(), key=lambda x: sum(count for _, count, _ in x[1]), reverse=True)
+    for app, hits in sorted_apps[:5]:
+        total_hits = sum(count for _, count, _ in hits)
+        html.append(f'<li><b>{app}</b>: {total_hits} mentions in {len(hits)} spaces</li>')
+    
+    html.append('</ul></div>')
+    
+    # First table: Application-centric view
+    html.append('<h2>Applications and Where They Appear</h2>')
+    html.append('<table>')
+    html.append('<tr><th>Application</th><th>Space Key</th><th>Hit Count</th><th>Sample Matched Pages</th></tr>')
+    
+    for app, hits in sorted_apps:
+        # Sort by hit count for this application
+        sorted_hits = sorted(hits, key=lambda x: x[1], reverse=True)
+        if sorted_hits:
+            # First row includes application name
+            space, count, pages = sorted_hits[0]
+            html.append(f'<tr><td rowspan="{len(sorted_hits)}">{app}</td><td>{space}</td><td class="hit-count">{count}</td>')
+            html.append(f'<td class="matched-pages">{", ".join(pages[:5])}')
+            if len(pages) > 5:
+                html.append(' <i>(and more...)</i>')
+            html.append('</td></tr>')
+            
+            # Remaining rows for this application
+            for space, count, pages in sorted_hits[1:]:
+                html.append(f'<tr><td>{space}</td><td class="hit-count">{count}</td>')
+                html.append(f'<td class="matched-pages">{", ".join(pages[:5])}')
+                if len(pages) > 5:
+                    html.append(' <i>(and more...)</i>')
+                html.append('</td></tr>')
+    
+    html.append('</table>')
+    
+    # Second table: Space-centric view
+    html.append('<h2>Spaces and Applications They Contain</h2>')
+    html.append('<table>')
+    html.append('<tr><th>Space Key</th><th>Applications Found</th><th>Total Mentions</th></tr>')
+    
+    # Build space-centric data
+    space_data = defaultdict(list)
+    for app, hits in app_hits.items():
+        for space, count, _ in hits:
+            space_data[space].append((app, count))
+    
+    # Sort spaces by total hit count
+    sorted_spaces = sorted(space_data.items(), 
+                          key=lambda x: sum(count for _, count in x[1]), 
+                          reverse=True)
+    
+    for space, app_list in sorted_spaces:
+        total_hits = sum(count for _, count in app_list)
+        app_formatted = ', '.join([f"{app} ({count})" for app, count in 
+                                  sorted(app_list, key=lambda x: x[1], reverse=True)])
+        html.append(f'<tr><td>{space}</td><td>{app_formatted}</td><td>{total_hits}</td></tr>')
+    
+    html.append('</table>')
+    html.append('</body></html>')
+    
+    # Write to file
+    out_path = 'application_search_results.html'
+    with open(out_path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(html))
+    
+    print(f'\nSearch complete! Results written to {out_path}')
+    print(f'Found {len(spaces_with_hits)} spaces with matches to your search terms.')
+    
+    # Open the HTML file in the browser
+    webbrowser.open('file://' + os.path.abspath(out_path))
+
 def preprocess_application_search_index(spaces):
     """
     Preprocess and index all spaces and pages using Whoosh for fast full-text search.
