@@ -5,6 +5,8 @@ import urllib3 # Import urllib3 to reference its warning class
 import argparse # Import argparse for command-line arguments
 import random # Import random for jitter
 import os
+import pickle
+import datetime # Import datetime for date parsing and timestamp operations
 from config_loader import load_confluence_settings
 
 # --- Suppress InsecureRequestWarning ---
@@ -133,6 +135,11 @@ parser.add_argument(
          'Takes precedence over --all and --personal.'
 )
 
+
+# Add date filter and menu arguments
+parser.add_argument('--date-filter', help="Page last updated filter: >YYYY-MM-DD (after), <YYYY-MM-DD (before). If not set, no filter.")
+parser.add_argument('--menu', action='store_true', help='Show interactive menu for date filter.')
+
 args = parser.parse_args()
 CONFLUENCE_BASE_URL = args.url # Update URL from command line if provided
 
@@ -140,6 +147,90 @@ CONFLUENCE_BASE_URL = args.url # Update URL from command line if provided
 API_SPACE_ENDPOINT = f'{CONFLUENCE_BASE_URL}/rest/api/space'
 API_CONTENT_ENDPOINT = f'{CONFLUENCE_BASE_URL}/rest/api/content'
 API_SEARCH_ENDPOINT = f'{CONFLUENCE_BASE_URL}/rest/api/search'
+
+# --- Date Filter Menu ---
+def get_date_filter_interactive(current_filter=None):
+    print("\nSet date filter to include pages last updated before/after a specific date.")
+    print("Format: >YYYY-MM-DD (after date) or <YYYY-MM-DD (before date)")
+    print("Examples: >2017-01-01 (pages updated after Jan 1, 2017)")
+    print("          <2020-03-15 (pages updated before March 15, 2020)")
+    print(f"Current filter: {current_filter if current_filter else 'None'}")
+    print("Enter an empty string to clear the filter.")
+    
+    while True:
+        date_input = input("Enter date filter: ").strip()
+        if not date_input:
+            return None
+        if date_input[0] in ['<', '>']:
+            date_str = date_input[1:].strip()
+            print(f"Parsing date: '{date_str}'")
+            try:
+                datetime.datetime.strptime(date_str, '%Y-%m-%d')
+                return date_input[0] + date_str  # Ensure we return with the operator
+            except Exception as e:
+                print(f"Invalid date format: {e}")
+                print("Use YYYY-MM-DD format (example: <2014-01-01)")
+        else:
+            print("Error: Date filter must start with < or >")
+            print("Format should be >YYYY-MM-DD or <YYYY-MM-DD")
+
+# --- Page Date Filter ---
+def filter_pages_by_date(pages, date_filter):
+    if not date_filter:
+        return pages
+    operator = date_filter[0]
+    date_str = date_filter[1:].strip()
+    try:
+        print(f"Trying to parse filter date: '{date_str}'")
+        target_date = datetime.datetime.strptime(date_str, '%Y-%m-%d')
+        target_ts = target_date.timestamp()
+        print(f"Filter date parsed: {target_date.strftime('%Y-%m-%d')} (timestamp: {target_ts})")
+    except Exception as e:
+        print(f"Invalid date filter: {date_filter} - Error: {e}")
+        return pages
+    filtered = []
+    for page in pages:
+        lastmod = page.get('version', {}).get('when') or page.get('lastModified')
+        if not lastmod:
+            continue
+        try:
+            # Try ISO format first
+            page_ts = datetime.datetime.fromisoformat(lastmod[:19]).timestamp()
+        except Exception:
+            continue
+        if operator == '>' and page_ts > target_ts:
+            filtered.append(page)
+        elif operator == '<' and page_ts < target_ts:
+            filtered.append(page)
+    return filtered
+
+# --- Pickle helpers ---
+def save_pages_pickle(space_key, pages, folder='temp_counter'):
+    os.makedirs(folder, exist_ok=True)
+    try:
+        with open(os.path.join(folder, f'{space_key}.pkl'), 'wb') as f:
+            pickle.dump(pages, f)
+        print(f"Successfully saved {len(pages)} pages for space {space_key} to cache.")
+    except Exception as e:
+        print(f"Error saving pickle for {space_key}: {str(e)}")
+
+def load_pages_pickle(space_key, folder='temp_counter'):
+    path = os.path.join(folder, f'{space_key}.pkl')
+    if os.path.exists(path):
+        try:
+            with open(path, 'rb') as f:
+                return pickle.load(f)
+        except EOFError:
+            print(f"Corrupted pickle file for {space_key}, will re-fetch data")
+            # Remove the corrupted file so we don't try to load it again
+            try:
+                os.remove(path)
+                print(f"Removed corrupted pickle file: {path}")
+            except Exception as e:
+                print(f"Could not remove corrupted file {path}: {str(e)}")
+        except Exception as e:
+            print(f"Error loading pickle for {space_key}: {str(e)}")
+    return None
 
 
 def count_using_cql(cql_query, description="items"):
@@ -317,92 +408,165 @@ print(f"Space filter: {space_filter_desc}")
 total_spaces = get_all_items(API_SPACE_ENDPOINT, space_params, f"{space_filter_desc} spaces")
 
 
-# --- Get Total Pages ---
+
+# --- Interactive menu for date filter if requested ---
+date_filter = args.date_filter
+if args.menu:
+    date_filter = get_date_filter_interactive()
+
 print("\n" + "=" * 50)
 print("COUNTING CONFLUENCE PAGES")
 print("=" * 50)
 
-# For a specific space or all pages
-if args.space_key:
-    # Count pages in a specific space using CQL
-    print(f"Counting pages in specific space: {args.space_key}")
-    
-    # Check if the space key is a personal space
-    if args.space_key.startswith('~') and not (args.all or args.personal):
-        print(f"Warning: Space key '{args.space_key}' appears to be a personal space (starts with '~')")
-        print(f"By default, only non-personal spaces are counted.")
-        print(f"Continuing with the specific space as requested...")
-    
-    # Try CQL approach first (faster)
-    cql_query = f"space = {args.space_key} AND type = page"
-    total_pages = count_using_cql(cql_query, f"pages in space {args.space_key}")
-    
-    # Description for output
-    page_count_desc = f"in space {args.space_key}"
-else:
-    # Count all pages using CQL based on space filter
-    if args.personal:
-        print("Counting pages in personal spaces only")
-        cql_query = "type = page AND space.type = 'personal'"
-        total_pages = count_using_cql(cql_query, "pages in personal spaces")
-        page_count_desc = "across all personal spaces"
-    elif args.all:
-        print("Counting pages across all spaces (personal and non-personal)")
-        cql_query = "type = page"
-        total_pages = count_using_cql(cql_query, "pages across all spaces")
-        page_count_desc = "across all spaces (personal and non-personal)"
+def get_pages_for_space(space_key, date_filter=None):
+    # Try to load from pickle first
+    pages = load_pages_pickle(space_key)
+    if pages is not None:
+        print(f"Loaded {len(pages)} pages for space {space_key} from cache.")
     else:
-        # Default: count non-personal spaces only
-        print("Counting pages across non-personal spaces only")
-        cql_query = "type = page AND space.type = 'global'"
-        total_pages = count_using_cql(cql_query, "pages in non-personal spaces")
-        page_count_desc = "across all non-personal spaces"
+        print(f"Fetching pages for space {space_key} from API...")
+        params = {'type': 'page', 'spaceKey': space_key, 'limit': 100}
+        all_pages = []
+        start = 0
+        try:
+            while True:
+                params['start'] = start
+                resp = make_api_request(API_CONTENT_ENDPOINT, params=params)
+                if not resp or 'results' not in resp:
+                    break
+                batch = resp['results']
+                all_pages.extend(batch)
+                if len(batch) < 100:
+                    break
+                start += 100
+            pages = all_pages
+            save_pages_pickle(space_key, pages)
+        except Exception as e:
+            print(f"Error fetching pages for space {space_key}: {str(e)}")
+            # If we can't fetch, return an empty list to avoid breaking the process
+            pages = []
+    if date_filter:
+        filtered = filter_pages_by_date(pages, date_filter)
+        print(f"Filtered pages by date: {len(filtered)} of {len(pages)} remain.")
+    return filtered
+    return pages
 
-# If CQL counting fails, fall back to the original method
-if total_pages is None:
-    print("\nCQL search failed or returned unexpected response.")
-    print("Falling back to API-based page counting (this may take longer)...")
+
+def count_pages_from_pickle(date_filter=None):
+    """
+    Count pages from pickled data, applying the specified date filter.
+    """
+    print("\n" + "=" * 50)
+    print("COUNTING PAGES FROM PICKLED DATA")
+    print("=" * 50)
     
-    if args.space_key:
-        # For a specific space
-        content_params = {
-            'type': 'page',
-            'spaceKey': args.space_key,
-            'limit': 100
-        }
-        total_pages = get_all_items(API_CONTENT_ENDPOINT, content_params, f"pages in space {args.space_key}")
-    else:
-        # For all spaces
-        content_params = {
-            'type': 'page',
-            'limit': 100
-        }
-        
-        # Apply space type filtering for the fallback method
-        if args.personal:
-            content_params['spaceType'] = 'personal'
-        elif not args.all:
-            content_params['spaceType'] = 'global'
+    if date_filter:
+        print(f"Applying date filter: {date_filter}")
+    
+    # Get list of pickled space files
+    pickle_dir = 'temp_counter'
+    total_spaces = 0
+    total_pages = 0
+    filtered_pages = 0
+    
+    try:
+        if not os.path.exists(pickle_dir):
+            print(f"Pickle directory '{pickle_dir}' does not exist.")
+            return
             
-        total_pages = get_all_items(API_CONTENT_ENDPOINT, content_params, "pages")
+        pickle_files = [f for f in os.listdir(pickle_dir) if f.endswith('.pkl')]
+        if not pickle_files:
+            print(f"No pickle files found in directory '{pickle_dir}'.")
+            return
+            
+        print(f"Found {len(pickle_files)} pickled space files.")
+        total_spaces = len(pickle_files)
+        
+        for pkl_file in pickle_files:
+            space_key = os.path.splitext(pkl_file)[0]
+            try:
+                pages = load_pages_pickle(space_key)
+                if pages is None:
+                    print(f"No data for space {space_key}, skipping.")
+                    continue
+                    
+                total_pages += len(pages)
+                
+                if date_filter:
+                    filtered = filter_pages_by_date(pages, date_filter)
+                    filtered_pages += len(filtered)
+                    print(f"Space {space_key}: {len(filtered)} of {len(pages)} pages match the date filter.")
+                else:
+                    print(f"Space {space_key}: {len(pages)} pages.")
+                    
+            except Exception as e:
+                print(f"Error processing space {space_key}: {str(e)}")
+        
+        # Print summary
+        print("\n" + "=" * 50)
+        print("COUNTING RESULTS")
+        print("=" * 50)
+        print(f"Total Spaces: {total_spaces}")
+        print(f"Total Pages (before filtering): {total_pages}")
+        
+        if date_filter:
+            print(f"Total Pages (after applying filter '{date_filter}'): {filtered_pages}")
+            print(f"Filtered out: {total_pages - filtered_pages} pages ({(total_pages - filtered_pages) / total_pages * 100:.1f}% of total)")
+        
+        print("=" * 50)
+        print(f"Counting completed at: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print("=" * 50)
+        
+    except Exception as e:
+        print(f"Error during counting process: {str(e)}")
 
 
-# --- Print Results ---
-print("\n" + "=" * 50)
-print("CONFLUENCE COUNT RESULTS")
-print("=" * 50)
-print(f"Base URL: {CONFLUENCE_BASE_URL}")
-print("-" * 50)
+def show_main_menu():
+    date_filter = None
+    while True:
+        print("\n==== Confluence Counter Main Menu ====")
+        print(f"Current date filter: {date_filter if date_filter else 'None'}")
+        print("1. Set/clear date filter")
+        print("2. Run pickling process (uses current date filter)")
+        print("3. Count pages from pickled data (uses current date filter)")
+        print("Q. Quit")
+        choice = input("Select option: ").strip().lower()
+        if choice == '1':
+            date_filter = get_date_filter_interactive(date_filter)
+            if date_filter:
+                print(f"Date filter set to: {date_filter}")
+            else:
+                print("Date filter cleared.")
+        elif choice == '2':
+            print("Fetching all spaces...")
+            params = {'limit': 100}
+            all_spaces = []
+            start = 0
+            while True:
+                params['start'] = start
+                resp = make_api_request(API_SPACE_ENDPOINT, params=params)
+                if not resp or 'results' not in resp:
+                    break
+                batch = resp['results']
+                all_spaces.extend(batch)
+                if len(batch) < 100:
+                    break
+                start += 100
+            print(f"Found {len(all_spaces)} spaces.")
+            for space in all_spaces:
+                key = space.get('key')
+                if not key:
+                    continue
+                pages = get_pages_for_space(key, date_filter)
+                print(f"Space {key}: {len(pages)} pages pickled (date filter applied if set).")
+            print("Pickling process complete.")
+        elif choice == '3':
+            count_pages_from_pickle(date_filter)
+        elif choice == 'q':
+            print("Exiting.")
+            break
+        else:
+            print("Invalid option.")
 
-if total_spaces is not None:
-    print(f"Total {space_filter_desc.capitalize()} Spaces: {total_spaces}")
-else:
-    print(f"Could not retrieve total {space_filter_desc} spaces.")
-
-if total_pages is not None:
-    print(f"Total Pages {page_count_desc}: {total_pages}")
-else:
-    print(f"Could not retrieve total pages {page_count_desc}.")
-print("=" * 50)
-print(f"Counting completed at: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-print("=" * 50)
+if __name__ == "__main__":
+    show_main_menu()
