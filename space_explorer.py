@@ -625,7 +625,7 @@ def show_main_menu():
         elif choice == '3':
             view_space_pickle_from_folder("temp_space_explorer_body")
         elif choice == '4':
-            space_key_input = input("Enter Space Key to fetch (incl. body): ").strip().upper()
+            space_key_input = input("Enter Space Key to fetch (incl. body): ").strip()
             if space_key_input:
                 pickle_space_details(space_key_input, include_body=True)
             else:
@@ -633,7 +633,7 @@ def show_main_menu():
         elif choice == '5':
             view_space_pickle_summary()
         elif choice == '6':
-            space_key_input = input("Enter Space Key to fetch (NO body): ").strip().upper()
+            space_key_input = input("Enter Space Key to fetch (NO body): ").strip()
             if space_key_input:
                 pickle_space_details(space_key_input, include_body=False)
             else:
