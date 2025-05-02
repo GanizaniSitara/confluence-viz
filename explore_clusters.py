@@ -12,6 +12,7 @@ import json
 from datetime import datetime
 import shutil
 from config_loader import load_visualization_settings
+import operator
 
 # Try to import Whoosh (will be used for options 14 and 15)
 try:
@@ -1458,6 +1459,133 @@ def search_applications_indexed_top_space():
     webbrowser.open('file://' + os.path.abspath(out_path))
 
 
+def search_applications_indexed_top_space_per_term():
+    """
+    Search for applications using the Whoosh index. For each search term,
+    find the single space where that term appears most frequently.
+    """
+    if not WHOOSH_AVAILABLE:
+        print("Error: Whoosh library is not installed. Please install it with:")
+        print("pip install whoosh")
+        return
+
+    # Check if index exists
+    if not os.path.exists(WHOOSH_INDEX_DIR) or not exists_in(WHOOSH_INDEX_DIR):
+        print(f"Error: Whoosh index not found in {WHOOSH_INDEX_DIR}")
+        print("Please run option 14 first to create the search index.")
+        return
+
+    # Load application search terms
+    app_search_path = os.path.join(os.path.dirname(__file__), 'app_search.txt')
+    if not os.path.exists(app_search_path):
+        print(f"Error: app_search.txt not found at {app_search_path}")
+        print("Please create this file with one application name per line.")
+        return
+
+    # Load search terms
+    try:
+        with open(app_search_path, 'r') as f:
+            # Skip lines starting with # (comments) and empty lines
+            search_terms = [line.strip() for line in f
+                           if line.strip() and not line.strip().startswith('#')]
+    except Exception as e:
+        print(f"Error reading app_search.txt: {e}")
+        return
+
+    if not search_terms:
+        print("No search terms found in app_search.txt")
+        print("Please add at least one application name per line.")
+        return
+
+    print(f"Loaded {len(search_terms)} application search terms from app_search.txt")
+
+    # Open the index
+    ix = open_dir(WHOOSH_INDEX_DIR)
+
+    # Dictionary to hold results: {term: (top_space, max_hits)}
+    term_top_spaces = {}
+
+    # Search for each term
+    print(f"Searching indexed data to find top space per term...")
+    start_time = datetime.now()
+
+    with ix.searcher() as searcher:
+        for term in search_terms:
+            print(f"Searching for: {term}")
+            term_start_time = datetime.now()
+
+            # Create a query that searches both title and content
+            query_parser = MultifieldParser(["page_title", "page_content"], ix.schema)
+
+            # Process the term to handle special characters
+            processed_term = term
+            for char in '+-/\\\\()*&^%$#@!~`"\\\'|':
+                if char in processed_term:
+                    processed_term = processed_term.replace(char, f"\\\\{char}")
+
+            # Optionally use phrase queries for multi-word terms
+            if " " in processed_term:
+                query_str = f'"{processed_term}"'  # Phrase query
+            else:
+                query_str = processed_term
+
+            # Parse the query
+            try:
+                query = query_parser.parse(query_str)
+            except Exception as e:
+                print(f"Query error for term '{term}': {e}")
+                print("Skipping this term.")
+                continue
+
+            # Execute the search (limit can be adjusted or removed if needed)
+            # Using a large limit to try and get all hits for accurate counting per space
+            SEARCH_LIMIT_PER_TERM = 10000 
+            try:
+                results = searcher.search(query, limit=SEARCH_LIMIT_PER_TERM)
+                print(f"Found {len(results)} hits for '{term}' (within limit {SEARCH_LIMIT_PER_TERM})")
+
+                # Process results to count hits per space for this term
+                space_hit_counts = Counter()
+                for result in results:
+                    space_key = result["space_key"]
+                    space_hit_counts[space_key] += 1
+
+                # Find the space with the maximum hits for this term
+                if space_hit_counts:
+                    # Find the space key with the maximum count
+                    top_space, max_hits = space_hit_counts.most_common(1)[0]
+                    term_top_spaces[term] = (top_space, max_hits)
+                    print(f"  -> Top space: {top_space} ({max_hits} hits)")
+                else:
+                    term_top_spaces[term] = ("None found", 0)
+                    print(f"  -> No spaces found for this term.")
+
+
+                term_elapsed = datetime.now() - term_start_time
+                print(f"Processed in {term_elapsed.total_seconds():.2f} seconds")
+
+            except Exception as e:
+                print(f"Search error for term '{term}': {e}")
+                term_top_spaces[term] = ("Search Error", 0)
+
+
+    total_elapsed = datetime.now() - start_time
+    print(f"\nTotal search time: {total_elapsed.total_seconds():.2f} seconds")
+
+    # Print the final results
+    print("\n--- Top Space per Search Term ---")
+    if term_top_spaces:
+        # Sort by term for consistent output
+        sorted_terms = sorted(term_top_spaces.items(), key=operator.itemgetter(0))
+        for term, (space, hits) in sorted_terms:
+             print(f"Term: '{term}' -> Top Space: {space} ({hits} hits)")
+    else:
+        print("No results found.")
+
+    print("\nPress Enter to continue...")
+    input()
+
+
 def main():
     min_pages = DEFAULT_MIN_PAGES
     max_pages = None
@@ -1518,7 +1646,8 @@ def main():
         print("14. Preprocess application search index (Whoosh)")
         print("15. Search applications using indexed data (fast using Whoosh)")
         print(f"16. Set date filter (current: {date_filter if date_filter else 'None'} )")
-        print("17. Search applications using indexed data (Top 1 space, limit 3000)") # New option
+        print("17. Search applications using indexed data (Top 1 space overall, limit 3000)") 
+        print("18. Find top space per application term (using Whoosh index)") # New option 18
         print("Q. Quit")
         
         choice = input("Select option: ").strip()
@@ -1710,8 +1839,10 @@ def main():
                 date_filter = None
                 data_loaded = False  # Mark data as needing to be reloaded
                 print("Date filter cleared. Data will be loaded when needed.")
-        elif choice == '17': # New option handler
+        elif choice == '17': 
             search_applications_indexed_top_space()
+        elif choice == '18': # New handler for option 18
+            search_applications_indexed_top_space_per_term()
         elif choice.upper() == 'Q':
             print("Goodbye!")
             break
