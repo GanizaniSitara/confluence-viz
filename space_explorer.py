@@ -379,122 +379,214 @@ def view_space_pickle_from_folder(folder_name):
         print(f"An unexpected error occurred while reading {pickle_filename}: {e}")
 
 
-def pickle_space_details(space_key):
+def view_space_pickle_summary(folder_name="temp_counter"):
     """
-    Fetches detailed information for all pages in a space and pickles it
-    into the temp_counter/ directory.
+    Prompts for a space short code, loads the corresponding pickle file
+    from the specified folder, removes the body content, and prints a summary.
+
+    Args:
+        folder_name (str): The name of the folder to look for pickles in (defaults to 'temp_counter').
     """
-    print(f"Starting to fetch details for space: {space_key}")
+    space_code = input(f"Enter the space short code (e.g., ITCOGLOB) to load summary from '{folder_name}/': ").strip().upper()
+    if not space_code:
+        print("No space code entered.")
+        return
+
+    # Construct the expected pickle filename
+    pickle_filename = f"{space_code}.pkl"
+    pickle_filepath = os.path.join(folder_name, pickle_filename)
+
+    print(f"Attempting to load: {pickle_filepath}")
+
+    if not os.path.exists(pickle_filepath):
+        print(f"Error: Pickle file not found at {pickle_filepath}")
+        # Try listing directory contents for debugging help
+        try:
+            print(f"Files in {folder_name}/ directory:")
+            folder_files = os.listdir(folder_name)
+            if folder_files:
+                print("\n".join(folder_files))
+            else:
+                print("(Directory is empty)")
+        except FileNotFoundError:
+            print(f"Error: {folder_name}/ directory not found.")
+        return
+
+    try:
+        with open(pickle_filepath, 'rb') as f:
+            data = pickle.load(f)
+
+        # Remove body content before printing
+        if 'pages' in data:
+            for page_id, page_data in data['pages'].items():
+                if 'body_storage' in page_data:
+                    del page_data['body_storage'] # Remove the body content
+
+        print(f"\n--- Summary Content of {pickle_filename} from {folder_name}/ (Body Excluded) ---")
+        pprint.pprint(data)
+        print("---------------------------------------------------------------------")
+
+    except pickle.UnpicklingError as e:
+        print(f"Error: Failed to unpickle {pickle_filename}. File might be corrupted or not a pickle file.")
+        print(f"Details: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred while reading {pickle_filename}: {e}")
+
+
+def pickle_space_details(space_key, include_body=True):
+    """
+    Fetches detailed information for all pages in a space using efficient batch requests
+    and pickles it into the temp_counter/ directory. Overwrites existing file.
+
+    Args:
+        space_key (str): The Confluence space key.
+        include_body (bool): Whether to include the 'body.storage' content in the fetch and pickle.
+    """
+    print(f"Starting to fetch details efficiently for space: {space_key} (Include Body: {include_body})")
     space_data = {
         'space_key': space_key,
         'retrieved_at': datetime.datetime.now().isoformat(),
         'pages': {}
     }
-    page_count = 0
     processed_count = 0
     failed_pages = []
+    total_pages_fetched = 0
 
-    # --- Step 1: Get all page IDs and basic info from the space ---
-    all_pages_in_space = []
-    limit = 100 # Adjust limit as needed, max is usually 100-200
+    # --- Step 1: Get all pages with expanded details efficiently ---
+    limit = 25 if include_body else 50 # Adjust limit based on whether body is included
     start = 0
+    # Define the base fields to expand
+    base_expand_fields = [
+        'version', 'history', 'history.lastUpdated', 'history.createdBy',
+        'history.contributors.publishers.users', 'metadata.labels', 'ancestors',
+        'restrictions.read', 'restrictions.update', 'space',
+        'metadata.attachments', 'children.page'
+    ]
+    # Conditionally add body.storage
+    if include_body:
+        base_expand_fields.append('body.storage')
+
+    expand_fields = ",".join(base_expand_fields)
+
     while True:
         space_content_url = f"{API_BASE}/space/{space_key}/content/page" # Get only pages
-        params = {'limit': limit, 'start': start}
-        print(f"Fetching pages from space {space_key} (start={start}, limit={limit})...")
+        params = {
+            'limit': limit,
+            'start': start,
+            'expand': expand_fields
+        }
+        print(f"Fetching pages with details from space {space_key} (start={start}, limit={limit})...")
         response_data = make_api_request(space_content_url, params=params)
 
+        # ... existing error handling ...
         if not response_data or 'results' not in response_data:
-            print(f"Error: Failed to fetch page list for space {space_key} at start={start}.")
-            # Decide if we should stop or continue? For now, stop.
-            if not all_pages_in_space: # If we haven't fetched any pages yet
+            print(f"Error: Failed to fetch page list with details for space {space_key} at start={start}.")
+            if total_pages_fetched == 0: # If we haven't fetched any pages yet
                  print("Could not fetch initial page list. Aborting.")
                  return
             else:
-                 print("Continuing with pages fetched so far.")
-                 break # Exit loop if API fails mid-way
+                 print("Continuing with pages processed so far.")
+                 break
 
         results = response_data.get('results', [])
-        all_pages_in_space.extend(results)
-        page_count += len(results)
-        print(f"Fetched {len(results)} pages. Total so far: {len(all_pages_in_space)}")
+        current_batch_size = len(results)
+        total_pages_fetched += current_batch_size
+        print(f"Fetched {current_batch_size} pages with details. Total so far: {total_pages_fetched}")
 
-        # Check if this is the last page of results
-        size = response_data.get('size', 0)
-        if size < limit:
+        # --- Process the results from this batch directly ---
+        for page_detail_data in results:
+            page_id = page_detail_data.get('id')
+            page_title = page_detail_data.get('title', 'Untitled')
+            if not page_id:
+                print(f"Warning: Skipping page data with no ID: {page_detail_data.get('_links', {}).get('self', 'Unknown URL')}")
+                continue
+
+            # Extract required information (already expanded)
+            try:
+                # ... existing extraction ...
+                version_info = page_detail_data.get('version', {})
+                history_info = page_detail_data.get('history', {})
+                last_updated_info = history_info.get('lastUpdated', {})
+                last_modifier_info = version_info.get('by', {})
+                last_updated_by_user_obj = last_updated_info.get('by', last_modifier_info)
+                last_updated_timestamp = last_updated_info.get('when') or version_info.get('when')
+                creator_info = history_info.get('createdBy', {})
+                contributors_list = history_info.get('contributors', {}).get('publishers', {}).get('users', [])
+                metadata = page_detail_data.get('metadata', {})
+                labels = [label['name'] for label in metadata.get('labels', {}).get('results', [])]
+                ancestors = [{'id': anc.get('id'), 'title': anc.get('title')} for anc in page_detail_data.get('ancestors', [])]
+                restrictions = page_detail_data.get('restrictions', {})
+                read_restrictions = restrictions.get('read', {}).get('restrictions', {})
+                update_restrictions = restrictions.get('update', {}).get('restrictions', {})
+                space_info = page_detail_data.get('space', {})
+
+                # Extract attachment metadata
+                attachments_metadata = []
+                for att in metadata.get('attachments', {}).get('results', []):
+                    attachments_metadata.append({
+                        'id': att.get('id'),
+                        'title': att.get('title'),
+                        'fileSize': att.get('extensions', {}).get('fileSize'),
+                        'mediaType': att.get('extensions', {}).get('mediaType'),
+                        'createdDate': att.get('version', {}).get('when'), # Approx creation
+                        'createdBy': att.get('version', {}).get('by', {}).get('username'),
+                        'downloadLink': att.get('_links', {}).get('download')
+                    })
+
+                # Extract child page IDs only
+                child_page_ids = [child.get('id') for child in page_detail_data.get('children', {}).get('page', {}).get('results', []) if child.get('id')]
+
+                page_entry = {
+                    'title': page_title,
+                    # ... other existing fields ...
+                    'last_updated': last_updated_timestamp,
+                    'last_updated_by_username': last_updated_by_user_obj.get('username'),
+                    'last_updated_by_displayname': last_updated_by_user_obj.get('displayName'),
+                    'version_number': version_info.get('number'),
+                    'creator_username': creator_info.get('username'),
+                    'creator_displayname': creator_info.get('displayName'),
+                    'contributors_usernames': [c.get('username') for c in contributors_list if c.get('username')],
+                    'labels': labels,
+                    'ancestors': ancestors,
+                    'read_restricted_users': [u.get('username') for u in read_restrictions.get('user', {}).get('results', [])],
+                    'read_restricted_groups': [g.get('name') for g in read_restrictions.get('group', {}).get('results', [])],
+                    'update_restricted_users': [u.get('username') for u in update_restrictions.get('user', {}).get('results', [])],
+                    'update_restricted_groups': [g.get('name') for g in update_restrictions.get('group', {}).get('results', [])],
+                    'space_id': space_info.get('id'),
+                    'space_name': space_info.get('name'),
+                    'attachments': attachments_metadata,
+                    'child_page_ids': child_page_ids
+                }
+
+                # Conditionally add body content
+                if include_body:
+                    body_content = page_detail_data.get('body', {}).get('storage', {}).get('value', '')
+                    page_entry['body_storage'] = body_content
+
+                space_data['pages'][page_id] = page_entry
+                processed_count += 1
+            except Exception as e:
+                print(f"Error processing details for Page ID {page_id} ('{page_title}'): {e}")
+                failed_pages.append({'id': page_id, 'title': page_title, 'reason': f'Processing error: {e}'})
+
+        # ... existing pagination logic ...
+        if current_batch_size < limit:
             print("Reached the end of pages for this space.")
             break
         else:
-            start += size # Prepare for the next page
+            start += current_batch_size
 
-    print(f"Found a total of {len(all_pages_in_space)} pages in space {space_key}.")
-    if not all_pages_in_space:
-        print("No pages found or accessible in this space. Nothing to pickle.")
-        return
-
-    # --- Step 2: Get detailed info for each page ---
-    print("Fetching detailed information for each page (this may take time)...")
-    for page_summary in all_pages_in_space:
-        page_id = page_summary.get('id')
-        page_title = page_summary.get('title', 'Untitled')
-        if not page_id:
-            print(f"Warning: Skipping page summary with no ID: {page_summary}")
-            continue
-
-        print(f"Processing Page ID: {page_id} ('{page_title}')...")
-        page_detail_url = f"{API_CONTENT_ENDPOINT}/{page_id}"
-        # Expand necessary fields
-        params = {'expand': 'version,history,history.lastUpdated,history.createdBy,history.contributors.publishers.users'}
-        page_detail_data = make_api_request(page_detail_url, params=params)
-
-        if not page_detail_data:
-            print(f"Warning: Failed to fetch details for Page ID {page_id} ('{page_title}'). Skipping.")
-            failed_pages.append({'id': page_id, 'title': page_title, 'reason': 'API request failed'})
-            continue
-
-        # Extract required information
-        try:
-            version_info = page_detail_data.get('version', {})
-            history_info = page_detail_data.get('history', {})
-            last_updated_info = history_info.get('lastUpdated', {}) # Use history.lastUpdated if available
-            last_modifier_info = version_info.get('by', {}) # Fallback or primary source for modifier
-
-            # Determine last update time and user (prefer history.lastUpdated if present)
-            last_updated_timestamp = last_updated_info.get('when') or version_info.get('when')
-            last_updated_by = last_updated_info.get('by', last_modifier_info) # User object
-
-            creator_info = history_info.get('createdBy', {})
-            contributors_list = history_info.get('contributors', {}).get('publishers', {}).get('users', [])
-
-            page_entry = {
-                'title': page_title,
-                'last_updated': last_updated_timestamp,
-                'last_updated_by_username': last_updated_by.get('username'),
-                'last_updated_by_displayname': last_updated_by.get('displayName'),
-                'version_number': version_info.get('number'), # "updated counter"
-                'creator_username': creator_info.get('username'),
-                'creator_displayname': creator_info.get('displayName'),
-                'contributors_usernames': [c.get('username') for c in contributors_list if c.get('username')],
-                # Optionally add more raw data if needed later
-                # 'raw_version': version_info,
-                # 'raw_history': history_info
-            }
-            space_data['pages'][page_id] = page_entry
-            processed_count += 1
-        except Exception as e:
-            print(f"Error processing details for Page ID {page_id} ('{page_title}'): {e}")
-            failed_pages.append({'id': page_id, 'title': page_title, 'reason': f'Processing error: {e}'})
-
-    print(f"\nFinished fetching details. Processed {processed_count}/{len(all_pages_in_space)} pages successfully.")
+    # ... existing summary and pickling logic ...
+    print(f"\nFinished fetching details. Processed {processed_count}/{total_pages_fetched} pages successfully.")
     if failed_pages:
         print(f"Failed to process {len(failed_pages)} pages:")
         for failed in failed_pages:
             print(f"  - ID: {failed['id']}, Title: '{failed['title']}', Reason: {failed['reason']}")
 
-    # --- Step 3: Pickle the data ---
+    # --- Step 2: Pickle the data ---
     pickle_dir = "temp_counter"
     try:
-        os.makedirs(pickle_dir, exist_ok=True) # Ensure directory exists
+        os.makedirs(pickle_dir, exist_ok=True)
         pickle_filename = f"{space_key}.pkl"
         pickle_filepath = os.path.join(pickle_dir, pickle_filename)
 
@@ -516,8 +608,9 @@ def show_main_menu():
         print("1. Check User Status for a Page URL")
         print("2. View Space Pickle Content (from temp/)")
         print("3. View Space Pickle Content (from temp_counter/)")
-        print("4. Fetch & Pickle Space Details (to temp_counter/)") # New option
-        # Add more options here later
+        print("4. Fetch & Pickle Space Details (incl. body) (to temp_counter/)") # Clarified option 4
+        print("5. View Space Pickle Summary (from temp_counter/, no body)")
+        print("6. Fetch & Pickle Space Details (NO body) (to temp_counter/)") # New option 6
         print("Q. Quit")
         choice = input("Select option: ").strip().lower()
 
@@ -527,10 +620,18 @@ def show_main_menu():
             view_space_pickle_from_folder("temp")
         elif choice == '3':
             view_space_pickle_from_folder("temp_counter")
-        elif choice == '4': # Handle new option 4
-            space_key_input = input("Enter the Space Key to fetch and pickle (e.g., ITCOGLOB): ").strip().upper()
+        elif choice == '4': # Call with include_body=True (default)
+            space_key_input = input("Enter the Space Key to fetch and pickle (incl. body): ").strip().upper()
             if space_key_input:
-                pickle_space_details(space_key_input)
+                pickle_space_details(space_key_input, include_body=True)
+            else:
+                print("No space key entered.")
+        elif choice == '5':
+            view_space_pickle_summary()
+        elif choice == '6': # Call with include_body=False
+            space_key_input = input("Enter the Space Key to fetch and pickle (NO body): ").strip().upper()
+            if space_key_input:
+                pickle_space_details(space_key_input, include_body=False)
             else:
                 print("No space key entered.")
         elif choice == 'q':
