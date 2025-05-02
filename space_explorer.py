@@ -379,6 +379,134 @@ def view_space_pickle_from_folder(folder_name):
         print(f"An unexpected error occurred while reading {pickle_filename}: {e}")
 
 
+def pickle_space_details(space_key):
+    """
+    Fetches detailed information for all pages in a space and pickles it
+    into the temp_counter/ directory.
+    """
+    print(f"Starting to fetch details for space: {space_key}")
+    space_data = {
+        'space_key': space_key,
+        'retrieved_at': datetime.datetime.now().isoformat(),
+        'pages': {}
+    }
+    page_count = 0
+    processed_count = 0
+    failed_pages = []
+
+    # --- Step 1: Get all page IDs and basic info from the space ---
+    all_pages_in_space = []
+    limit = 100 # Adjust limit as needed, max is usually 100-200
+    start = 0
+    while True:
+        space_content_url = f"{API_BASE}/space/{space_key}/content/page" # Get only pages
+        params = {'limit': limit, 'start': start}
+        print(f"Fetching pages from space {space_key} (start={start}, limit={limit})...")
+        response_data = make_api_request(space_content_url, params=params)
+
+        if not response_data or 'results' not in response_data:
+            print(f"Error: Failed to fetch page list for space {space_key} at start={start}.")
+            # Decide if we should stop or continue? For now, stop.
+            if not all_pages_in_space: # If we haven't fetched any pages yet
+                 print("Could not fetch initial page list. Aborting.")
+                 return
+            else:
+                 print("Continuing with pages fetched so far.")
+                 break # Exit loop if API fails mid-way
+
+        results = response_data.get('results', [])
+        all_pages_in_space.extend(results)
+        page_count += len(results)
+        print(f"Fetched {len(results)} pages. Total so far: {len(all_pages_in_space)}")
+
+        # Check if this is the last page of results
+        size = response_data.get('size', 0)
+        if size < limit:
+            print("Reached the end of pages for this space.")
+            break
+        else:
+            start += size # Prepare for the next page
+
+    print(f"Found a total of {len(all_pages_in_space)} pages in space {space_key}.")
+    if not all_pages_in_space:
+        print("No pages found or accessible in this space. Nothing to pickle.")
+        return
+
+    # --- Step 2: Get detailed info for each page ---
+    print("Fetching detailed information for each page (this may take time)...")
+    for page_summary in all_pages_in_space:
+        page_id = page_summary.get('id')
+        page_title = page_summary.get('title', 'Untitled')
+        if not page_id:
+            print(f"Warning: Skipping page summary with no ID: {page_summary}")
+            continue
+
+        print(f"Processing Page ID: {page_id} ('{page_title}')...")
+        page_detail_url = f"{API_CONTENT_ENDPOINT}/{page_id}"
+        # Expand necessary fields
+        params = {'expand': 'version,history,history.lastUpdated,history.createdBy,history.contributors.publishers.users'}
+        page_detail_data = make_api_request(page_detail_url, params=params)
+
+        if not page_detail_data:
+            print(f"Warning: Failed to fetch details for Page ID {page_id} ('{page_title}'). Skipping.")
+            failed_pages.append({'id': page_id, 'title': page_title, 'reason': 'API request failed'})
+            continue
+
+        # Extract required information
+        try:
+            version_info = page_detail_data.get('version', {})
+            history_info = page_detail_data.get('history', {})
+            last_updated_info = history_info.get('lastUpdated', {}) # Use history.lastUpdated if available
+            last_modifier_info = version_info.get('by', {}) # Fallback or primary source for modifier
+
+            # Determine last update time and user (prefer history.lastUpdated if present)
+            last_updated_timestamp = last_updated_info.get('when') or version_info.get('when')
+            last_updated_by = last_updated_info.get('by', last_modifier_info) # User object
+
+            creator_info = history_info.get('createdBy', {})
+            contributors_list = history_info.get('contributors', {}).get('publishers', {}).get('users', [])
+
+            page_entry = {
+                'title': page_title,
+                'last_updated': last_updated_timestamp,
+                'last_updated_by_username': last_updated_by.get('username'),
+                'last_updated_by_displayname': last_updated_by.get('displayName'),
+                'version_number': version_info.get('number'), # "updated counter"
+                'creator_username': creator_info.get('username'),
+                'creator_displayname': creator_info.get('displayName'),
+                'contributors_usernames': [c.get('username') for c in contributors_list if c.get('username')],
+                # Optionally add more raw data if needed later
+                # 'raw_version': version_info,
+                # 'raw_history': history_info
+            }
+            space_data['pages'][page_id] = page_entry
+            processed_count += 1
+        except Exception as e:
+            print(f"Error processing details for Page ID {page_id} ('{page_title}'): {e}")
+            failed_pages.append({'id': page_id, 'title': page_title, 'reason': f'Processing error: {e}'})
+
+    print(f"\nFinished fetching details. Processed {processed_count}/{len(all_pages_in_space)} pages successfully.")
+    if failed_pages:
+        print(f"Failed to process {len(failed_pages)} pages:")
+        for failed in failed_pages:
+            print(f"  - ID: {failed['id']}, Title: '{failed['title']}', Reason: {failed['reason']}")
+
+    # --- Step 3: Pickle the data ---
+    pickle_dir = "temp_counter"
+    try:
+        os.makedirs(pickle_dir, exist_ok=True) # Ensure directory exists
+        pickle_filename = f"{space_key}.pkl"
+        pickle_filepath = os.path.join(pickle_dir, pickle_filename)
+
+        print(f"\nAttempting to save data to: {pickle_filepath}")
+        with open(pickle_filepath, 'wb') as f:
+            pickle.dump(space_data, f)
+        print(f"Successfully saved data for space {space_key} to {pickle_filepath}")
+
+    except Exception as e:
+        print(f"Error: Failed to save pickle file {pickle_filepath}: {e}")
+
+
 def show_main_menu():
     """
     Displays the main menu and handles user input.
@@ -386,18 +514,25 @@ def show_main_menu():
     while True:
         print("\n==== Confluence Space Explorer Menu ====")
         print("1. Check User Status for a Page URL")
-        print("2. View Space Pickle Content (from temp/)") # Updated text
-        print("3. View Space Pickle Content (from temp_counter/)") # New option
+        print("2. View Space Pickle Content (from temp/)")
+        print("3. View Space Pickle Content (from temp_counter/)")
+        print("4. Fetch & Pickle Space Details (to temp_counter/)") # New option
         # Add more options here later
         print("Q. Quit")
         choice = input("Select option: ").strip().lower()
 
         if choice == '1':
             check_page_user_status()
-        elif choice == '2': # Handle updated option 2
-            view_space_pickle_from_folder("temp") # Call generalized function
-        elif choice == '3': # Handle new option 3
-            view_space_pickle_from_folder("temp_counter") # Call generalized function
+        elif choice == '2':
+            view_space_pickle_from_folder("temp")
+        elif choice == '3':
+            view_space_pickle_from_folder("temp_counter")
+        elif choice == '4': # Handle new option 4
+            space_key_input = input("Enter the Space Key to fetch and pickle (e.g., ITCOGLOB): ").strip().upper()
+            if space_key_input:
+                pickle_space_details(space_key_input)
+            else:
+                print("No space key entered.")
         elif choice == 'q':
             print("Exiting.")
             break
