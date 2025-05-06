@@ -180,6 +180,19 @@ def render_d3_semantic_scatter_plot(spaces, labels, method_name, tags, X_vectors
                     }}
                 }});
 
+            // Add text labels to dots
+            svg.selectAll(".dot-label") // Use a new class for these labels
+                .data(data)
+                .enter().append("text")
+                .attr("class", "dot-label")
+                .attr("x", d => xScale(d.x))
+                .attr("y", d => yScale(d.y))
+                .attr("dy", ".35em") // Vertically center
+                .attr("text-anchor", "middle") // Horizontally center
+                .style("font-size", "5pt")
+                .style("pointer-events", "none") // So they don't interfere with circle's mouse events
+                .text(d => d.key);
+
             const uniqueClusters = Array.from(new Set(data.map(d => d.cluster))).sort((a,b) => a-b);
             const legend = svg.selectAll(".legend-item").data(uniqueClusters).enter().append("g")
                 .attr("class", "legend-item").attr("transform", (d, i) => `translate(0,${{i * 20}})`);
