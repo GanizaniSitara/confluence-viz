@@ -15,6 +15,7 @@ from config_loader import load_visualization_settings
 import operator
 from html import escape  # Added for HTML escaping
 from scatter_plot_visualizer import generate_2d_scatter_plot_agglomerative # Added for Option 20
+from proximity_visualizer import generate_proximity_scatter_plot # Added for Option 21
 
 # Try to import Whoosh (will be used for options 14 and 15)
 try:
@@ -1626,8 +1627,9 @@ def main():
         print(f"16. Set date filter (current: {date_filter if date_filter else 'None'} )")
         print("17. Search applications using indexed data (Top 1 space overall, limit 3000)") 
         print("18. Find top space per application term (using Whoosh index)")
-        print("19. Find all spaces per application term with counts (using Whoosh index)") # New option 19
-        print("20. Semantic clustering 2D Scatter Plot (Agglomerative)") # Added Option 20
+        print("19. Find all spaces per application term with counts (using Whoosh index)")
+        print("20. Semantic clustering 2D Scatter Plot (Agglomerative)")
+        print("21. Semantic Proximity 2D Scatter Plot (t-SNE only)")
         print("Q. Quit")
         
         choice = input("Select option: ").strip()
@@ -1843,6 +1845,24 @@ def main():
                     print(f"Error during 2D scatter plot generation: {e}")
             else:
                 print("No spaces loaded or available after filtering. Cannot generate scatter plot.")
+        elif choice == '21': 
+            active_spaces, _, _ = ensure_data_loaded()
+            if active_spaces:
+                try:
+                    print(f"Running t-SNE for 2D proximity scatter plot...")
+                    generate_proximity_scatter_plot(
+                        active_spaces,
+                        get_vectors,
+                        calculate_avg_timestamps,
+                        calculate_color_data, 
+                        GREY_COLOR_HEX 
+                    )
+                except Exception as e:
+                    print(f"Error during proximity scatter plot generation: {e}")
+                    import traceback 
+                    traceback.print_exc()
+            else:
+                print("No spaces loaded or available after filtering. Cannot generate proximity plot.")
         elif choice.upper() == 'Q':
             print("Goodbye!")
             break
