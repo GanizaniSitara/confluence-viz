@@ -173,6 +173,20 @@ def render_d3_proximity_scatter_plot(
                 if (d.url) window.open(d.url, "_blank");
             }});
 
+        // Add text labels to dots
+        svg.append("g")
+            .selectAll(".dot-label") // Use a new class for these labels
+            .data(plotData)
+            .enter().append("text")
+            .attr("class", "dot-label")
+            .attr("x", d => x(d.x))
+            .attr("y", d => y(d.y))
+            .attr("dy", ".35em") // Vertically center text
+            .attr("text-anchor", "middle") // Horizontally center text
+            .style("font-size", "5pt")
+            .style("pointer-events", "none") // So labels don't block circle events
+            .text(d => d.key); // Use d.key for the space name
+
         // Legend
         const legendWidth = 200;
         const legendHeight = 20;
