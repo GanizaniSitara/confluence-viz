@@ -4,6 +4,7 @@ import sys
 import numpy as np
 import re
 from sklearn.cluster import AgglomerativeClustering, KMeans, DBSCAN
+from sklearn.manifold import TSNE  # Add TSNE import
 import webbrowser
 from collections import defaultdict
 import matplotlib.pyplot as plt
@@ -388,286 +389,6 @@ def render_html(spaces, labels, method, tags=None):
     print(f'HTML written to {out_path}')
     webbrowser.open('file://' + os.path.abspath(out_path))
 
-def render_d3_circle_packing(spaces, labels, method, tags=None):
-    # Load visualization settings
-    config = load_visualization_settings()
-    confluence_base_url = config['confluence_base_url']
-    
-    # Calculate average timestamps for spaces if they don't already have them
-    spaces = calculate_avg_timestamps(spaces)
-    
-    # Calculate color thresholds and gradient
-    percentile_thresholds, color_range_hex = calculate_color_data(spaces)
-    
-    # Build hierarchical data structure for D3
-    clusters = defaultdict(list)
-    for s, label in zip(spaces, labels):
-        clusters[label].append(s)
-    d3_data = {
-        'key': 'root',
-        'name': f'Clustered Spaces ({method})',
-        'children': []
-    }
-    for label, group in clusters.items():
-        tag_str = ', '.join(tags[label]) if tags and label in tags else ''
-        total_pages = sum(s.get('total_pages', len(s['sampled_pages'])) for s in group)
-        print(f"Cluster {label}: Total pages = {total_pages}")
-        cluster_node = {
-            'key': f'cluster_{label}',
-            'name': f'Cluster {label}',  # Just the cluster ID
-            'tags': tag_str,  # Store tags separately
-            'children': [],
-            'value': total_pages
-        }
-        for s in group:
-            # Format the date if average timestamp is available
-            avg_ts = s.get('avg', 0)
-            date_str = ""
-            if avg_ts > 0:
-                try:
-                    date_str = datetime.fromtimestamp(avg_ts).strftime('%Y-%m-%d')
-                except (ValueError, OSError):
-                    date_str = "Invalid date"
-            else:
-                date_str = "No date"
-            cluster_node['children'].append({
-                'key': s['space_key'],                
-                'name': s['space_key'],
-                'value': s.get('total_pages', len(s['sampled_pages'])),
-                'avg': avg_ts,  # Include avg timestamp for coloring
-                'date': date_str,  # Include formatted date for tooltip
-                'url': f"{confluence_base_url}/display/{s['space_key']}"  # Add URL for link to Confluence
-            })
-        d3_data['children'].append(cluster_node)
-        d3_data['children'].append(cluster_node)
-    data_json = json.dumps(d3_data)
-    percentile_thresholds_json = json.dumps(percentile_thresholds)
-    color_range_hex_json = json.dumps(color_range_hex)
-    
-    # Use triple quotes with normal string, then format at the end to avoid f-string issues with #
-    html = """<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Clustered Spaces Circle Packing</title>
-  <script src="https://d3js.org/d3.v7.min.js"></script>
-  <style>
-    body { margin:0; font-family:sans-serif; }
-    .node text { text-anchor:middle; alignment-baseline:middle; font-size:6pt; pointer-events:none; }
-    .group circle { stroke: #555; stroke-width: 1px; }
-    /* Enhanced styles for cluster labels */
-    .cluster-label { 
-      font-size: 14pt; 
-      font-weight: bold; 
-      fill: #000; 
-      text-anchor: middle; 
-      dominant-baseline: middle;
-    }
-    .cluster-label-bg { 
-      stroke: white; 
-      stroke-width: 5px; 
-      stroke-linejoin: round;
-      paint-order: stroke;
-      fill: #000;
-    }    /* Tooltip styling */
-    .tooltip {
-      position: absolute;
-      background: #fff;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      padding: 10px;
-      pointer-events: none;
-      opacity: 0;
-      transition: opacity 0.3s;
-      font-size: 11px;
-      max-width: 300px;
-    }
-  </style>
-</head>
-<body>
-<div id="chart"></div>
-<script>
-const data = DATA_JSON_PLACEHOLDER;
-const PERCENTILE_THRESHOLDS = PERCENTILE_THRESHOLDS_PLACEHOLDER;
-const COLOR_RANGE_HEX = COLOR_RANGE_HEX_PLACEHOLDER;
-const GREY_COLOR_HEX = 'GREY_COLOR_HEX_PLACEHOLDER';
-
-// Color scale based on thresholds
-const colorScale = d3.scaleThreshold()
-  .domain(PERCENTILE_THRESHOLDS)
-  .range(COLOR_RANGE_HEX);
-
-const width = 1800, height = 1200;
-const root = d3.pack()
-  .size([width, height])
-  .padding(6)
-  (d3.hierarchy(data)
-  .sum(d => d.value));
-const svg = d3.select('#chart').append('svg')
-  .attr('width', width)
-  .attr('height', height);
-
-// Create tooltip div
-const tooltip = d3.select("body").append("div")
-  .attr("class", "tooltip");
-
-const g = svg.selectAll('g')
-  .data(root.descendants())
-  .enter().append('g')
-  .attr('transform', d => `translate(${d.x},${d.y})`)
-  .attr('cursor', d => !d.children && d.data.url ? 'pointer' : 'default')  .on("mouseover", function(event, d) {
-    if (!d.children && d.data.date) {
-      tooltip.transition()
-        .duration(200)
-        .style("opacity", 0.9);
-      tooltip.html(`<strong>${d.data.key}</strong><br>Pages: ${d.data.value}<br>Blended Age: ${d.data.date}<br><br>Click to open: <span style="font-size:10px;word-break:break-all;">${d.data.url}</span>`)
-        .style("left", (event.pageX + 10) + "px")
-        .style("top", (event.pageY - 28) + "px");
-    }
-  })
-  .on("mouseout", function() {
-    tooltip.transition()
-      .duration(500)
-      .style("opacity", 0);
-  })
-  .on("click", function(event, d) {
-    // Only handle clicks on leaf nodes (spaces, not clusters)
-    if (!d.children && d.data.url) {
-      window.open(d.data.url, '_blank');
-    }
-  });
-
-g.append('circle')
-  .attr('r', d => d.r)
-  .attr('fill', d => {
-    // For non-leaf nodes (clusters), use light gray
-    if (d.children) return '#f8f8f8';
-    
-    // For leaf nodes (spaces)
-    if (!d.data.avg || d.data.avg <= 0) return GREY_COLOR_HEX;
-    return colorScale(d.data.avg);
-  })
-  .attr('class', d => d.children ? 'group' : 'leaf');
-
-const leafNodes = g.filter(d => !d.children);
-leafNodes.append('text')
-  .attr('dy','-0.35em')
-  .attr('text-anchor', 'middle')
-  .attr('style', 'font-size:6pt;')
-  .text(d => d.data.key);
-
-leafNodes.append('text')
-  .attr('dy','0.75em')
-  .attr('text-anchor', 'middle')
-  .attr('style', 'font-size:6pt;')
-  .text(d => d.data.value);
-
-// Create separate layer for cluster labels to ensure they're on top
-const clusterLabels = svg.append('g')
-  .attr('class', 'cluster-labels')
-  .attr('pointer-events', 'none');  // Make sure it doesn't block interactions
-
-// Add labels for cluster nodes
-g.filter(d => d.depth > 0 && d.children).each(function(d) {
-  // Create a text element for the cluster ID (first line)
-  clusterLabels.append('text')
-    .attr('x', d.x)
-    .attr('y', d.y)
-    .attr('dy', '-0.4em')  // Position above center
-    .attr('text-anchor', 'middle')
-    .attr('class', 'cluster-label')
-    .text(d.data.name || d.data.key)  // Simply use the name directly
-    .style('font-size', '14pt')
-    .style('font-weight', 'bold')
-    .style('stroke', 'white')    
-    .style('stroke-width', '3px')
-    .style('stroke-linejoin', 'round')
-    .style('paint-order', 'stroke')
-    .style('fill', '#000000');
-    
-  // Add second line with just the tags in brackets
-  if (d.data.tags && d.data.tags.length > 0) {
-    clusterLabels.append('text')
-      .attr('x', d.x)
-      .attr('y', d.y)
-      .attr('dy', '1.1em')  // Position below center
-      .attr('text-anchor', 'middle')
-      .attr('class', 'cluster-label')
-      .text(`[${d.data.tags}]`)
-      .style('font-size', '12pt')  // Slightly smaller font for tags
-      .style('font-weight', 'bold')
-      .style('stroke', 'white')    
-      .style('stroke-width', '2px')
-      .style('stroke-linejoin', 'round')
-      .style('paint-order', 'stroke')
-      .style('fill', '#000000');
-  }
-});
-
-// Add legend for color scale
-const legendWidth = 200;
-const legendHeight = 20;
-const legendX = width - legendWidth - 20;
-const legendY = 20;
-
-// Create legend title
-svg.append('text')
-  .attr('x', legendX)
-  .attr('y', legendY - 7)
-  .style('font-size', '12px')
-  .text('Page Age (by Last Edit)');
-
-// Create gradient for legend
-const gradient = svg.append('linearGradient')
-  .attr('id', 'legend-gradient')
-  .attr('x1', '0%')
-  .attr('x2', '100%')
-  .attr('y1', '0%')
-  .attr('y2', '0%');
-
-COLOR_RANGE_HEX.forEach((color, i) => {
-  gradient.append('stop')
-    .attr('offset', `${i * 100 / (COLOR_RANGE_HEX.length - 1)}%`)
-    .attr('stop-color', color);
-});
-
-// Add rectangle with gradient
-svg.append('rect')
-  .attr('x', legendX)
-  .attr('y', legendY)
-  .attr('width', legendWidth)
-  .attr('height', legendHeight)
-  .style('fill', 'url(#legend-gradient)');
-
-// Add labels for oldest and newest
-svg.append('text')
-  .attr('x', legendX)
-  .attr('y', legendY + legendHeight + 15)
-  .style('font-size', '10px')
-  .text('Oldest');
-
-svg.append('text')
-  .attr('x', legendX + legendWidth)
-  .attr('y', legendY + legendHeight + 15)
-  .style('font-size', '10px')
-  .attr('text-anchor', 'end')
-  .text('Newest');
-</script>
-</body>
-</html>"""
-
-    # Replace placeholders with actual data
-    html = html.replace('DATA_JSON_PLACEHOLDER', data_json)
-    html = html.replace('PERCENTILE_THRESHOLDS_PLACEHOLDER', percentile_thresholds_json)
-    html = html.replace('COLOR_RANGE_HEX_PLACEHOLDER', color_range_hex_json)
-    html = html.replace('GREY_COLOR_HEX_PLACEHOLDER', GREY_COLOR_HEX)
-    
-    out_path = 'clustered_spaces_d3.html'
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(html)
-    print(f'D3 circle packing HTML written to {out_path}')
-    webbrowser.open('file://' + os.path.abspath(out_path))
-
 def explain_algorithms():
     print("\nClustering Algorithm Help:")
     print("1. Agglomerative: Hierarchical clustering that merges similar spaces into clusters based on their features (e.g., page count). Good for discovering nested/grouped structure.")
@@ -740,828 +461,325 @@ def suggest_tags_for_clusters(spaces, labels):
     
     return tags
 
-def search_for_applications(spaces):
-    """
-    Search for applications in Confluence spaces using app_search.txt
-    and generate HTML report showing which spaces contain which applications.
-    """
-    # Check if application search list exists
-    app_search_path = os.path.join(os.path.dirname(__file__), 'app_search.txt')
-    if not os.path.exists(app_search_path):
-        print(f"Error: app_search.txt not found at {app_search_path}")
-        print("Please create this file with one application name per line.")
-        return    # Load application search terms
+def render_d3_semantic_scatter_plot(spaces, labels, method_name, tags, X_vectors):
     try:
-        with open(app_search_path, 'r') as f:
-            # Skip lines starting with # (comments) and empty lines
-            search_terms = [line.strip() for line in f 
-                           if line.strip() and not line.strip().startswith('#')]
+        config = load_visualization_settings()
+        confluence_base_url = config.get('confluence_base_url', '') # Use .get() for safety
+        if not confluence_base_url:
+            print("Warning: 'confluence_base_url' not found in visualization settings. Links in scatter plot may not work or will be relative.")
+            confluence_base_url = "" # Default to empty string, makes links relative if base is missing
     except Exception as e:
-        print(f"Error reading app_search.txt: {e}")
-        return
+        print(f"Warning: Could not load visualization settings: {e}. Links in scatter plot may not work or will be relative.")
+        confluence_base_url = "" # Default to empty string
 
-    if not search_terms:
-        print("No search terms found in app_search.txt")
-        print("Please add at least one application name per line.")
-        return
+    # Ensure spaces have 'avg' timestamps for potential tooltip info
+    spaces = calculate_avg_timestamps(spaces)
 
-    print(f"Loaded {len(search_terms)} application search terms.")
-    print(f"Searching {len(spaces)} spaces for these applications...")
-
-    # Dictionary to hold results
-    # Format: {app_term: [(space_key, hit_count, matched_pages), ...]}
-    app_hits = defaultdict(list)
-
-    # Track spaces that have at least one hit
-    spaces_with_hits = set()
-
-    for s in spaces:
-        space_key = s.get('space_key', 'unknown')
+    # Dimensionality Reduction using t-SNE
+    coordinates_2d = np.array([])
+    if X_vectors is not None and X_vectors.shape[0] > 1:
+        perplexity_value = min(30, X_vectors.shape[0] - 1)
+        if perplexity_value <= 0: # Ensure perplexity is at least 1
+            perplexity_value = 1
         
-        for term in search_terms:
-            # Track matches for this term in this space
-            matched_pages = []
-            term_lower = term.lower()
-            
-            for page in s.get('sampled_pages', []):
-                # Check title
-                if 'title' in page and term_lower in page.get('title', '').lower():
-                    matched_pages.append(page.get('title', ''))
-                    continue
-                    
-                # Check body content if we haven't already matched the title
-                body = page.get('body', '')
-                if body and term_lower in body.lower():
-                    matched_pages.append(page.get('title', 'Untitled'))
-            
-            # If we have matches, add them to our results
-            if matched_pages:
-                hit_count = len(matched_pages)
-                app_hits[term].append((space_key, hit_count, matched_pages[:5]))  # Store up to 5 matched pages for display
-                spaces_with_hits.add(space_key)
+        n_iter_value = 1000 
+        if X_vectors.shape[0] < 50 : # If very few samples, reduce iterations slightly
+            n_iter_value = max(250, int(200 + X_vectors.shape[0] * 5))
 
-    # Generate HTML report
-    html = ['<html><head><title>Application Search Results</title>',
-            '<style>',
-            'body { font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; }',
-            'h1 { color: #2c3e50; }',
-            'h2 { color: #3498db; margin-top: 30px; }',
-            'table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }',
-            'th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }',
-            'th { background-color: #f2f2f2; position: sticky; top: 0; }',
-            'tr:nth-child(even) { background-color: #f9f9f9; }',
-            'tr:hover { background-color: #f1f1f1; }',
-            '.summary { margin-bottom: 30px; padding: 10px; background-color: #eaf2f8; border-radius: 5px; }',
-            '.hit-count { font-weight: bold; color: #2980b9; }',
-            '.matched-pages { font-size: 0.9em; color: #7f8c8d; max-width: 400px; }',
-            '</style>',
-            '</head><body>']
-
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    html.append(f'<h1>Application Search Results</h1>')
-    html.append(f'<p>Generated: {timestamp}</p>')
-    
-    # Summary section
-    html.append('<div class="summary">')
-    html.append(f'<p>Searched <b>{len(spaces)}</b> Confluence spaces for <b>{len(search_terms)}</b> application terms.</p>')
-    html.append(f'<p>Found matches in <b>{len(spaces_with_hits)}</b> spaces.</p>')
-    html.append('<p>Applications with most mentions:</p><ul>')
-    
-    # Show top 5 applications by total hit count
-    sorted_apps = sorted(app_hits.items(), key=lambda x: sum(count for _, count, _ in x[1]), reverse=True)
-    for app, hits in sorted_apps[:5]:
-        total_hits = sum(count for _, count, _ in hits)
-        html.append(f'<li><b>{app}</b>: {total_hits} mentions in {len(hits)} spaces</li>')
-    
-    html.append('</ul></div>')
-    
-    # First table: Application-centric view
-    html.append('<h2>Applications and Where They Appear</h2>')
-    html.append('<table>')
-    html.append('<tr><th>Application</th><th>Space Key</th><th>Hit Count</th><th>Sample Matched Pages</th></tr>')
-    
-    for app, hits in sorted_apps:
-        # Sort by hit count for this application
-        sorted_hits = sorted(hits, key=lambda x: x[1], reverse=True)
-        if sorted_hits:
-            # First row includes application name
-            space, count, pages = sorted_hits[0]
-            html.append(f'<tr><td rowspan="{len(sorted_hits)}">{app}</td><td>{space}</td><td class="hit-count">{count}</td>')
-            html.append(f'<td class="matched-pages">{", ".join(pages[:5])}')
-            if len(pages) > 5:
-                html.append(' <i>(and more...)</i>')
-            html.append('</td></tr>')
-            
-            # Remaining rows for this application
-            for space, count, pages in sorted_hits[1:]:
-                html.append(f'<tr><td>{space}</td><td class="hit-count">{count}</td>')
-                html.append(f'<td class="matched-pages">{", ".join(pages[:5])}')
-                if len(pages) > 5:
-                    html.append(' <i>(and more...)</i>')
-                html.append('</td></tr>')
-    
-    html.append('</table>')
-    
-    # Second table: Space-centric view
-    html.append('<h2>Spaces and Applications They Contain</h2>')
-    html.append('<table>')
-    html.append('<tr><th>Space Key</th><th>Applications Found</th><th>Total Mentions</th></tr>')
-    
-    # Build space-centric data
-    space_data = defaultdict(list)
-    for app, hits in app_hits.items():
-        for space, count, _ in hits:
-            space_data[space].append((app, count))
-    
-    # Sort spaces by total hit count
-    sorted_spaces = sorted(space_data.items(), 
-                          key=lambda x: sum(count for _, count in x[1]), 
-                          reverse=True)
-    
-    for space, app_list in sorted_spaces:
-        total_hits = sum(count for _, count in app_list)
-        app_formatted = ', '.join([f"{app} ({count})" for app, count in 
-                                  sorted(app_list, key=lambda x: x[1], reverse=True)])
-        html.append(f'<tr><td>{space}</td><td>{app_formatted}</td><td>{total_hits}</td></tr>')
-    
-    html.append('</table>')
-    html.append('</body></html>')
-    
-    # Write to file
-    out_path = 'application_search_results.html'
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(html))
-    
-    print(f'\nSearch complete! Results written to {out_path}')
-    print(f'Found {len(spaces_with_hits)} spaces with matches to your search terms.')
-    
-    # Open the HTML file in the browser
-    webbrowser.open('file://' + os.path.abspath(out_path))
-
-def preprocess_application_search_index(spaces):
-    """
-    Preprocess and index all spaces and pages using Whoosh for fast full-text search.
-    This function creates a comprehensive index of all content, regardless of search terms.
-    """
-    if not WHOOSH_AVAILABLE:
-        print("Error: Whoosh library is not installed. Please install it with:")
-        print("pip install whoosh")
-        return
+        print(f"Running t-SNE with n_samples={X_vectors.shape[0]}, perplexity={perplexity_value}, n_iter={n_iter_value}")
         
-    print(f"Indexing content from {len(spaces)} spaces...")
-    
-    # Create whoosh index directory if it doesn't exist
-    if not os.path.exists(WHOOSH_INDEX_DIR):
-        os.makedirs(WHOOSH_INDEX_DIR)
-    else:
-        # Clean existing index
-        print("Cleaning existing index...")
-        shutil.rmtree(WHOOSH_INDEX_DIR)
-        os.makedirs(WHOOSH_INDEX_DIR)
-    
-    # Define schema for the index
-    schema = Schema(
-        space_key=ID(stored=True),
-        page_id=ID(stored=True),
-        page_title=TEXT(stored=True, analyzer=StemmingAnalyzer()),
-        page_content=TEXT(analyzer=StemmingAnalyzer())
-    )
-    
-    # Create the index
-    ix = create_in(WHOOSH_INDEX_DIR, schema)
-    
-    # Import BeautifulSoup for HTML cleaning
-    try:
-        from bs4 import BeautifulSoup
-        has_beautifulsoup = True
-    except ImportError:
-        print("BeautifulSoup not installed. Using simple regex for HTML cleaning.")
-        has_beautifulsoup = False
-    
-    # Define HTML cleaning function
-    def clean_html(html_content):
-        if not html_content:
-            return ''
         try:
-            if has_beautifulsoup:
-                # Use BeautifulSoup for better HTML cleaning
-                soup = BeautifulSoup(html_content, 'html.parser')
-                text = soup.get_text(separator=' ', strip=True)
-            else:
-                # Fallback to regex for HTML tag removal
-                text = re.sub(r'<[^>]+>', ' ', html_content)
-            
-            # Remove special characters and excessive whitespace
-            text = re.sub(r'\s+', ' ', text)
-            return text.strip()
+            tsne = TSNE(n_components=2, random_state=42, perplexity=perplexity_value, 
+                        n_iter=n_iter_value, init='pca', learning_rate=200.0, method='auto')
+            coordinates_2d = tsne.fit_transform(X_vectors.toarray() if hasattr(X_vectors, "toarray") else X_vectors)
+            print(f"t-SNE completed. Shape of coordinates_2d: {coordinates_2d.shape}")
         except Exception as e:
-            print(f"Error cleaning HTML: {e}")
-            return html_content if html_content else ''
-    
-    # Start indexing
-    writer = ix.writer(limitmb=256, procs=1, multisegment=True)
-    
-    total_pages = 0
-    pages_indexed = 0
-    
-    try:
-        for space in spaces:
-            space_key = space.get('space_key', 'unknown')
-            print(f"Indexing space: {space_key}")
-            
-            for page in space.get('sampled_pages', []):
-                total_pages += 1
-                
-                # Show progress periodically
-                if total_pages % 1000 == 0:
-                    print(f"Processed {total_pages} pages...")
-                
-                page_id = page.get('id', f"unknown_{total_pages}")
-                page_title = page.get('title', 'Untitled')
-                
-                # Get and clean page content (body)
-                body = page.get('body', '')
-                cleaned_body = clean_html(body)
-                
-                # Index every page, regardless of content
-                writer.add_document(
-                    space_key=space_key,
-                    page_id=str(page_id),
-                    page_title=page_title,
-                    page_content=cleaned_body
-                )
-                pages_indexed += 1
-                
-        # Commit the index
-        print("Committing index...")
-        writer.commit()
-        
-        print(f"\nIndexing complete!")
-        print(f"Indexed {pages_indexed} pages across {len(spaces)} spaces.")
-        print(f"Index stored in {os.path.abspath(WHOOSH_INDEX_DIR)}")
-        
-    except Exception as e:
-        print(f"Error during indexing: {e}")
-        # Try to commit whatever we have so far
-        try:
-            writer.commit()
-        except:
-            pass
-
-def search_applications_indexed():
-    """
-    Search for applications using the Whoosh index (much faster than direct search).
-    This function uses app_search.txt for the search terms but searches through the complete index.
-    """
-    if not WHOOSH_AVAILABLE:
-        print("Error: Whoosh library is not installed. Please install it with:")
-        print("pip install whoosh")
-        return
-    
-    # Check if index exists
-    if not os.path.exists(WHOOSH_INDEX_DIR) or not exists_in(WHOOSH_INDEX_DIR):
-        print(f"Error: Whoosh index not found in {WHOOSH_INDEX_DIR}")
-        print("Please run option 14 first to create the search index.")
-        return
-    
-    # Load application search terms
-    app_search_path = os.path.join(os.path.dirname(__file__), 'app_search.txt')
-    if not os.path.exists(app_search_path):
-        print(f"Error: app_search.txt not found at {app_search_path}")
-        print("Please create this file with one application name per line.")
-        return
-        
-    # Load search terms
-    try:
-        with open(app_search_path, 'r') as f:
-            # Skip lines starting with # (comments) and empty lines
-            search_terms = [line.strip() for line in f 
-                           if line.strip() and not line.strip().startswith('#')]
-    except Exception as e:
-        print(f"Error reading app_search.txt: {e}")
-        return
-        
-    if not search_terms:
-        print("No search terms found in app_search.txt")
-        print("Please add at least one application name per line.")
-        return
-    
-    print(f"Loaded {len(search_terms)} application search terms from app_search.txt")
-    
-    # Open the index
-    ix = open_dir(WHOOSH_INDEX_DIR)
-    
-    # Dictionary to hold results
-    # Format: {app_term: [(space_key, hit_count, matched_pages), ...]}
-    app_hits = defaultdict(list)
-    
-    # Track spaces that have at least one hit
-    spaces_with_hits = set()
-    
-    # Set a large limit for query results (adjust based on your dataset size)
-    QUERY_LIMIT = 10000
-    
-    # Search for each term
-    print("Searching indexed data...")
-    start_time = datetime.now()
-    
-    with ix.searcher() as searcher:
-        for term in search_terms:
-            print(f"Searching for: {term}")
-            term_start_time = datetime.now()
-            
-            # Create a query that searches both title and content
-            query_parser = MultifieldParser(["page_title", "page_content"], ix.schema)
-            
-            # Process the term to handle special characters
-            # This makes sure terms with special characters like + or - don't cause query errors
-            processed_term = term
-            for char in '+-/\\()*&^%$#@!~`"\'|':
-                if char in processed_term:
-                    processed_term = processed_term.replace(char, f"\\{char}")
-            
-            # Optionally use phrase queries for multi-word terms to ensure exact matches
-            if " " in processed_term:
-                query_str = f'"{processed_term}"'  # Phrase query
+            print(f"Error during t-SNE: {e}")
+            if X_vectors is not None and X_vectors.shape[0] > 0:
+                 coordinates_2d = np.random.rand(X_vectors.shape[0], 2) * 100 # Random 2D points
             else:
-                query_str = processed_term
-                
-            # Parse the query
-            try:
-                query = query_parser.parse(query_str)
-            except Exception as e:
-                print(f"Query error for term '{term}': {e}")
-                print("Skipping this term.")
-                continue
-            
-            # Execute the search with a large limit
-            try:
-                results = searcher.search(query, limit=QUERY_LIMIT)
-                print(f"Found {len(results)} hits for '{term}'")
-                
-                # Process results for this term
-                term_spaces = defaultdict(list)
-                
-                for result in results:
-                    space_key = result["space_key"]
-                    page_title = result["page_title"]
-                    spaces_with_hits.add(space_key)
-                    term_spaces[space_key].append(page_title)
-                
-                # Add to overall results
-                for space_key, matched_pages in term_spaces.items():
-                    hit_count = len(matched_pages)
-                    app_hits[term].append((space_key, hit_count, matched_pages[:5]))
-                
-                term_elapsed = datetime.now() - term_start_time
-                print(f"Processed in {term_elapsed.total_seconds():.2f} seconds")
-                
-            except Exception as e:
-                print(f"Search error for term '{term}': {e}")
-    
-    total_elapsed = datetime.now() - start_time
-    print(f"Total search time: {total_elapsed.total_seconds():.2f} seconds")
-    
-    # Generate HTML report
-    html = ['<html><head><title>Indexed Application Search Results</title>',
-            '<style>',
-            'body { font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; }',
-            'h1 { color: #2c3e50; }',
-            'h2 { color: #3498db; margin-top: 30px; }',
-            'table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }',
-            'th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }',
-            'th { background-color: #f2f2f2; position: sticky; top: 0; }',
-            'tr:nth-child(even) { background-color: #f9f9f9; }',
-            'tr:hover { background-color: #f1f1f1; }',
-            '.summary { margin-bottom: 30px; padding: 10px; background-color: #eaf2f8; border-radius: 5px; }',
-            '.hit-count { font-weight: bold; color: #2980b9; }',
-            '.matched-pages { font-size: 0.9em; color: #7f8c8d; max-width: 400px; }',
-            '.search-time { font-style: italic; color: #7f8c8d; }',
-            '</style>',
-            '</head><body>']
+                 coordinates_2d = np.array([])
 
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    html.append(f'<h1>Indexed Application Search Results</h1>')
-    html.append(f'<p>Generated: {timestamp}</p>')
-    html.append(f'<p class="search-time">Total search time: {total_elapsed.total_seconds():.2f} seconds</p>')
-    
-    # Summary section
-    html.append('<div class="summary">')
-    html.append(f'<p>Searched the Whoosh index for <b>{len(search_terms)}</b> application terms.</p>')
-    html.append(f'<p>Found matches in <b>{len(spaces_with_hits)}</b> spaces.</p>')
-    html.append('<p>Applications with most mentions:</p><ul>')
-    
-    # Show top 5 applications by total hit count
-    sorted_apps = sorted(app_hits.items(), key=lambda x: sum(count for _, count, _ in x[1]), reverse=True)
-    for app, hits in sorted_apps[:5]:
-        total_hits = sum(count for _, count, _ in hits)
-        html.append(f'<li><b>{app}</b>: {total_hits} mentions in {len(hits)} spaces</li>')
-    
-    html.append('</ul></div>')
-    
-    # First table: Application-centric view
-    html.append('<h2>Applications and Where They Appear</h2>')
-    html.append('<table>')
-    html.append('<tr><th>Application</th><th>Space Key</th><th>Hit Count</th><th>Sample Matched Pages</th></tr>')
-    
-    for app, hits in sorted_apps:
-        # Sort by hit count for this application
-        sorted_hits = sorted(hits, key=lambda x: x[1], reverse=True)
-        if sorted_hits:
-            # First row includes application name
-            space, count, pages = sorted_hits[0]
-            html.append(f'<tr><td rowspan="{len(sorted_hits)}">{app}</td><td>{space}</td><td class="hit-count">{count}</td>')
-            html.append(f'<td class="matched-pages">{", ".join(pages[:5])}')
-            if len(pages) > 5:
-                html.append(' <i>(and more...)</i>')
-            html.append('</td></tr>')
+    elif X_vectors is not None and X_vectors.shape[0] == 1:
+        print("Only one data point. Plotting at origin (0,0).")
+        coordinates_2d = np.array([[0,0]])
+    else:
+        print("Not enough data points for 2D projection or X_vectors is None.")
+        html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Semantic Scatter Plot - No Data</title>
+</head>
+<body>
+    <h1>Semantic Scatter Plot ({method_name})</h1>
+    <p>No data available to display. This might be due to filtering or lack of text content in spaces.</p>
+</body>
+</html>"""
+        out_path = 'semantic_scatter_plot.html'
+        with open(out_path, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+        print(f'HTML written to {out_path}')
+        webbrowser.open('file://' + os.path.abspath(out_path))
+        return
+
+    plot_data = []
+    if coordinates_2d.shape[0] == len(spaces) and len(labels) == len(spaces):
+        for i, space in enumerate(spaces):
+            label = labels[i]
+            avg_ts = space.get('avg', 0)
+            date_str = datetime.fromtimestamp(avg_ts).strftime('%Y-%m-%d') if avg_ts > 0 else "No date"
             
-            # Remaining rows for this application
-            for space, count, pages in sorted_hits[1:]:
-                html.append(f'<tr><td>{space}</td><td class="hit-count">{count}</td>')
-                html.append(f'<td class="matched-pages">{", ".join(pages[:5])}')
-                if len(pages) > 5:
-                    html.append(' <i>(and more...)</i>')
-                html.append('</td></tr>')
-    
-    html.append('</table>')
-    
-    # Second table: Space-centric view
-    html.append('<h2>Spaces and Applications They Contain</h2>')
-    html.append('<table>')
-    html.append('<tr><th>Space Key</th><th>Applications Found</th><th>Total Mentions</th></tr>')
-    
-    # Build space-centric data
-    space_data = defaultdict(list)
-    for app, hits in app_hits.items():
-        for space, count, _ in hits:
-            space_data[space].append((app, count))
-    
-    # Sort spaces by total hit count
-    sorted_spaces = sorted(space_data.items(), 
-                          key=lambda x: sum(count for _, count in x[1]), 
-                          reverse=True)
-    
-    for space, app_list in sorted_spaces:
-        total_hits = sum(count for _, count in app_list)
-        app_formatted = ', '.join([f"{app} ({count})" for app, count in 
-                                  sorted(app_list, key=lambda x: x[1], reverse=True)])
-        html.append(f'<tr><td>{space}</td><td>{app_formatted}</td><td>{total_hits}</td></tr>')
-    
-    html.append('</table>')
-    html.append('</body></html>')
-    
-    # Write to file
-    out_path = 'indexed_application_search_results.html'
+            space_key_original = space['space_key'] # Keep original for URL
+            escaped_space_key = escape(space_key_original)
+            escaped_space_name = escape(space.get('name', space_key_original))
+            escaped_cluster_tags = escape(', '.join(tags.get(label, [])))
+
+            plot_data.append({
+                'key': escaped_space_key,
+                'name': escaped_space_name,
+                'x': float(coordinates_2d[i, 0]),
+                'y': float(coordinates_2d[i, 1]),
+                'cluster': int(label),
+                'cluster_tags': escaped_cluster_tags,
+                'value': space.get('total_pages', len(space['sampled_pages'])),
+                'date': date_str,
+                'url': f"{confluence_base_url}/display/{space_key_original}" # Use original space_key for URL
+            })
+    else:
+        print(f"Warning: Mismatch between coordinate count ({coordinates_2d.shape[0]}), space count ({len(spaces)}), or label count ({len(labels)}). Plot data may be incomplete or incorrect.")
+
+    data_json = json.dumps(plot_data)
+
+    html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Semantic Scatter Plot ({method_name})</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {{ margin: 20px; font-family: sans-serif; }}
+        .dot {{ stroke: #fff; stroke-width: 0.5px; }}
+        .tooltip {{
+            position: absolute;
+            text-align: center;
+            width: auto;
+            height: auto;
+            padding: 8px;
+            font: 12px sans-serif;
+            background: lightsteelblue;
+            border: 0px;
+            border-radius: 8px;
+            pointer-events: none;
+            opacity: 0;
+        }}
+        .axis-label {{ font-size: 10px; }}
+        .legend {{ font-size: 10px; }}
+    </style>
+</head>
+<body>
+    <h1>Semantic Scatter Plot ({method_name})</h1>
+    <div id="scatter-plot"></div>
+    <script>
+        const data = {data_json};
+        console.log("Data for D3:", data);
+
+        if (data && data.length > 0) {{
+            const margin = {{top: 20, right: 200, bottom: 60, left: 60}};
+            const width = 960 - margin.left - margin.right;
+            const height = 600 - margin.top - margin.bottom;
+
+            const svg = d3.select("#scatter-plot").append("svg")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", height + margin.top + margin.bottom)
+              .append("g")
+                .attr("transform", `translate(${{margin.left}},${{margin.top}})`);
+
+            const xScale = d3.scaleLinear()
+                .domain(d3.extent(data, d => d.x))
+                .range([0, width]);
+
+            const yScale = d3.scaleLinear()
+                .domain(d3.extent(data, d => d.y))
+                .range([height, 0]);
+
+            const colorScale = d3.scaleOrdinal(d3.schemeCategory10);
+            colorScale.domain(Array.from(new Set(data.map(d => d.cluster))).sort((a,b) => a-b));
+
+            const sizeScale = d3.scaleSqrt()
+                .domain([0, d3.max(data, d => d.value)])
+                .range([3, 20]);
+
+            const tooltip = d3.select("body").append("div")
+                .attr("class", "tooltip");
+
+            svg.append("g")
+                .attr("transform", `translate(0,${{height}})`)
+                .call(d3.axisBottom(xScale))
+                .append("text")
+                .attr("class", "axis-label")
+                .attr("x", width / 2)
+                .attr("y", margin.bottom - 10)
+                .attr("fill", "black")
+                .style("text-anchor", "middle")
+                .text("t-SNE Dimension 1");
+
+            svg.append("g")
+                .call(d3.axisLeft(yScale))
+                .append("text")
+                .attr("class", "axis-label")
+                .attr("transform", "rotate(-90)")
+                .attr("x", -height / 2)
+                .attr("y", -margin.left + 20)
+                .attr("fill", "black")
+                .style("text-anchor", "middle")
+                .text("t-SNE Dimension 2");
+
+            svg.selectAll(".dot")
+                .data(data)
+                .enter().append("circle")
+                .attr("class", "dot")
+                .attr("cx", d => xScale(d.x))
+                .attr("cy", d => yScale(d.y))
+                .attr("r", d => sizeScale(d.value > 0 ? d.value : 1))
+                .style("fill", d => colorScale(d.cluster))
+                .on("mouseover", function(event, d) {{
+                    tooltip.transition().duration(200).style("opacity", .9);
+                    tooltip.html(
+                        `<strong>${{d.key}}</strong><br/>
+                        Cluster: ${{d.cluster}} (${{d.cluster_tags}})<br/>
+                        Pages: ${{d.value}}<br/>
+                        Date: ${{d.date}}`
+                    )
+                    .style("left", (event.pageX + 10) + "px")
+                    .style("top", (event.pageY - 30) + "px");
+                }})
+                .on("mouseout", function(d) {{
+                    tooltip.transition().duration(500).style("opacity", 0);
+                }})
+                .on("click", function(event, d) {{
+                    if (d.url) {{ window.open(d.url, '_blank'); }}
+                }});
+
+            const uniqueClusters = Array.from(new Set(data.map(d => d.cluster))).sort((a,b) => a-b);
+            const legend = svg.selectAll(".legend-item")
+                .data(uniqueClusters)
+                .enter().append("g")
+                .attr("class", "legend-item")
+                .attr("transform", (d, i) => `translate(0,${{i * 20}})`);
+
+            legend.append("rect")
+                .attr("x", width + 10)
+                .attr("y", 0)
+                .attr("width", 18)
+                .attr("height", 18)
+                .style("fill", d => colorScale(d));
+
+            legend.append("text")
+                .attr("x", width + 35)
+                .attr("y", 9)
+                .attr("dy", ".35em")
+                .attr("class", "legend")
+                .style("text-anchor", "start")
+                .text(d => {{
+                    const firstSpaceInCluster = data.find(space => space.cluster === d);
+                    const tags = firstSpaceInCluster ? firstSpaceInCluster.cluster_tags : '';
+                    return `Cluster ${{d}}${{tags ? ' (' + tags + ')' : ''}}`;
+                }});
+            
+            svg.append("text")
+                .attr("x", width + 10)
+                .attr("y", -10)
+                .attr("class", "legend")
+                .style("font-weight", "bold")
+                .text("Clusters");
+
+        }} else {{
+            const plotDiv = document.getElementById("scatter-plot");
+            if (plotDiv) {{
+                 plotDiv.innerHTML = "<p>No data to display in scatter plot. This could be due to t-SNE failure, no text content in spaces, or filters being too restrictive.</p>";
+            }}
+        }}
+    </script>
+</body>
+</html>"""
+
+    out_path = 'semantic_scatter_plot.html'
     with open(out_path, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(html))
-    
-    print(f'\nSearch complete! Results written to {out_path}')
-    print(f'Found {len(spaces_with_hits)} spaces with matches to your search terms.')
-    
-    # Open the HTML file in the browser
+        f.write(html_content)
+    print(f'Semantic scatter plot HTML written to {out_path}')
     webbrowser.open('file://' + os.path.abspath(out_path))
 
-def search_applications_indexed_all_spaces_per_term():
-    """
-    Search for applications using the Whoosh index. For each search term,
-    list all spaces where the term is found, along with hit counts and sample pages.
-    Generates an HTML report: all_spaces_per_term_application_search_results.html
-    """
-    if not WHOOSH_AVAILABLE:
-        print("Error: Whoosh library is not installed. Please install it with:")
-        print("pip install whoosh")
+def semantic_clustering_2d_scatter_plot(spaces_arg, n_clusters_arg): # Accept spaces and n_clusters as arguments
+    if not spaces_arg: # Use the passed argument
+        print("Error: No spaces loaded. Please load data first (e.g., by setting filters).")
+        render_d3_semantic_scatter_plot([], [], 'Agglomerative', {}, None)
         return
 
-    if not os.path.exists(WHOOSH_INDEX_DIR) or not exists_in(WHOOSH_INDEX_DIR):
-        print(f"Error: Whoosh index not found in {WHOOSH_INDEX_DIR}")
-        print("Please run option 14 first to create the search index.")
-        return
-
-    app_search_path = os.path.join(os.path.dirname(__file__), 'app_search.txt')
-    if not os.path.exists(app_search_path):
-        print(f"Error: app_search.txt not found at {app_search_path}")
-        print("Please create this file with one application name per line.")
-        return
+    print(f"Starting 2D Scatter Plot: Clustering {len(spaces_arg)} spaces using semantic vectors (Agglomerative) into {n_clusters_arg} clusters...")
 
     try:
-        with open(app_search_path, 'r', encoding='utf-8') as f:
-            search_terms = [line.strip() for line in f
-                           if line.strip() and not line.strip().startswith('#')]
-    except Exception as e:
-        print(f"Error reading app_search.txt: {e}")
-        return
+        X_tfidf, valid_spaces_for_X = get_vectors(spaces_arg) # Use the passed argument
 
-    if not search_terms:
-        print("No search terms found in app_search.txt")
-        print("Please add at least one application name per line.")
-        return
+        if not valid_spaces_for_X or X_tfidf.shape[0] == 0:
+            print("Error: No valid spaces with text content found for clustering after get_vectors.")
+            render_d3_semantic_scatter_plot([], [], 'Agglomerative', {}, None)
+            return
+        
+        print(f"Obtained {X_tfidf.shape[0]} valid spaces with TF-IDF vectors of shape {X_tfidf.shape}.")
 
-    print(f"Loaded {len(search_terms)} application search terms from app_search.txt")
-    ix = open_dir(WHOOSH_INDEX_DIR)
-    
-    results_by_term = defaultdict(list)
-    
-    print("Searching indexed data to find all spaces for each term...")
-    start_time = datetime.now()
-    QUERY_LIMIT_PER_TERM = 10000
-
-    with ix.searcher() as searcher:
-        for term_idx, term in enumerate(search_terms):
-            print(f'Processing term {term_idx + 1}/{len(search_terms)}: "{escape(term)}" ')
-            
-            current_term_space_details = defaultdict(lambda: {"hits": 0, "samples": []})
-
-            query_parser = MultifieldParser(["page_title", "page_content"], ix.schema, group=OrGroup)
-            processed_term = term
-            # Whoosh special characters to escape: + - & | ! ( ) { } [ ] ^ " ~ * ? : \\ /
-            # The Python string literal for these characters is: '+-&|!(){}[]^\\"~*?:\\\\/'
-            for char_to_escape in '+-&|!(){}[]^\\"~*?:\\\\/': 
-                if char_to_escape in processed_term:
-                    # The f-string f'\\\\{char_to_escape}' produces a string like '\\+' for Whoosh
-                    processed_term = processed_term.replace(char_to_escape, f'\\\\{char_to_escape}') 
-            
-            if " " in processed_term and not (processed_term.startswith('"') and processed_term.endswith('"')):
-                query_str = f'"{processed_term}"' 
+        actual_n_clusters = n_clusters_arg # Use the passed argument
+        if X_tfidf.shape[0] < n_clusters_arg: # Use the passed argument
+            print(f"Warning: Number of samples ({X_tfidf.shape[0]}) is less than n_clusters ({n_clusters_arg}).")
+            if X_tfidf.shape[0] < 2 and X_tfidf.shape[0] > 0:
+                 actual_n_clusters = 1
+            elif X_tfidf.shape[0] < 2:
+                 print("Error: Not enough samples to cluster.")
+                 render_d3_semantic_scatter_plot(valid_spaces_for_X, [], 'Agglomerative', {}, X_tfidf)
+                 return
             else:
-                query_str = processed_term
+                 actual_n_clusters = min(n_clusters_arg, X_tfidf.shape[0])
+            print(f"Using actual_n_clusters = {actual_n_clusters}")
+        
+        if actual_n_clusters < 1 and X_tfidf.shape[0] > 0:
+            actual_n_clusters = 1
+        elif actual_n_clusters == 0 and X_tfidf.shape[0] == 0:
+             pass
 
-            try:
-                query = query_parser.parse(query_str)
-            except Exception as e:
-                print(f"  Query error for term '{escape(term)}' (parsed as '{escape(query_str)}'): {e}")
-                results_by_term[term].append({"space_key": "Query Error", "hits": 0, "samples": [], "error_msg": str(e)})
-                continue
-
-            try:
-                whoosh_results = searcher.search(query, limit=QUERY_LIMIT_PER_TERM)
-                if not whoosh_results:
-                    results_by_term[term].append({"space_key": "No Hits", "hits": 0, "samples": [], "error_msg": "No results from searcher"})
-                    continue
-
-                for result_hit in whoosh_results:
-                    space_key = result_hit["space_key"]
-                    page_title = result_hit.get("page_title", "N/A")
-                    
-                    current_term_space_details[space_key]["hits"] += 1
-                    if len(current_term_space_details[space_key]["samples"]) < 5: 
-                        current_term_space_details[space_key]["samples"].append(page_title)
-                
-                if not current_term_space_details:
-                     results_by_term[term].append({"space_key": "No Hits", "hits": 0, "samples": [], "error_msg": "No spaces found for this term after processing hits."})
-                else:
-                    # Sort spaces by hit count for the current term
-                    sorted_space_details = sorted(current_term_space_details.items(), key=lambda item: item[1]['hits'], reverse=True)
-                    for sk, details in sorted_space_details:
-                        results_by_term[term].append({
-                            "space_key": sk, 
-                            "hits": details["hits"], 
-                            "samples": details["samples"],
-                            "error_msg": None
-                        })
-
-            except Exception as e:
-                print(f"  Search error for term '{escape(term)}': {e}")
-                results_by_term[term].append({"space_key": "Search Error", "hits": 0, "samples": [], "error_msg": str(e)})
-
-    total_elapsed = datetime.now() - start_time
-    print(f"\nTotal search time: {total_elapsed.total_seconds():.2f} seconds")
-
-    html_output_list = ['<html><head><title>All Spaces Per Application Term Search Results</title>',
-            '<style>',
-            'body { font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; }',
-            'h1, h2, h3 { color: #2c3e50; }',
-            'table { border-collapse: collapse; width: 100%; margin-bottom: 20px; margin-top:10px; }',
-            'th, td { border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }',
-            'th { background-color: #f2f2f2; }',
-            '.term-section { margin-bottom: 30px; padding: 15px; background-color: #f9f9f9; border: 1px solid #eee; border-radius: 5px;}',
-            '.hit-count { font-weight: bold; color: #2980b9; }',
-            '.search-time { font-style: italic; color: #7f8c8d; margin-bottom:20px; }',
-            '.page-samples ul {padding-left: 20px; margin-top:0; list-style-type: disc;}',
-            '.page-samples li { margin-bottom: 3px; font-size: 0.9em; color: #555;}',
-            '</style>',
-            '</head><body>']
-
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    html_output_list.append(f'<h1>All Spaces Per Application Term Search Results</h1>')
-    html_output_list.append(f'<p>Generated: {timestamp}</p>')
-    html_output_list.append(f'<p class="search-time">Total processing time: {total_elapsed.total_seconds():.2f} seconds</p>')
-
-    if not results_by_term:
-        html_output_list.append("<p>No search terms were processed or no results found overall.</p>")
-    else:
-        # Sort terms alphabetically for consistent report output
-        sorted_terms = sorted(results_by_term.keys())
-        for term in sorted_terms:
-            space_entries = results_by_term[term]
-            html_output_list.append('<div class="term-section">')
-            html_output_list.append(f'<h2>Application Term: "{escape(term)}"</h2>')
-
-            # Check if the only entries are errors or "No Hits" messages
-            is_error_or_no_hits = all(entry.get("error_msg") or entry["hits"] == 0 for entry in space_entries)
-
-            if not space_entries or is_error_or_no_hits:
-                # Display a general message or the first error/no_hits message
-                if space_entries and space_entries[0].get("error_msg"):
-                     html_output_list.append(f'<p style="color:red;">Issue processing term: {escape(space_entries[0]["error_msg"])} (Details: Space Key "{escape(space_entries[0].get("space_key", "N/A"))}")</p>')
-                else:
-                    html_output_list.append(f'<p>No spaces found containing this term, or an issue occurred during search.</p>')
+        labels_for_plot = []
+        if X_tfidf.shape[0] > 0 and actual_n_clusters > 0:
+            if X_tfidf.shape[0] == 1:
+                labels_for_plot = np.array([0])
+            elif actual_n_clusters == 1 and X_tfidf.shape[0] > 1:
+                labels_for_plot = np.zeros(X_tfidf.shape[0], dtype=int)
+            elif actual_n_clusters > 1 and X_tfidf.shape[0] >= actual_n_clusters:
+                agg_model = AgglomerativeClustering(n_clusters=actual_n_clusters)
+                labels_for_plot = agg_model.fit_predict(X_tfidf.toarray())
             else:
-                html_output_list.append('<table>')
-                html_output_list.append('<tr><th>Space Key</th><th>Mentions (Hits)</th><th>Sample Matched Page Titles</th></tr>')
-                
-                for entry in space_entries:
-                    # Skip entries that are purely informational about errors if already handled or if hits are 0 for "marker" space_keys
-                    if entry["error_msg"] and entry["hits"] == 0 : # If there was an error for this specific entry
-                         html_output_list.append(f'<tr><td colspan="3" style="color:red;">Error for space {escape(entry["space_key"])}: {escape(entry["error_msg"])}</td></tr>')
-                         continue
-                    if entry["hits"] == 0 and entry["space_key"] in ["No Hits", "Query Error", "Search Error"]: # Skip generic non-data entries
-                        continue
-                    if entry["hits"] == 0 and not entry["samples"]: # Skip if no hits and no samples, unless there's a specific error message
-                        continue
+                  print(f"Adjusting to 1 cluster due to sample/cluster count mismatch: Samples={X_tfidf.shape[0]}, Clusters={actual_n_clusters}")
+                  labels_for_plot = np.zeros(X_tfidf.shape[0], dtype=int)
 
+        else:
+            labels_for_plot = []
 
-                    html_output_list.append('<tr>')
-                    html_output_list.append(f'<td>{escape(entry["space_key"])}</td>')
-                    html_output_list.append(f'<td class="hit-count">{entry["hits"]}</td>')
-                    html_output_list.append('<td class="page-samples">')
-                    if entry["samples"]:
-                        html_output_list.append('<ul>')
-                        for sample_title in entry["samples"]:
-                            html_output_list.append(f'<li>{escape(sample_title)}</li>')
-                        html_output_list.append('</ul>')
-                    elif entry["hits"] > 0 :
-                        html_output_list.append('No specific page titles recorded as samples (but hits exist).')
-                    else: # hits == 0
-                        html_output_list.append('No mentions found.')
-                    html_output_list.append('</td></tr>')
-                html_output_list.append('</table>')
-            html_output_list.append('</div>')
-            
-    html_output_list.append('</body></html>')
-    
-    out_path = 'all_spaces_per_term_application_search_results.html'
-    try:
-        with open(out_path, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(html_output_list))
-        print(f'\nSearch complete! Results written to {out_path}')
-        webbrowser.open('file://' + os.path.abspath(out_path))
+        tags_for_plot = {}
+        if valid_spaces_for_X and len(labels_for_plot) > 0:
+             tags_for_plot = suggest_tags_for_clusters(valid_spaces_for_X, labels_for_plot)
+        
+        render_d3_semantic_scatter_plot(valid_spaces_for_X, labels_for_plot, 'Agglomerative', tags_for_plot, X_vectors=X_tfidf)
+
+    except ValueError as e:
+        if "No spaces with non-empty text content" in str(e) or "empty vocabulary" in str(e):
+            print(f"Error during 2D scatter plot generation: {e}")
+            print("This might be because the loaded spaces have no text content, the filters are too restrictive, or TF-IDF vectorization failed.")
+            render_d3_semantic_scatter_plot([], [], 'Agglomerative', {}, None)
+        else:
+            print(f"Clustering or Plotting Error for 2D scatter plot: {e}")
     except Exception as e:
-        print(f"Error writing HTML report {out_path}: {e}")
-
-# Function definition moved before main()
-def search_applications_indexed_top_space_per_term():
-    """
-    Search for applications using the Whoosh index. For each search term,
-    find the single space that has the most hits for that specific term.
-    Generates an HTML report: top_space_per_term_application_search_results.html
-    """
-    if not WHOOSH_AVAILABLE:
-        print("Error: Whoosh library is not installed. Please install it with:")
-        print("pip install whoosh")
-        return
-
-    if not os.path.exists(WHOOSH_INDEX_DIR) or not exists_in(WHOOSH_INDEX_DIR):
-        print(f"Error: Whoosh index not found in {WHOOSH_INDEX_DIR}")
-        print("Please run option 14 first to create the search index.")
-        return
-
-    app_search_path = os.path.join(os.path.dirname(__file__), 'app_search.txt')
-    if not os.path.exists(app_search_path):
-        print(f"Error: app_search.txt not found at {app_search_path}")
-        print("Please create this file with one application name per line.")
-        return
-
-    try:
-        with open(app_search_path, 'r', encoding='utf-8') as f:
-            search_terms = [line.strip() for line in f
-                           if line.strip() and not line.strip().startswith('#')]
-    except Exception as e:
-        print(f"Error reading app_search.txt: {e}")
-        return
-
-    if not search_terms:
-        print("No search terms found in app_search.txt")
-        print("Please add at least one application name per line.")
-        return
-
-    print(f"Loaded {len(search_terms)} application search terms from app_search.txt")
-    ix = open_dir(WHOOSH_INDEX_DIR)
-    
-    results_per_term_list = [] 
-    
-    print("Searching indexed data to find the top space for each term...")
-    start_time = datetime.now()
-    SEARCH_LIMIT_HITS_PER_TERM_IN_SPACE = 3000 
-
-    with ix.searcher() as searcher:
-        for term_idx, term in enumerate(search_terms):
-            print(f"Processing term {term_idx + 1}/{len(search_terms)}: \"{escape(term)}\"")
-            current_term_space_hits = defaultdict(lambda: {"hits": 0, "samples": []})
-            
-            query_parser = MultifieldParser(["page_title", "page_content"], ix.schema, group=OrGroup)
-            processed_term = term
-            for char_to_escape in '+-&|!(){}[]^\\"~*?:\\\\/':
-                if char_to_escape in processed_term:
-                    processed_term = processed_term.replace(char_to_escape, f'\\\\{char_to_escape}')
-            
-            if " " in processed_term and not (processed_term.startswith('"') and processed_term.endswith('"')):
-                query_str = f'"{processed_term}"'
-            else:
-                query_str = processed_term
-
-            try:
-                query = query_parser.parse(query_str)
-            except Exception as e:
-                print(f"  Query error for term '{escape(term)}' (parsed as '{escape(query_str)}'): {e}")
-                results_per_term_list.append((term, "Error in query", 0, [], str(e)))
-                continue
-
-            try:
-                results = searcher.search(query, limit=SEARCH_LIMIT_HITS_PER_TERM_IN_SPACE)
-                if not results:
-                    results_per_term_list.append((term, "No hits found", 0, [], "No results from searcher"))
-                    continue
-
-                for result in results:
-                    space_key = result["space_key"]
-                    page_title = result.get("page_title", "N/A")
-                    
-                    current_term_space_hits[space_key]["hits"] += 1
-                    if len(current_term_space_hits[space_key]["samples"]) < 3: 
-                        current_term_space_hits[space_key]["samples"].append(page_title)
-                
-                if not current_term_space_hits: 
-                    results_per_term_list.append((term, "No hits found in any space", 0, [], "current_term_space_hits was empty"))
-                    continue
-
-                top_space_for_term = max(current_term_space_hits, key=lambda k: current_term_space_hits[k]["hits"])
-                top_hits_for_term = current_term_space_hits[top_space_for_term]["hits"]
-                top_samples_for_term = current_term_space_hits[top_space_for_term]["samples"]
-                results_per_term_list.append((term, top_space_for_term, top_hits_for_term, top_samples_for_term, None))
-
-            except Exception as e:
-                print(f"  Search error for term '{escape(term)}': {e}")
-                results_per_term_list.append((term, "Search error", 0, [], str(e)))
-
-    total_elapsed = datetime.now() - start_time
-    print(f"\nTotal search time: {total_elapsed.total_seconds():.2f} seconds")
-
-    html_output_list = ['<html><head><title>Top Space Per Application Term Search Results</title>',
-            '<style>',
-            'body { font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; }',
-            'h1, h2, h3 { color: #2c3e50; }',
-            'table { border-collapse: collapse; width: 90%; margin-bottom: 30px; }', 
-            'th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }', 
-            'th { background-color: #f2f2f2; }', 
-            '.term-block { margin-bottom: 20px; padding: 15px; background-color: #eaf2f8; border-radius: 5px; box-shadow: 2px 2px 5px #ccc;}',
-            '.hit-count { font-weight: bold; color: #2980b9; }',
-            '.search-time { font-style: italic; color: #7f8c8d; margin-bottom:20px; }',
-            '.page-samples { font-size: 0.9em; color: #555; margin-left:15px; }',
-            'ul {padding-left: 20px; list-style-type: disc;}',
-            'li { margin-bottom: 5px; }',
-            '</style>',
-            '</head><body>']
-
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    html_output_list.append(f'<h1>Top Space Per Application Term Search Results</h1>')
-    html_output_list.append(f'<p>Generated: {timestamp}</p>')
-    html_output_list.append(f'<p class="search-time">Total processing time: {total_elapsed.total_seconds():.2f} seconds</p>')
-
-    if not results_per_term_list:
-        html_output_list.append("<p>No search terms were processed or no results found.</p>")
-    else:
-        for item_data in results_per_term_list:
-            term, top_space, hits, samples, error_msg = item_data
-            html_output_list.append('<div class="term-block">')
-            html_output_list.append(f'<h2>Application Term: "{escape(term)}"</h2>')
-            if error_msg:
-                 html_output_list.append(f'<p style="color:red;">Error processing term: {escape(error_msg)}</p>')
-            elif top_space == "No hits found" or top_space == "No hits found in any space":
-                html_output_list.append(f'<p>{escape(top_space)} for this term.</p>')
-            else:
-                html_output_list.append(f'<p>Top Space: <span style="color:#c0392b; font-weight:bold;">{escape(top_space)}</span></p>')
-                html_output_list.append(f'<p>Mentions in this space: <span class="hit-count">{hits}</span></p>')
-                if samples:
-                    html_output_list.append('<p>Sample Matched Page Titles:</p>')
-                    html_output_list.append('<ul class="page-samples">')
-                    for sample_title in samples:
-                        html_output_list.append(f'<li>{escape(sample_title)}</li>')
-                    html_output_list.append('</ul>')
-                else:
-                    html_output_list.append('<p class="page-samples">No specific page titles recorded as samples for this top space.</p>')
-            html_output_list.append('</div>')
-            
-    html_output_list.append('</body></html>')
-    
-    out_path = 'top_space_per_term_application_search_results.html'
-    try:
-        with open(out_path, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(html_output_list))
-        print(f'\nSearch complete! Results written to {out_path}')
-        webbrowser.open('file://' + os.path.abspath(out_path))
-    except Exception as e:
-        print(f"Error writing HTML report {out_path}: {e}")
+        print(f"An unexpected error occurred in semantic_clustering_2d_scatter_plot: {e}")
+        import traceback
+        traceback.print_exc()
+        render_d3_semantic_scatter_plot([], [], 'Agglomerative', {}, None)
 
 def main():
     min_pages = DEFAULT_MIN_PAGES
@@ -1570,7 +788,6 @@ def main():
     spaces = []
     data_loaded = False
     n_clusters = 20  # Default number of clusters
-    # Display a clear banner so we know the program is running
     print("\n" + "="*80)
     print("""
     ┌─────────────────────────────────────────────────────────┐
@@ -1586,7 +803,6 @@ def main():
     print("="*80 + "\n")
     print("Welcome to the Confluence Cluster Explorer!")
     
-    # Helper function to load data only when needed
     def ensure_data_loaded():
         nonlocal spaces, data_loaded, min_pages, max_pages, date_filter
         if not data_loaded:
@@ -1596,7 +812,6 @@ def main():
             spaces = load_spaces(min_pages=min_pages, max_pages=max_pages)
             print(f"Loaded {len(spaces)} spaces from {TEMP_DIR}.")
             
-            # Apply date filter if specified
             if date_filter:
                 initial_count = len(spaces)
                 spaces = filter_spaces_by_date(spaces, date_filter)
@@ -1626,6 +841,7 @@ def main():
         print("17. Search applications using indexed data (Top 1 space overall, limit 3000)") 
         print("18. Find top space per application term (using Whoosh index)")
         print("19. Find all spaces per application term with counts (using Whoosh index)") # New option 19
+        print("20. Semantic clustering 2D Scatter Plot (Agglomerative)") # New option 20
         print("Q. Quit")
         
         choice = input("Select option: ").strip()
@@ -1818,12 +1034,14 @@ def main():
                 data_loaded = False  # Mark data as needing to be reloaded
                 print("Date filter cleared. Data will be loaded when needed.")
         elif choice == '17': 
-            # search_applications_indexed_top_space() # Commented out due to NameError, function seems to be missing or a duplicate of 18
             print("Option 17 (search_applications_indexed_top_space) is currently not implemented.")
         elif choice == '18': 
             search_applications_indexed_top_space_per_term()
         elif choice == '19': # New handler for option 19
             search_applications_indexed_all_spaces_per_term()
+        elif choice == '20':
+            ensure_data_loaded() # Ensure data is loaded
+            semantic_clustering_2d_scatter_plot(spaces, n_clusters) # Pass spaces and n_clusters
         elif choice.upper() == 'Q':
             print("Goodbye!")
             break
