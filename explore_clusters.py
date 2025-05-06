@@ -1846,7 +1846,9 @@ def main():
             else:
                 print("No spaces loaded or available after filtering. Cannot generate scatter plot.")
         elif choice == '21': 
-            active_spaces, _, _ = ensure_data_loaded()
+            data_loaded_retval = ensure_data_loaded()
+            print(f"Data loaded: {data_loaded_retval}")
+            active_spaces, _, _ = data_loaded_retval
             if active_spaces:
                 try:
                     print(f"Running t-SNE for 2D proximity scatter plot...")
