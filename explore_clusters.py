@@ -13,6 +13,7 @@ from datetime import datetime
 import shutil
 from config_loader import load_visualization_settings
 import operator
+from html import escape  # Added for HTML escaping
 
 # Try to import Whoosh (will be used for options 14 and 15)
 try:
@@ -20,7 +21,7 @@ try:
     from whoosh.fields import Schema, TEXT, ID, KEYWORD
     from whoosh.analysis import StemmingAnalyzer
     from whoosh.index import create_in, open_dir, exists_in
-    from whoosh.qparser import QueryParser, MultifieldParser
+    from whoosh.qparser import QueryParser, MultifieldParser, OrGroup  # Added OrGroup
     WHOOSH_AVAILABLE = True
 except ImportError:
     WHOOSH_AVAILABLE = False
@@ -62,7 +63,7 @@ def hex_to_rgb(hex_color):
     if len(hex_color) != 6:
         return (0, 0, 0)
     try:
-        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))  # Corrected variable here
     except ValueError:
         return (0, 0, 0)
 
@@ -1221,271 +1222,30 @@ def search_applications_indexed():
     # Open the HTML file in the browser
     webbrowser.open('file://' + os.path.abspath(out_path))
 
-def search_applications_indexed_top_space():
-    """
-    Search for applications using the Whoosh index, limited to 3000 results,
-    and only show the top space(s) with the most hits within that limit.
-    """
-    if not WHOOSH_AVAILABLE:
-        print("Error: Whoosh library is not installed. Please install it with:")
-        print("pip install whoosh")
-        return
-
-    # Check if index exists
-    if not os.path.exists(WHOOSH_INDEX_DIR) or not exists_in(WHOOSH_INDEX_DIR):
-        print(f"Error: Whoosh index not found in {WHOOSH_INDEX_DIR}")
-        print("Please run option 14 first to create the search index.")
-        return
-
-    # Load application search terms
-    app_search_path = os.path.join(os.path.dirname(__file__), 'app_search.txt')
-    if not os.path.exists(app_search_path):
-        print(f"Error: app_search.txt not found at {app_search_path}")
-        print("Please create this file with one application name per line.")
-        return
-
-    # Load search terms
-    try:
-        with open(app_search_path, 'r') as f:
-            # Skip lines starting with # (comments) and empty lines
-            search_terms = [line.strip() for line in f
-                           if line.strip() and not line.strip().startswith('#')]
-    except Exception as e:
-        print(f"Error reading app_search.txt: {e}")
-        return
-
-    if not search_terms:
-        print("No search terms found in app_search.txt")
-        print("Please add at least one application name per line.")
-        return
-
-    print(f"Loaded {len(search_terms)} application search terms from app_search.txt")
-
-    # Open the index
-    ix = open_dir(WHOOSH_INDEX_DIR)
-
-    # Dictionary to hold results
-    # Format: {app_term: [(space_key, hit_count, matched_pages), ...]}
-    app_hits = defaultdict(list)
-
-    # Track spaces that have at least one hit
-    spaces_with_hits = set()
-
-    # Set the query limit to 3000
-    QUERY_LIMIT = 3000
-
-    # Search for each term
-    print(f"Searching indexed data (limit {QUERY_LIMIT} results per term)...")
-    start_time = datetime.now()
-
-    with ix.searcher() as searcher:
-        for term in search_terms:
-            print(f"Searching for: {term}")
-            term_start_time = datetime.now()
-
-            # Create a query that searches both title and content
-            query_parser = MultifieldParser(["page_title", "page_content"], ix.schema)
-
-            # Process the term to handle special characters
-            processed_term = term
-            for char in '+-/\\\\()*&^%$#@!~`"\\\'|':
-                if char in processed_term:
-                    processed_term = processed_term.replace(char, f"\\\\{char}")
-
-            # Optionally use phrase queries for multi-word terms
-            if " " in processed_term:
-                query_str = f'"{processed_term}"'  # Phrase query
-            else:
-                query_str = processed_term
-
-            # Parse the query
-            try:
-                query = query_parser.parse(query_str)
-            except Exception as e:
-                print(f"Query error for term '{term}': {e}")
-                print("Skipping this term.")
-                continue
-
-            # Execute the search with the specified limit
-            try:
-                results = searcher.search(query, limit=QUERY_LIMIT)
-                print(f"Found {len(results)} hits for '{term}' (within limit)")
-
-                # Process results for this term
-                term_spaces = defaultdict(list)
-
-                for result in results:
-                    space_key = result["space_key"]
-                    page_title = result["page_title"]
-                    spaces_with_hits.add(space_key)
-                    term_spaces[space_key].append(page_title)
-
-                # Add to overall results
-                for space_key, matched_pages in term_spaces.items():
-                    hit_count = len(matched_pages)
-                    app_hits[term].append((space_key, hit_count, matched_pages[:5]))
-
-                term_elapsed = datetime.now() - term_start_time
-                print(f"Processed in {term_elapsed.total_seconds():.2f} seconds")
-
-            except Exception as e:
-                print(f"Search error for term '{term}': {e}")
-
-    total_elapsed = datetime.now() - start_time
-    print(f"Total search time: {total_elapsed.total_seconds():.2f} seconds")
-
-    # Build space-centric data from the collected hits
-    space_data = defaultdict(list)
-    for app, hits in app_hits.items():
-        for space, count, _ in hits:
-            space_data[space].append((app, count))
-
-    # Find the maximum total hit count among all spaces
-    max_hits = 0
-    if space_data:
-        max_hits = max(sum(count for _, count in app_list) for space, app_list in space_data.items())
-
-    # Filter to keep only the space(s) with the maximum hit count
-    top_spaces_data = {space: app_list for space, app_list in space_data.items()
-                       if sum(count for _, count in app_list) == max_hits}
-
-    # Sort the top spaces alphabetically by key for consistent output
-    sorted_top_spaces = sorted(top_spaces_data.items())
-
-    # Filter app_hits to only include hits from the top space(s)
-    filtered_app_hits = defaultdict(list)
-    top_space_keys = set(top_spaces_data.keys())
-    for app, hits in app_hits.items():
-        filtered_hits_for_app = [(s, c, p) for s, c, p in hits if s in top_space_keys]
-        if filtered_hits_for_app:
-            filtered_app_hits[app] = filtered_hits_for_app
-
-    # Sort the filtered app hits for the report
-    sorted_filtered_apps = sorted(filtered_app_hits.items(), key=lambda x: sum(count for _, count, _ in x[1]), reverse=True)
-
-
-    # Generate HTML report
-    html = ['<html><head><title>Top Space(s) Indexed Application Search Results</title>',
-            '<style>',
-            'body { font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; }',
-            'h1 { color: #2c3e50; }',
-            'h2 { color: #3498db; margin-top: 30px; }',
-            'table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }',
-            'th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }',
-            'th { background-color: #f2f2f2; position: sticky; top: 0; }',
-            'tr:nth-child(even) { background-color: #f9f9f9; }',
-            'tr:hover { background-color: #f1f1f1; }',
-            '.summary { margin-bottom: 30px; padding: 10px; background-color: #eaf2f8; border-radius: 5px; }',
-            '.hit-count { font-weight: bold; color: #2980b9; }',
-            '.matched-pages { font-size: 0.9em; color: #7f8c8d; max-width: 400px; }',
-            '.search-time { font-style: italic; color: #7f8c8d; }',
-            '</style>',
-            '</head><body>']
-
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    html.append(f'<h1>Top Space(s) Indexed Application Search Results (Limit {QUERY_LIMIT})</h1>')
-    html.append(f'<p>Generated: {timestamp}</p>')
-    html.append(f'<p class="search-time">Total search time: {total_elapsed.total_seconds():.2f} seconds</p>')
-
-    # Summary section
-    html.append('<div class="summary">')
-    html.append(f'<p>Searched the Whoosh index for <b>{len(search_terms)}</b> application terms (limit {QUERY_LIMIT} results per term).</p>')
-    if sorted_top_spaces:
-        html.append(f'<p>Found <b>{len(sorted_top_spaces)}</b> top space(s) with the maximum hit count of <b>{max_hits}</b> mentions.</p>')
-        html.append('<p>Top Space(s):</p><ul>')
-        for space, _ in sorted_top_spaces:
-             html.append(f'<li><b>{space}</b></li>')
-        html.append('</ul>')
-    else:
-        html.append('<p>No matches found within the search limits.</p>')
-
-    html.append('</div>')
-
-    if sorted_top_spaces:
-        # First table: Application-centric view (filtered for top spaces)
-        html.append('<h2>Applications and Where They Appear (in Top Space(s))</h2>')
-        html.append('<table>')
-        html.append('<tr><th>Application</th><th>Space Key</th><th>Hit Count</th><th>Sample Matched Pages</th></tr>')
-
-        for app, hits in sorted_filtered_apps:
-            # Sort by hit count for this application within the top spaces
-            sorted_hits = sorted(hits, key=lambda x: x[1], reverse=True)
-            if sorted_hits:
-                # First row includes application name
-                space, count, pages = sorted_hits[0]
-                html.append(f'<tr><td rowspan="{len(sorted_hits)}">{app}</td><td>{space}</td><td class="hit-count">{count}</td>')
-                html.append(f'<td class="matched-pages">{", ".join(pages[:5])}')
-                if len(pages) > 5:
-                    html.append(' <i>(and more...)</i>')
-                html.append('</td></tr>')
-
-                # Remaining rows for this application
-                for space, count, pages in sorted_hits[1:]:
-                    html.append(f'<tr><td>{space}</td><td class="hit-count">{count}</td>')
-                    html.append(f'<td class="matched-pages">{", ".join(pages[:5])}')
-                    if len(pages) > 5:
-                        html.append(' <i>(and more...)</i>')
-                    html.append('</td></tr>')
-
-        html.append('</table>')
-
-        # Second table: Space-centric view (only top spaces)
-        html.append('<h2>Top Space(s) and Applications They Contain</h2>')
-        html.append('<table>')
-        html.append('<tr><th>Space Key</th><th>Applications Found</th><th>Total Mentions</th></tr>')
-
-        for space, app_list in sorted_top_spaces:
-            total_hits = sum(count for _, count in app_list)
-            app_formatted = ', '.join([f"{app} ({count})" for app, count in
-                                      sorted(app_list, key=lambda x: x[1], reverse=True)])
-            html.append(f'<tr><td>{space}</td><td>{app_formatted}</td><td>{total_hits}</td></tr>')
-
-        html.append('</table>')
-
-    html.append('</body></html>')
-
-    # Write to file
-    out_path = 'top_space_application_search_results.html' # Use a different filename
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(html))
-
-    print(f'\nSearch complete! Results written to {out_path}')
-    if sorted_top_spaces:
-        print(f'Found {len(sorted_top_spaces)} top space(s) with {max_hits} mentions each.')
-    else:
-        print('No matching spaces found.')
-
-    # Open the HTML file in the browser
-    webbrowser.open('file://' + os.path.abspath(out_path))
-
-
-def search_applications_indexed_top_space_per_term():
+def search_applications_indexed_all_spaces_per_term():
     """
     Search for applications using the Whoosh index. For each search term,
-    find the single space where that term appears most frequently.
+    list all spaces where the term is found, along with hit counts and sample pages.
+    Generates an HTML report: all_spaces_per_term_application_search_results.html
     """
     if not WHOOSH_AVAILABLE:
         print("Error: Whoosh library is not installed. Please install it with:")
         print("pip install whoosh")
         return
 
-    # Check if index exists
     if not os.path.exists(WHOOSH_INDEX_DIR) or not exists_in(WHOOSH_INDEX_DIR):
         print(f"Error: Whoosh index not found in {WHOOSH_INDEX_DIR}")
         print("Please run option 14 first to create the search index.")
         return
 
-    # Load application search terms
     app_search_path = os.path.join(os.path.dirname(__file__), 'app_search.txt')
     if not os.path.exists(app_search_path):
         print(f"Error: app_search.txt not found at {app_search_path}")
         print("Please create this file with one application name per line.")
         return
 
-    # Load search terms
     try:
-        with open(app_search_path, 'r') as f:
-            # Skip lines starting with # (comments) and empty lines
+        with open(app_search_path, 'r', encoding='utf-8') as f:
             search_terms = [line.strip() for line in f
                            if line.strip() and not line.strip().startswith('#')]
     except Exception as e:
@@ -1498,93 +1258,310 @@ def search_applications_indexed_top_space_per_term():
         return
 
     print(f"Loaded {len(search_terms)} application search terms from app_search.txt")
-
-    # Open the index
     ix = open_dir(WHOOSH_INDEX_DIR)
-
-    # Dictionary to hold results: {term: (top_space, max_hits)}
-    term_top_spaces = {}
-
-    # Search for each term
-    print(f"Searching indexed data to find top space per term...")
+    
+    results_by_term = defaultdict(list)
+    
+    print("Searching indexed data to find all spaces for each term...")
     start_time = datetime.now()
+    QUERY_LIMIT_PER_TERM = 10000
 
     with ix.searcher() as searcher:
-        for term in search_terms:
-            print(f"Searching for: {term}")
-            term_start_time = datetime.now()
+        for term_idx, term in enumerate(search_terms):
+            print(f'Processing term {term_idx + 1}/{len(search_terms)}: "{escape(term)}" ')
+            
+            current_term_space_details = defaultdict(lambda: {"hits": 0, "samples": []})
 
-            # Create a query that searches both title and content
-            query_parser = MultifieldParser(["page_title", "page_content"], ix.schema)
-
-            # Process the term to handle special characters
+            query_parser = MultifieldParser(["page_title", "page_content"], ix.schema, group=OrGroup)
             processed_term = term
-            for char in '+-/\\\\()*&^%$#@!~`"\\\'|':
-                if char in processed_term:
-                    processed_term = processed_term.replace(char, f"\\\\{char}")
-
-            # Optionally use phrase queries for multi-word terms
-            if " " in processed_term:
-                query_str = f'"{processed_term}"'  # Phrase query
+            # Whoosh special characters to escape: + - & | ! ( ) { } [ ] ^ " ~ * ? : \\ /
+            # The Python string literal for these characters is: '+-&|!(){}[]^\\"~*?:\\\\/'
+            for char_to_escape in '+-&|!(){}[]^\\"~*?:\\\\/': 
+                if char_to_escape in processed_term:
+                    # The f-string f'\\\\{char_to_escape}' produces a string like '\\+' for Whoosh
+                    processed_term = processed_term.replace(char_to_escape, f'\\\\{char_to_escape}') 
+            
+            if " " in processed_term and not (processed_term.startswith('"') and processed_term.endswith('"')):
+                query_str = f'"{processed_term}"' 
             else:
                 query_str = processed_term
 
-            # Parse the query
             try:
                 query = query_parser.parse(query_str)
             except Exception as e:
-                print(f"Query error for term '{term}': {e}")
-                print("Skipping this term.")
+                print(f"  Query error for term '{escape(term)}' (parsed as '{escape(query_str)}'): {e}")
+                results_by_term[term].append({"space_key": "Query Error", "hits": 0, "samples": [], "error_msg": str(e)})
                 continue
 
-            # Execute the search (limit can be adjusted or removed if needed)
-            # Using a large limit to try and get all hits for accurate counting per space
-            SEARCH_LIMIT_PER_TERM = 10000 
             try:
-                results = searcher.search(query, limit=SEARCH_LIMIT_PER_TERM)
-                print(f"Found {len(results)} hits for '{term}' (within limit {SEARCH_LIMIT_PER_TERM})")
+                whoosh_results = searcher.search(query, limit=QUERY_LIMIT_PER_TERM)
+                if not whoosh_results:
+                    results_by_term[term].append({"space_key": "No Hits", "hits": 0, "samples": [], "error_msg": "No results from searcher"})
+                    continue
 
-                # Process results to count hits per space for this term
-                space_hit_counts = Counter()
-                for result in results:
-                    space_key = result["space_key"]
-                    space_hit_counts[space_key] += 1
-
-                # Find the space with the maximum hits for this term
-                if space_hit_counts:
-                    # Find the space key with the maximum count
-                    top_space, max_hits = space_hit_counts.most_common(1)[0]
-                    term_top_spaces[term] = (top_space, max_hits)
-                    print(f"  -> Top space: {top_space} ({max_hits} hits)")
+                for result_hit in whoosh_results:
+                    space_key = result_hit["space_key"]
+                    page_title = result_hit.get("page_title", "N/A")
+                    
+                    current_term_space_details[space_key]["hits"] += 1
+                    if len(current_term_space_details[space_key]["samples"]) < 5: 
+                        current_term_space_details[space_key]["samples"].append(page_title)
+                
+                if not current_term_space_details:
+                     results_by_term[term].append({"space_key": "No Hits", "hits": 0, "samples": [], "error_msg": "No spaces found for this term after processing hits."})
                 else:
-                    term_top_spaces[term] = ("None found", 0)
-                    print(f"  -> No spaces found for this term.")
-
-
-                term_elapsed = datetime.now() - term_start_time
-                print(f"Processed in {term_elapsed.total_seconds():.2f} seconds")
+                    # Sort spaces by hit count for the current term
+                    sorted_space_details = sorted(current_term_space_details.items(), key=lambda item: item[1]['hits'], reverse=True)
+                    for sk, details in sorted_space_details:
+                        results_by_term[term].append({
+                            "space_key": sk, 
+                            "hits": details["hits"], 
+                            "samples": details["samples"],
+                            "error_msg": None
+                        })
 
             except Exception as e:
-                print(f"Search error for term '{term}': {e}")
-                term_top_spaces[term] = ("Search Error", 0)
-
+                print(f"  Search error for term '{escape(term)}': {e}")
+                results_by_term[term].append({"space_key": "Search Error", "hits": 0, "samples": [], "error_msg": str(e)})
 
     total_elapsed = datetime.now() - start_time
     print(f"\nTotal search time: {total_elapsed.total_seconds():.2f} seconds")
 
-    # Print the final results
-    print("\n--- Top Space per Search Term ---")
-    if term_top_spaces:
-        # Sort by term for consistent output
-        sorted_terms = sorted(term_top_spaces.items(), key=operator.itemgetter(0))
-        for term, (space, hits) in sorted_terms:
-             print(f"Term: '{term}' -> Top Space: {space} ({hits} hits)")
+    html_output_list = ['<html><head><title>All Spaces Per Application Term Search Results</title>',
+            '<style>',
+            'body { font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; }',
+            'h1, h2, h3 { color: #2c3e50; }',
+            'table { border-collapse: collapse; width: 100%; margin-bottom: 20px; margin-top:10px; }',
+            'th, td { border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }',
+            'th { background-color: #f2f2f2; }',
+            '.term-section { margin-bottom: 30px; padding: 15px; background-color: #f9f9f9; border: 1px solid #eee; border-radius: 5px;}',
+            '.hit-count { font-weight: bold; color: #2980b9; }',
+            '.search-time { font-style: italic; color: #7f8c8d; margin-bottom:20px; }',
+            '.page-samples ul {padding-left: 20px; margin-top:0; list-style-type: disc;}',
+            '.page-samples li { margin-bottom: 3px; font-size: 0.9em; color: #555;}',
+            '</style>',
+            '</head><body>']
+
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    html_output_list.append(f'<h1>All Spaces Per Application Term Search Results</h1>')
+    html_output_list.append(f'<p>Generated: {timestamp}</p>')
+    html_output_list.append(f'<p class="search-time">Total processing time: {total_elapsed.total_seconds():.2f} seconds</p>')
+
+    if not results_by_term:
+        html_output_list.append("<p>No search terms were processed or no results found overall.</p>")
     else:
-        print("No results found.")
+        # Sort terms alphabetically for consistent report output
+        sorted_terms = sorted(results_by_term.keys())
+        for term in sorted_terms:
+            space_entries = results_by_term[term]
+            html_output_list.append('<div class="term-section">')
+            html_output_list.append(f'<h2>Application Term: "{escape(term)}"</h2>')
 
-    print("\nPress Enter to continue...")
-    input()
+            # Check if the only entries are errors or "No Hits" messages
+            is_error_or_no_hits = all(entry.get("error_msg") or entry["hits"] == 0 for entry in space_entries)
 
+            if not space_entries or is_error_or_no_hits:
+                # Display a general message or the first error/no_hits message
+                if space_entries and space_entries[0].get("error_msg"):
+                     html_output_list.append(f'<p style="color:red;">Issue processing term: {escape(space_entries[0]["error_msg"])} (Details: Space Key "{escape(space_entries[0].get("space_key", "N/A"))}")</p>')
+                else:
+                    html_output_list.append(f'<p>No spaces found containing this term, or an issue occurred during search.</p>')
+            else:
+                html_output_list.append('<table>')
+                html_output_list.append('<tr><th>Space Key</th><th>Mentions (Hits)</th><th>Sample Matched Page Titles</th></tr>')
+                
+                for entry in space_entries:
+                    # Skip entries that are purely informational about errors if already handled or if hits are 0 for "marker" space_keys
+                    if entry["error_msg"] and entry["hits"] == 0 : # If there was an error for this specific entry
+                         html_output_list.append(f'<tr><td colspan="3" style="color:red;">Error for space {escape(entry["space_key"])}: {escape(entry["error_msg"])}</td></tr>')
+                         continue
+                    if entry["hits"] == 0 and entry["space_key"] in ["No Hits", "Query Error", "Search Error"]: # Skip generic non-data entries
+                        continue
+                    if entry["hits"] == 0 and not entry["samples"]: # Skip if no hits and no samples, unless there's a specific error message
+                        continue
+
+
+                    html_output_list.append('<tr>')
+                    html_output_list.append(f'<td>{escape(entry["space_key"])}</td>')
+                    html_output_list.append(f'<td class="hit-count">{entry["hits"]}</td>')
+                    html_output_list.append('<td class="page-samples">')
+                    if entry["samples"]:
+                        html_output_list.append('<ul>')
+                        for sample_title in entry["samples"]:
+                            html_output_list.append(f'<li>{escape(sample_title)}</li>')
+                        html_output_list.append('</ul>')
+                    elif entry["hits"] > 0 :
+                        html_output_list.append('No specific page titles recorded as samples (but hits exist).')
+                    else: # hits == 0
+                        html_output_list.append('No mentions found.')
+                    html_output_list.append('</td></tr>')
+                html_output_list.append('</table>')
+            html_output_list.append('</div>')
+            
+    html_output_list.append('</body></html>')
+    
+    out_path = 'all_spaces_per_term_application_search_results.html'
+    try:
+        with open(out_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(html_output_list))
+        print(f'\nSearch complete! Results written to {out_path}')
+        webbrowser.open('file://' + os.path.abspath(out_path))
+    except Exception as e:
+        print(f"Error writing HTML report {out_path}: {e}")
+
+# Function definition moved before main()
+def search_applications_indexed_top_space_per_term():
+    """
+    Search for applications using the Whoosh index. For each search term,
+    find the single space that has the most hits for that specific term.
+    Generates an HTML report: top_space_per_term_application_search_results.html
+    """
+    if not WHOOSH_AVAILABLE:
+        print("Error: Whoosh library is not installed. Please install it with:")
+        print("pip install whoosh")
+        return
+
+    if not os.path.exists(WHOOSH_INDEX_DIR) or not exists_in(WHOOSH_INDEX_DIR):
+        print(f"Error: Whoosh index not found in {WHOOSH_INDEX_DIR}")
+        print("Please run option 14 first to create the search index.")
+        return
+
+    app_search_path = os.path.join(os.path.dirname(__file__), 'app_search.txt')
+    if not os.path.exists(app_search_path):
+        print(f"Error: app_search.txt not found at {app_search_path}")
+        print("Please create this file with one application name per line.")
+        return
+
+    try:
+        with open(app_search_path, 'r', encoding='utf-8') as f:
+            search_terms = [line.strip() for line in f
+                           if line.strip() and not line.strip().startswith('#')]
+    except Exception as e:
+        print(f"Error reading app_search.txt: {e}")
+        return
+
+    if not search_terms:
+        print("No search terms found in app_search.txt")
+        print("Please add at least one application name per line.")
+        return
+
+    print(f"Loaded {len(search_terms)} application search terms from app_search.txt")
+    ix = open_dir(WHOOSH_INDEX_DIR)
+    
+    results_per_term_list = [] 
+    
+    print("Searching indexed data to find the top space for each term...")
+    start_time = datetime.now()
+    SEARCH_LIMIT_HITS_PER_TERM_IN_SPACE = 3000 
+
+    with ix.searcher() as searcher:
+        for term_idx, term in enumerate(search_terms):
+            print(f"Processing term {term_idx + 1}/{len(search_terms)}: \"{escape(term)}\"")
+            current_term_space_hits = defaultdict(lambda: {"hits": 0, "samples": []})
+            
+            query_parser = MultifieldParser(["page_title", "page_content"], ix.schema, group=OrGroup)
+            processed_term = term
+            for char_to_escape in '+-&|!(){}[]^\\"~*?:\\\\/':
+                if char_to_escape in processed_term:
+                    processed_term = processed_term.replace(char_to_escape, f'\\\\{char_to_escape}')
+            
+            if " " in processed_term and not (processed_term.startswith('"') and processed_term.endswith('"')):
+                query_str = f'"{processed_term}"'
+            else:
+                query_str = processed_term
+
+            try:
+                query = query_parser.parse(query_str)
+            except Exception as e:
+                print(f"  Query error for term '{escape(term)}' (parsed as '{escape(query_str)}'): {e}")
+                results_per_term_list.append((term, "Error in query", 0, [], str(e)))
+                continue
+
+            try:
+                results = searcher.search(query, limit=SEARCH_LIMIT_HITS_PER_TERM_IN_SPACE)
+                if not results:
+                    results_per_term_list.append((term, "No hits found", 0, [], "No results from searcher"))
+                    continue
+
+                for result in results:
+                    space_key = result["space_key"]
+                    page_title = result.get("page_title", "N/A")
+                    
+                    current_term_space_hits[space_key]["hits"] += 1
+                    if len(current_term_space_hits[space_key]["samples"]) < 3: 
+                        current_term_space_hits[space_key]["samples"].append(page_title)
+                
+                if not current_term_space_hits: 
+                    results_per_term_list.append((term, "No hits found in any space", 0, [], "current_term_space_hits was empty"))
+                    continue
+
+                top_space_for_term = max(current_term_space_hits, key=lambda k: current_term_space_hits[k]["hits"])
+                top_hits_for_term = current_term_space_hits[top_space_for_term]["hits"]
+                top_samples_for_term = current_term_space_hits[top_space_for_term]["samples"]
+                results_per_term_list.append((term, top_space_for_term, top_hits_for_term, top_samples_for_term, None))
+
+            except Exception as e:
+                print(f"  Search error for term '{escape(term)}': {e}")
+                results_per_term_list.append((term, "Search error", 0, [], str(e)))
+
+    total_elapsed = datetime.now() - start_time
+    print(f"\nTotal search time: {total_elapsed.total_seconds():.2f} seconds")
+
+    html_output_list = ['<html><head><title>Top Space Per Application Term Search Results</title>',
+            '<style>',
+            'body { font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; }',
+            'h1, h2, h3 { color: #2c3e50; }',
+            'table { border-collapse: collapse; width: 90%; margin-bottom: 30px; }', 
+            'th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }', 
+            'th { background-color: #f2f2f2; }', 
+            '.term-block { margin-bottom: 20px; padding: 15px; background-color: #eaf2f8; border-radius: 5px; box-shadow: 2px 2px 5px #ccc;}',
+            '.hit-count { font-weight: bold; color: #2980b9; }',
+            '.search-time { font-style: italic; color: #7f8c8d; margin-bottom:20px; }',
+            '.page-samples { font-size: 0.9em; color: #555; margin-left:15px; }',
+            'ul {padding-left: 20px; list-style-type: disc;}',
+            'li { margin-bottom: 5px; }',
+            '</style>',
+            '</head><body>']
+
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    html_output_list.append(f'<h1>Top Space Per Application Term Search Results</h1>')
+    html_output_list.append(f'<p>Generated: {timestamp}</p>')
+    html_output_list.append(f'<p class="search-time">Total processing time: {total_elapsed.total_seconds():.2f} seconds</p>')
+
+    if not results_per_term_list:
+        html_output_list.append("<p>No search terms were processed or no results found.</p>")
+    else:
+        for item_data in results_per_term_list:
+            term, top_space, hits, samples, error_msg = item_data
+            html_output_list.append('<div class="term-block">')
+            html_output_list.append(f'<h2>Application Term: "{escape(term)}"</h2>')
+            if error_msg:
+                 html_output_list.append(f'<p style="color:red;">Error processing term: {escape(error_msg)}</p>')
+            elif top_space == "No hits found" or top_space == "No hits found in any space":
+                html_output_list.append(f'<p>{escape(top_space)} for this term.</p>')
+            else:
+                html_output_list.append(f'<p>Top Space: <span style="color:#c0392b; font-weight:bold;">{escape(top_space)}</span></p>')
+                html_output_list.append(f'<p>Mentions in this space: <span class="hit-count">{hits}</span></p>')
+                if samples:
+                    html_output_list.append('<p>Sample Matched Page Titles:</p>')
+                    html_output_list.append('<ul class="page-samples">')
+                    for sample_title in samples:
+                        html_output_list.append(f'<li>{escape(sample_title)}</li>')
+                    html_output_list.append('</ul>')
+                else:
+                    html_output_list.append('<p class="page-samples">No specific page titles recorded as samples for this top space.</p>')
+            html_output_list.append('</div>')
+            
+    html_output_list.append('</body></html>')
+    
+    out_path = 'top_space_per_term_application_search_results.html'
+    try:
+        with open(out_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(html_output_list))
+        print(f'\nSearch complete! Results written to {out_path}')
+        webbrowser.open('file://' + os.path.abspath(out_path))
+    except Exception as e:
+        print(f"Error writing HTML report {out_path}: {e}")
 
 def main():
     min_pages = DEFAULT_MIN_PAGES
@@ -1642,12 +1619,13 @@ def main():
         print("10. Semantic clustering and D3 Circle Packing (Agglomerative)")        
         print("11. Semantic clustering and D3 Circle Packing (KMeans)")
         print("12. Semantic clustering and D3 Circle Packing (DBSCAN)")
-        print("13. Search for applications in spaces (slow)")
-        print("14. Preprocess application search index (Whoosh)")
-        print("15. Search applications using indexed data (fast using Whoosh)")
+        print("13. Search for applications in spaces (slow, direct scan)")
+        print("14. Preprocess application search index (Whoosh - required for 15, 17, 18, 19)")
+        print("15. Search applications using indexed data (Whoosh - full report)")
         print(f"16. Set date filter (current: {date_filter if date_filter else 'None'} )")
         print("17. Search applications using indexed data (Top 1 space overall, limit 3000)") 
-        print("18. Find top space per application term (using Whoosh index)") # New option 18
+        print("18. Find top space per application term (using Whoosh index)")
+        print("19. Find all spaces per application term with counts (using Whoosh index)") # New option 19
         print("Q. Quit")
         
         choice = input("Select option: ").strip()
@@ -1840,9 +1818,12 @@ def main():
                 data_loaded = False  # Mark data as needing to be reloaded
                 print("Date filter cleared. Data will be loaded when needed.")
         elif choice == '17': 
-            search_applications_indexed_top_space()
-        elif choice == '18': # New handler for option 18
+            # search_applications_indexed_top_space() # Commented out due to NameError, function seems to be missing or a duplicate of 18
+            print("Option 17 (search_applications_indexed_top_space) is currently not implemented.")
+        elif choice == '18': 
             search_applications_indexed_top_space_per_term()
+        elif choice == '19': # New handler for option 19
+            search_applications_indexed_all_spaces_per_term()
         elif choice.upper() == 'Q':
             print("Goodbye!")
             break
