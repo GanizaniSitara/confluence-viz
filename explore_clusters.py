@@ -441,7 +441,6 @@ def render_d3_circle_packing(spaces, labels, method, tags=None):
                 'url': f"{confluence_base_url}/display/{s['space_key']}"  # Add URL for link to Confluence
             })
         d3_data['children'].append(cluster_node)
-        d3_data['children'].append(cluster_node)
     data_json = json.dumps(d3_data)
     percentile_thresholds_json = json.dumps(percentile_thresholds)
     color_range_hex_json = json.dumps(color_range_hex)
@@ -799,7 +798,9 @@ def search_for_applications(spaces):
             # If we have matches, add them to our results
             if matched_pages:
                 hit_count = len(matched_pages)
-                app_hits[term].append((space_key, hit_count, matched_pages[:5]))  # Store up to 5 matched pages for display
+                # Ensure no duplicate entries in app_hits
+                if not any(space_key == existing_space and matched_pages[:5] == existing_pages for existing_space, _, existing_pages in app_hits[term]):
+                    app_hits[term].append((space_key, hit_count, matched_pages[:5]))
                 spaces_with_hits.add(space_key)
 
     # Generate HTML report
@@ -1848,7 +1849,7 @@ def main():
         elif choice == '21': 
             data_loaded_retval = ensure_data_loaded()
             print(f"Data loaded: {data_loaded_retval}")
-            active_spaces, _, _ = data_loaded_retval
+            active_spaces = data_loaded_retval[0]
             if active_spaces:
                 try:
                     print(f"Running t-SNE for 2D proximity scatter plot...")
