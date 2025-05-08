@@ -1357,6 +1357,8 @@ def search_applications_indexed_all_spaces_per_term():
         sorted_terms = sorted(results_by_term.keys())
         for term in sorted_terms:
             space_entries = results_by_term[term]
+            # Limit to top three spaces for each term
+            space_entries = space_entries[:3]
             html_output_list.append('<div class="term-section">')
             html_output_list.append(f'<h2>Application Term: "{escape(term)}"</h2>')
 
