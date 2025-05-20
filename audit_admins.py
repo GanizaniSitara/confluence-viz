@@ -29,14 +29,14 @@ try:
     # Define API endpoints dynamically
     API_BASE = f'{CONFLUENCE_BASE_URL}/rest/api'
     
-    print("Settings loaded successfully.")
-    print(f"Base URL: {CONFLUENCE_BASE_URL}")
-    print(f"API Base: {API_BASE}")
-    print(f"Username: {USERNAME}")
-    print(f"Verify SSL: {VERIFY_SSL}")
+    print("Settings loaded successfully.", file=sys.stderr)
+    print(f"Base URL: {CONFLUENCE_BASE_URL}", file=sys.stderr)
+    print(f"API Base: {API_BASE}", file=sys.stderr)
+    print(f"Username: {USERNAME}", file=sys.stderr)
+    print(f"Verify SSL: {VERIFY_SSL}", file=sys.stderr)
 except Exception as e:
-    print(f"Error loading settings: {e}")
-    print("Please ensure settings.ini exists and is correctly formatted.")
+    print(f"Error loading settings: {e}", file=sys.stderr)
+    print("Please ensure settings.ini exists and is correctly formatted.", file=sys.stderr)
     sys.exit(1)  # Exit if settings can't be loaded
 
 def make_api_request(url, params=None, max_retries=5):
@@ -48,7 +48,7 @@ def make_api_request(url, params=None, max_retries=5):
     while retries < max_retries:
         query_params = '&'.join([f"{k}={v}" for k, v in (params or {}).items()])
         request_url = f"{url}?{query_params}" if query_params else url
-        print(f"REST Request: GET {request_url}")
+        print(f"REST Request: GET {request_url}", file=sys.stderr)
 
         try:
             auth = None
@@ -56,14 +56,14 @@ def make_api_request(url, params=None, max_retries=5):
                 auth = (USERNAME, PASSWORD)
 
             response = requests.get(url, params=params, verify=VERIFY_SSL, auth=auth)
-            print(f"Response Status: {response.status_code}")
+            print(f"Response Status: {response.status_code}", file=sys.stderr)
 
             if response.status_code == 200:
                 try:
                     return response.json()
                 except requests.exceptions.JSONDecodeError:
-                    print("Error: Response was not valid JSON.")
-                    print(f"Response text: {response.text[:500]}...")
+                    print("Error: Response was not valid JSON.", file=sys.stderr)
+                    print(f"Response text: {response.text[:500]}...", file=sys.stderr)
                     return None
 
             elif response.status_code == 429:
@@ -71,25 +71,25 @@ def make_api_request(url, params=None, max_retries=5):
                 wait_time = int(retry_after) if retry_after else (2 ** retries) * 5
                 jitter = random.uniform(0, 1) * 2
                 wait_time += jitter
-                print(f"Rate limited (429). Server requested Retry-After: {retry_after or 'Not specified'}")
-                print(f"Waiting for {wait_time:.2f} seconds before retry {retries + 1}/{max_retries}")
+                print(f"Rate limited (429). Server requested Retry-After: {retry_after or 'Not specified'}", file=sys.stderr)
+                print(f"Waiting for {wait_time:.2f} seconds before retry {retries + 1}/{max_retries}", file=sys.stderr)
                 time.sleep(wait_time)
                 retries += 1
                 continue
 
             else:
-                print(f"Error: Received status code {response.status_code} for {url}")
-                print(f"Response body: {response.text}")
+                print(f"Error: Received status code {response.status_code} for {url}", file=sys.stderr)
+                print(f"Response body: {response.text}", file=sys.stderr)
                 return None
 
         except requests.exceptions.RequestException as e:
-            print(f"Request failed: {e}")
+            print(f"Request failed: {e}", file=sys.stderr)
             wait_time = (2 ** retries) * 2
-            print(f"Network error. Waiting {wait_time} seconds before retry {retries + 1}/{max_retries}")
+            print(f"Network error. Waiting {wait_time} seconds before retry {retries + 1}/{max_retries}", file=sys.stderr)
             time.sleep(wait_time)
             retries += 1
 
-    print(f"Failed to fetch data from {url} after {max_retries} retries.")
+    print(f"Failed to fetch data from {url} after {max_retries} retries.", file=sys.stderr)
     return None
 
 def get_all_space_keys():
@@ -100,7 +100,7 @@ def get_all_space_keys():
     all_spaces = []
     limit = 100  # Max limit might vary, 100 is often safe
     start = 0
-    print("\nFetching list of all spaces...")
+    print("\nFetching list of all spaces...", file=sys.stderr)
     while True:
         space_list_url = f"{API_BASE}/space"
         params = {
@@ -111,24 +111,24 @@ def get_all_space_keys():
         response_data = make_api_request(space_list_url, params=params)
 
         if not response_data or 'results' not in response_data:
-            print(f"Error: Failed to fetch space list at start={start}. Aborting.")
+            print(f"Error: Failed to fetch space list at start={start}. Aborting.", file=sys.stderr)
             return None  # Indicate failure
 
         results = response_data.get('results', [])
         all_spaces.extend(results)
-        print(f"Fetched {len(results)} spaces. Total so far: {len(all_spaces)}")
+        print(f"Fetched {len(results)} spaces. Total so far: {len(all_spaces)}", file=sys.stderr)
 
         # Check if this is the last page of results
         size = response_data.get('size', 0)
         if size < limit:
-            print("Reached the end of the space list.")
+            print("Reached the end of the space list.", file=sys.stderr)
             break
         else:
             start += size  # Prepare for the next page
 
     # Extract just the keys, filtering out personal spaces (those starting with ~)
     space_keys = [space['key'] for space in all_spaces if space.get('key') and not space['key'].startswith('~')]
-    print(f"Found {len(space_keys)} non-personal spaces.")
+    print(f"Found {len(space_keys)} non-personal spaces.", file=sys.stderr)
     return space_keys
 
 def get_space_admins(space_key):
@@ -184,15 +184,15 @@ def read_logins_from_csv(file_path):
         with open(file_path, mode='r', encoding='utf-8') as csvfile:
             reader = csv.DictReader(csvfile)
             if 'Login' not in reader.fieldnames:
-                print(f"  Error: 'Login' column not found in {file_path}. Found columns: {reader.fieldnames}")
+                print(f"  Error: 'Login' column not found in {file_path}. Found columns: {reader.fieldnames}", file=sys.stderr)
                 return logins
             for row in reader:
                 if row['Login']:  # Ensure Login is not empty
                     logins.add(row['Login'])
     except FileNotFoundError:
-        print(f"  Error: {file_path} not found.")
+        print(f"  Error: {file_path} not found.", file=sys.stderr)
     except Exception as e:
-        print(f"  An error occurred while reading {file_path}: {e}")
+        print(f"  An error occurred while reading {file_path}: {e}", file=sys.stderr)
     return logins
 
 def audit_all_spaces():
