@@ -1,3 +1,5 @@
+# description: Visualizes proximity of Confluence spaces.
+
 import json
 from datetime import datetime
 from html import escape

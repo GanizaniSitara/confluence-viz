@@ -1,6 +1,9 @@
+# description: Fetches data from Confluence.
+
 import pickle
 import json
 import sys # Import sys for stderr
+import os
 from viz import fetch_all_spaces, fetch_page_data_for_space, build_data
 
 OUTPUT_PICKLE = "confluence_data.pkl"

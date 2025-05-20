@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-# filepath: c:\Solutions\Python\confluence_visualization\audit_admins.py
-# Script to audit space administrators in Confluence
+# description: Audits and reports Confluence space administrator permissions.
 
 import csv
 import json

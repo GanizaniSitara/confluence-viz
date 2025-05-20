@@ -1,3 +1,5 @@
+# description: Visualizes Confluence data using scatter plots.
+
 # scatter_plot_visualizer.py
 import os
 import numpy as np

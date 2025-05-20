@@ -1,4 +1,5 @@
-# filepath: c:\Solutions\PythonProject\confluence_visualization\check_empties.py
+# description: Checks for empty spaces in Confluence.
+
 import os
 import argparse
 import sys
@@ -11,6 +12,7 @@ import random
 import datetime
 import pickle  # Required for loading pickled spaces
 from getpass import getpass # Use getpass if not using env vars for password
+import csv
 
 # Import the config loader
 from config_loader import load_confluence_settings
