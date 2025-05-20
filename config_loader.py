@@ -1,4 +1,5 @@
-# File: config_loader.py
+# description: Loads configuration for Confluence visualization.
+
 import configparser
 import os
 

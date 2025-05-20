@@ -1,3 +1,5 @@
+# description: Renders semantic HTML for Confluence visualization.
+
 import pickle
 import json
 import os

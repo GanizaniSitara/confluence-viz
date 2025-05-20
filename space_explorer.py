@@ -1,3 +1,5 @@
+# description: Explores Confluence spaces.
+
 import requests
 import time
 import warnings

@@ -1,3 +1,5 @@
+# description: Performs semantic analysis on Confluence data.
+
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 

@@ -1,3 +1,5 @@
+# description: Samples and pickles Confluence spaces.
+
 import os
 import pickle
 import json
