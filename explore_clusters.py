@@ -1279,7 +1279,7 @@ def search_applications_indexed_all_spaces_per_term():
     QUERY_LIMIT_PER_TERM = 10000
 
     with ix.searcher() as searcher:
-        for term in search_terms:
+        for term_idx, term in enumerate(search_terms):
             print(f'Processing term {term_idx + 1}/{len(search_terms)}: "{escape(term)}" ')
             
             current_term_space_details = defaultdict(lambda: {"hits": 0, "samples": []})
@@ -1470,7 +1470,7 @@ def search_applications_indexed_top_space_per_term():
 
     with ix.searcher() as searcher:
         for term_idx, term in enumerate(search_terms):
-            print(f"Processing term {term_idx + 1}/{len(search_terms)}: "{escape(term)}"')
+            print(f"Processing term {term_idx + 1}/{len(search_terms)}: \"{escape(term)}\"")
             current_term_space_hits = defaultdict(lambda: {"hits": 0, "samples": []})
             
             query_parser = MultifieldParser(["page_title", "page_content"], ix.schema, group=OrGroup)
