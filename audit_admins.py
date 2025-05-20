@@ -11,12 +11,24 @@ import sys
 from config_loader import load_confluence_settings
 
 # Load configuration settings
-SETTINGS = load_confluence_settings()
-CONFLUENCE_API_BASE_URL = SETTINGS['api_base_url']  # This is likely .../rest/api
-CONFLUENCE_BASE_URL = CONFLUENCE_API_BASE_URL.replace('/rest/api', '')  # Get http://host:port
-USERNAME = SETTINGS['username']
-PASSWORD = SETTINGS['password']
-VERIFY_SSL = SETTINGS['verify_ssl']
+try:
+    SETTINGS = load_confluence_settings()
+    CONFLUENCE_API_BASE_URL = SETTINGS['api_base_url']
+    # Fix: Properly strip /rest/api from the end if it exists
+    CONFLUENCE_BASE_URL = SETTINGS['api_base_url'].rstrip('/rest/api')  # Ensure no trailing /rest/api
+    USERNAME = SETTINGS['username']
+    PASSWORD = SETTINGS['password']
+    VERIFY_SSL = SETTINGS['verify_ssl']
+    
+    print("Settings loaded successfully.")
+    print(f"API Base URL: {CONFLUENCE_API_BASE_URL}")
+    print(f"Base URL: {CONFLUENCE_BASE_URL}")
+    print(f"Username: {USERNAME}")
+    print(f"Verify SSL: {VERIFY_SSL}")
+except Exception as e:
+    print(f"Error loading settings: {e}")
+    print("Please ensure settings.ini exists and is correctly formatted.")
+    sys.exit(1)  # Exit if settings can't be loaded
 
 # Suppress InsecureRequestWarning if VERIFY_SSL is False
 if not VERIFY_SSL:
