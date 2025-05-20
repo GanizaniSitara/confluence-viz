@@ -146,8 +146,6 @@ def get_space_admins(space_key):
     }
     admin_usernames = []
 
-    print(f"  Fetching admins for space {space_key} with 'SETSPACEPERMISSIONS' via JSON-RPC...")
-    
     try:
         response = requests.post(rpc_url, auth=(USERNAME, PASSWORD), headers=headers, json=payload, verify=VERIFY_SSL)
         response.raise_for_status()
@@ -218,7 +216,7 @@ def audit_all_spaces():
         print("Warning: contributors_current.csv is empty or not found. All admins may be reported as 'Departed'.")
 
     # Prepare output for CSV
-    csv_data = []
+    # csv_data = [] # No longer needed to store all data
     csv_headers = ["Space Key", "Admin Status", "Admin Count", "Admins", "Current Admins", "Departed Admins", "Error"]
 
     # Counters for summary
@@ -229,9 +227,13 @@ def audit_all_spaces():
     
     print(f"\nBeginning audit of {total_spaces} spaces...")
     
+    # Print CSV header to console
+    writer = csv.DictWriter(sys.stdout, fieldnames=csv_headers)
+    writer.writeheader()
+    
     # Audit each space
     for space_key in all_space_keys:
-        print(f"\nAuditing space: {space_key}")
+        # print(f"\\nAuditing space: {space_key}") # Removed for cleaner CSV output
         
         # Get admins for this space
         confluence_admin_usernames = get_space_admins(space_key)
@@ -255,7 +257,7 @@ def audit_all_spaces():
             # No admins found
             row["Admin Status"] = "NO_ADMINS"
             spaces_with_no_admins += 1
-            print(f"  No administrators with 'SETSPACEPERMISSIONS' found for space {space_key}")
+            # print(f"  No administrators with 'SETSPACEPERMISSIONS' found for space {space_key}") # Removed
         else:
             # Admins found
             spaces_with_admins += 1
@@ -276,27 +278,28 @@ def audit_all_spaces():
             row["Current Admins"] = ", ".join(current_admins)
             row["Departed Admins"] = ", ".join(departed_admins)
             
-            print(f"  Found {len(confluence_admin_usernames)} admin username(s) with 'SETSPACEPERMISSIONS'")
-            if current_admins:
-                print(f"  Current Active Admins ({len(current_admins)}): {', '.join(current_admins)}")
-            if departed_admins:
-                print(f"  Departed Admins ({len(departed_admins)}): {', '.join(departed_admins)}")
+            # print(f"  Found {len(confluence_admin_usernames)} admin username(s) with 'SETSPACEPERMISSIONS'") # Removed
+            # if current_admins: # Removed
+            #     print(f"  Current Active Admins ({len(current_admins)}): {', '.join(current_admins)}") # Removed
+            # if departed_admins: # Removed
+            #     print(f"  Departed Admins ({len(departed_admins)}): {', '.join(departed_admins)}") # Removed
         
-        csv_data.append(row)
+        # csv_data.append(row) # No longer needed
+        writer.writerow(row) # Stream row to stdout
     
-    # Write results to CSV
-    csv_filename = "space_admin_audit.csv"
-    try:
-        with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=csv_headers)
-            writer.writeheader()
-            writer.writerows(csv_data)
-        print(f"\nAudit results written to {csv_filename}")
-    except Exception as e:
-        print(f"\nError writing to CSV file: {e}")
+    # Print results to console in CSV format - This block is now removed as we stream
+    # print("\\n--- CSV Output for Space Admin Audit ---")
+    # if csv_data:
+    #     # Ensure sys.stdout is used for the writer
+    #     writer = csv.DictWriter(sys.stdout, fieldnames=csv_headers)
+    #     writer.writeheader()
+    #     writer.writerows(csv_data)
+    # else:
+    #     print("No data to output for the audit.")
+    # print("--- End of CSV Output ---")
     
     # Print summary
-    print("\n--- Audit Summary ---")
+    print("\\n\\n--- Audit Summary ---") # Added newline for separation from CSV data
     print(f"Total spaces audited: {total_spaces}")
     print(f"Spaces with admins: {spaces_with_admins}")
     print(f"Spaces with no admins: {spaces_with_no_admins}")
@@ -315,7 +318,7 @@ def check_current_user_admin():
         return
 
     # Prepare output for CSV
-    csv_data = []
+    # csv_data = []
     csv_headers = ["Space Key", "Has Admin Rights", "Error"]
 
     # Counters for summary
@@ -326,9 +329,13 @@ def check_current_user_admin():
     
     print(f"\nChecking admin rights in {total_spaces} spaces...")
     
+    # Print CSV header to console
+    writer = csv.DictWriter(sys.stdout, fieldnames=csv_headers)
+    writer.writeheader()
+
     # Check each space
     for space_key in all_space_keys:
-        print(f"\nChecking space: {space_key}")
+        # print(f"\\nChecking space: {space_key}") # Removed for cleaner CSV output
         
         # Get admins for this space
         confluence_admin_usernames = get_space_admins(space_key)
@@ -348,27 +355,28 @@ def check_current_user_admin():
             if current_user in confluence_admin_usernames:
                 row["Has Admin Rights"] = "YES"
                 spaces_with_rights += 1
-                print(f"  User {current_user} has admin rights on space {space_key}")
+                # print(f"  User {current_user} has admin rights on space {space_key}") # Removed
             else:
                 row["Has Admin Rights"] = "NO"
                 spaces_without_rights += 1
-                print(f"  User {current_user} does NOT have admin rights on space {space_key}")
+                # print(f"  User {current_user} does NOT have admin rights on space {space_key}") # Removed
         
-        csv_data.append(row)
-    
-    # Write results to CSV
-    csv_filename = "current_user_admin_rights.csv"
-    try:
-        with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=csv_headers)
-            writer.writeheader()
-            writer.writerows(csv_data)
-        print(f"\nAdmin rights check results written to {csv_filename}")
-    except Exception as e:
-        print(f"\nError writing to CSV file: {e}")
-    
+        # csv_data.append(row) # No longer needed
+        writer.writerow(row) # Stream row to stdout
+
+    # Print results to console in CSV format - This block is now removed as we stream
+    # print("\\n--- CSV Output for Current User Admin Rights ---")
+    # if csv_data:
+    #     # Ensure sys.stdout is used for the writer
+    #     writer = csv.DictWriter(sys.stdout, fieldnames=csv_headers)
+    #     writer.writeheader()
+    #     writer.writerows(csv_data)
+    # else:
+    #     print("No data to output for the current user admin rights check.")
+    # print("--- End of CSV Output ---")
+
     # Print summary
-    print("\n--- Admin Rights Check Summary ---")
+    print("\\n\\n--- Summary for Current User Admin Rights ---") # Added newline for separation
     print(f"Current user: {current_user}")
     print(f"Total spaces checked: {total_spaces}")
     print(f"Spaces where user has admin rights: {spaces_with_rights}")
