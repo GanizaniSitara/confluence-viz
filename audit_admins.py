@@ -8,21 +8,30 @@ import random
 import requests
 import urllib3  # For disabling SSL warnings
 import sys
+import time
+import warnings
 from config_loader import load_confluence_settings
 
-# Load configuration settings
+# --- Suppress InsecureRequestWarning ---
+warnings.filterwarnings('ignore', 'Unverified HTTPS request is being made to',
+                      category=urllib3.exceptions.InsecureRequestWarning)
+# ---------------------------------------
+
+# --- Configuration ---
 try:
     SETTINGS = load_confluence_settings()
-    CONFLUENCE_API_BASE_URL = SETTINGS['api_base_url']
     # Fix: Properly strip /rest/api from the end if it exists
     CONFLUENCE_BASE_URL = SETTINGS['api_base_url'].rstrip('/rest/api')  # Ensure no trailing /rest/api
     USERNAME = SETTINGS['username']
     PASSWORD = SETTINGS['password']
     VERIFY_SSL = SETTINGS['verify_ssl']
     
+    # Define API endpoints dynamically
+    API_BASE = f'{CONFLUENCE_BASE_URL}/rest/api'
+    
     print("Settings loaded successfully.")
-    print(f"API Base URL: {CONFLUENCE_API_BASE_URL}")
     print(f"Base URL: {CONFLUENCE_BASE_URL}")
+    print(f"API Base: {API_BASE}")
     print(f"Username: {USERNAME}")
     print(f"Verify SSL: {VERIFY_SSL}")
 except Exception as e:
@@ -30,56 +39,97 @@ except Exception as e:
     print("Please ensure settings.ini exists and is correctly formatted.")
     sys.exit(1)  # Exit if settings can't be loaded
 
-# Suppress InsecureRequestWarning if VERIFY_SSL is False
-if not VERIFY_SSL:
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+def make_api_request(url, params=None, max_retries=5):
+    """
+    Makes an API request, handling authentication, 429 rate limiting, and SSL verification.
+    Copied from space_explorer.py which works successfully.
+    """
+    retries = 0
+    while retries < max_retries:
+        query_params = '&'.join([f"{k}={v}" for k, v in (params or {}).items()])
+        request_url = f"{url}?{query_params}" if query_params else url
+        print(f"REST Request: GET {request_url}")
+
+        try:
+            auth = None
+            if USERNAME and PASSWORD:
+                auth = (USERNAME, PASSWORD)
+
+            response = requests.get(url, params=params, verify=VERIFY_SSL, auth=auth)
+            print(f"Response Status: {response.status_code}")
+
+            if response.status_code == 200:
+                try:
+                    return response.json()
+                except requests.exceptions.JSONDecodeError:
+                    print("Error: Response was not valid JSON.")
+                    print(f"Response text: {response.text[:500]}...")
+                    return None
+
+            elif response.status_code == 429:
+                retry_after = response.headers.get('Retry-After')
+                wait_time = int(retry_after) if retry_after else (2 ** retries) * 5
+                jitter = random.uniform(0, 1) * 2
+                wait_time += jitter
+                print(f"Rate limited (429). Server requested Retry-After: {retry_after or 'Not specified'}")
+                print(f"Waiting for {wait_time:.2f} seconds before retry {retries + 1}/{max_retries}")
+                time.sleep(wait_time)
+                retries += 1
+                continue
+
+            else:
+                print(f"Error: Received status code {response.status_code} for {url}")
+                print(f"Response body: {response.text}")
+                return None
+
+        except requests.exceptions.RequestException as e:
+            print(f"Request failed: {e}")
+            wait_time = (2 ** retries) * 2
+            print(f"Network error. Waiting {wait_time} seconds before retry {retries + 1}/{max_retries}")
+            time.sleep(wait_time)
+            retries += 1
+
+    print(f"Failed to fetch data from {url} after {max_retries} retries.")
+    return None
 
 def get_all_space_keys():
-    """Fetches all global space keys from Confluence, excluding personal spaces (those starting with ~)."""
-    api_url = f"{CONFLUENCE_API_BASE_URL.rstrip('/')}/space"
-    headers = {"Accept": "application/json"}
-    space_keys = []
-    params = {"type": "global", "limit": 50, "start": 0}  # Increased limit, adjust as needed
-    print("\nFetching all space keys from Confluence...")
-    try:
-        while True:
-            response = requests.get(api_url, auth=(USERNAME, PASSWORD), headers=headers, params=params, verify=VERIFY_SSL)
-            response.raise_for_status()
-            data = response.json()
-            results = data.get('results', [])
-            for space in results:
-                if 'key' in space and not space['key'].startswith('~'):  # Exclude personal spaces
-                    space_keys.append(space['key'])
-            
-            print(f"  Fetched {len(results)} spaces in this page. Total fetched so far: {len(space_keys)}")
+    """
+    Fetches a list of all non-personal space keys from Confluence.
+    Uses the working approach from space_explorer.py.
+    """
+    all_spaces = []
+    limit = 100  # Max limit might vary, 100 is often safe
+    start = 0
+    print("\nFetching list of all spaces...")
+    while True:
+        space_list_url = f"{API_BASE}/space"
+        params = {
+            'limit': limit,
+            'start': start,
+            'type': 'global'  # Filter for global (non-personal) spaces
+        }
+        response_data = make_api_request(space_list_url, params=params)
 
-            if data.get('isLast', True) or not results:
-                break
-            
-            # Correctly get nextPageStart if it exists, otherwise increment manually
-            if '_links' in data and 'next' in data['_links']:
-                next_link = data['_links']['next']
-                if 'start=' in next_link:
-                    try:
-                        params['start'] = int(next_link.split('start=')[1].split('&')[0])
-                    except ValueError:
-                        print("  Warning: Could not parse start from next link. Falling back to manual increment.")
-                        params['start'] += len(results)  # Fallback
-                else:
-                    params['start'] += len(results)  # Fallback
-            else:  # If no 'next' link but not 'isLast', try manual increment (less reliable)
-                params['start'] += len(results)
+        if not response_data or 'results' not in response_data:
+            print(f"Error: Failed to fetch space list at start={start}. Aborting.")
+            return None  # Indicate failure
 
-    except requests.exceptions.HTTPError as e:
-        print(f"  Failed to get space keys. Status: {e.response.status_code}, Response: {e.response.text}")
-    except requests.exceptions.RequestException as e:
-        print(f"  An error occurred while getting space keys: {e}")
-    except json.JSONDecodeError:
-        print(f"  Failed to decode JSON response for space keys.")
-    
-    unique_space_keys = list(set(space_keys))  # Return unique list
-    print(f"Finished fetching space keys. Total found: {len(unique_space_keys)}")
-    return unique_space_keys
+        results = response_data.get('results', [])
+        all_spaces.extend(results)
+        print(f"Fetched {len(results)} spaces. Total so far: {len(all_spaces)}")
+
+        # Check if this is the last page of results
+        size = response_data.get('size', 0)
+        if size < limit:
+            print("Reached the end of the space list.")
+            break
+        else:
+            start += size  # Prepare for the next page
+
+    # Extract just the keys, filtering out personal spaces (those starting with ~)
+    space_keys = [space['key'] for space in all_spaces if space.get('key') and not space['key'].startswith('~')]
+    print(f"Found {len(space_keys)} non-personal spaces.")
+    return space_keys
 
 def get_space_admins(space_key):
     """Fetches a list of usernames who have 'SETSPACEPERMISSIONS' for a given space key using JSON-RPC."""
