@@ -152,8 +152,6 @@ def get_space_admins(space_key):
         response_data = response.json()
         
         if 'error' in response_data and response_data['error'] is not None:
-            error_details = response_data['error']
-            print(f"    Failed to get space admins. JSON-RPC Error: Code {error_details.get('code')}, Message: {error_details.get('message')}")
             return None  # Return None to indicate an error
         elif 'result' in response_data:
             result_content = response_data['result']
@@ -164,20 +162,17 @@ def get_space_admins(space_key):
                         if isinstance(perm_entry, dict) and perm_entry.get('userName'):
                             admin_usernames.append(perm_entry['userName'])
                 else:
-                    print(f"    Warning: 'spacePermissions' field within 'result' is not a list. Found: {type(permissions_list)}")
+                    pass # Silently ignore or decide if this should be an error
             else:
-                print(f"    Warning: Expected 'result' to be a dictionary with a 'spacePermissions' key, or 'spacePermissions' was not a list.")
+                pass # Silently ignore or decide if this should be an error
         else:
-            print(f"    Failed to get space admins. Unexpected JSON-RPC response structure.")
+            return None # Treat as an error if structure is not as expected
             
     except requests.exceptions.HTTPError as e:
-        print(f"    HTTP error occurred while getting space admins: {e}")
         return None  # Return None to indicate an error
     except requests.exceptions.RequestException as e:
-        print(f"    Network error occurred while getting space admins: {e}")
         return None  # Return None to indicate an error
     except json.JSONDecodeError:
-        print(f"    Failed to decode JSON response from server.")
         return None  # Return None to indicate an error
     
     return list(set(admin_usernames))
