@@ -1,3 +1,5 @@
+# description: Provides counting utilities for Confluence visualization.
+
 import requests
 import time
 import warnings
@@ -8,6 +10,7 @@ import os
 import pickle
 import datetime # Import datetime for date parsing and timestamp operations
 from config_loader import load_confluence_settings
+import json
 
 # --- Suppress InsecureRequestWarning ---
 # WARNING: Disabling SSL verification is INSECURE and should only be done

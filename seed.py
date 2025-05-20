@@ -1,10 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-generate_confluence_test_data.py
-
-Create a large set of Confluence spaces and pages for testing.
-"""
+# description: Seeds data for Confluence visualization.
 
 import argparse
 import json

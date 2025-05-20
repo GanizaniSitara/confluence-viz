@@ -1,3 +1,5 @@
+# description: Explores clusters in Confluence data.
+
 import os
 import pickle
 import sys
@@ -741,6 +743,13 @@ def suggest_tags_for_clusters(spaces, labels):
     
     return tags
 
+def search_for_applications(spaces, term):
+    results = []
+    for s in spaces:
+        if term.lower() in s['space_key'].lower():
+            results.append((s['space_key'], len(s['sampled_pages'])))
+    return results
+
 def search_for_applications(spaces):
     """
     Search for applications in Confluence spaces using app_search.txt
@@ -1270,7 +1279,7 @@ def search_applications_indexed_all_spaces_per_term():
     QUERY_LIMIT_PER_TERM = 10000
 
     with ix.searcher() as searcher:
-        for term_idx, term in enumerate(search_terms):
+        for term in search_terms:
             print(f'Processing term {term_idx + 1}/{len(search_terms)}: "{escape(term)}" ')
             
             current_term_space_details = defaultdict(lambda: {"hits": 0, "samples": []})
@@ -1461,7 +1470,7 @@ def search_applications_indexed_top_space_per_term():
 
     with ix.searcher() as searcher:
         for term_idx, term in enumerate(search_terms):
-            print(f"Processing term {term_idx + 1}/{len(search_terms)}: \"{escape(term)}\"")
+            print(f"Processing term {term_idx + 1}/{len(search_terms)}: "{escape(term)}"')
             current_term_space_hits = defaultdict(lambda: {"hits": 0, "samples": []})
             
             query_parser = MultifieldParser(["page_title", "page_content"], ix.schema, group=OrGroup)
@@ -1791,7 +1800,7 @@ def main():
                     print(f"Error: {e}")
                     print("This might be because the loaded spaces have no text content in their pages,")
                     print(f"or the 'min_pages' filter ({min_pages}) is too high, excluding spaces with content.")
-                    print("Try adjusting the filter (Option 1) or check the data in the .pkl files.")               
+                    print("Try adjusting the filter (Option 1) or check the data in the .pkl files.")
                 else:
                     print(f"Clustering Error: {e}")
             except Exception as e:

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# File: viz.py
+# description: Main script for Confluence visualization.
 
 import requests
 import time
