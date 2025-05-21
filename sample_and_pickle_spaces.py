@@ -172,19 +172,19 @@ def main():
         print("Mode: Running with --batch-continue (using checkpoint)")
         perform_reset = False # Default for continue is not to reset
     else: # Interactive mode
-        print("\\nConfluence Space Sampler and Pickler")
+        print("\nConfluence Space Sampler and Pickler") # Corrected to \n
         print("------------------------------------")
         print("This script samples pages from Confluence spaces and saves them locally.")
         print("It uses a checkpoint file (confluence_checkpoint.json) to resume progress.")
-        print("\\nAvailable command-line options for non-interactive use:")
+        print("\nAvailable command-line options for non-interactive use:") # Corrected to \n
         print("  --reset           : Clears all previous progress and starts fresh.")
         print("  --batch-continue  : Skips this menu and continues from the last checkpoint.")
-        print("------------------------------------\\n")
+        print("------------------------------------\n") # Corrected to \n
         while True:
-            choice = input("Choose an action:\\n"
-                           "  1: Continue with existing progress (uses checkpoint)\\n"
-                           "  2: Reset and start from beginning (deletes checkpoint)\\n"
-                           "  q: Quit\\n"
+            choice = input("Choose an action:\n"
+                           "  1: Continue with existing progress (uses checkpoint)\n"
+                           "  2: Reset and start from beginning (deletes checkpoint)\n"
+                           "  q: Quit\n"
                            "Enter choice (1, 2, or q): ").strip().lower()
             if choice == '1':
                 perform_reset = False
@@ -228,7 +228,7 @@ def main():
     # It's the number of spaces already processed.
     effective_start_idx_for_slicing = checkpoint.get("last_position", 0) 
                                                                       
-    print(f"\\nStarting Confluence sampling and pickling process...")
+    print(f"\nStarting Confluence sampling and pickling process...") # Corrected to \n
     if perform_reset:
         print("- Run type: Fresh run (checkpoint was reset or is new)")
     elif effective_start_idx_for_slicing > 0:
@@ -244,7 +244,8 @@ def main():
     while True:
         # Use API_BASE_URL for /rest/api/space endpoint
         url = f"{API_BASE_URL}/space" # Corrected: Removed redundant /rest/api
-        params = {"start": start_fetch_api, "limit": 50} # Standard limit for space fetching
+        params = {"start": start_fetch_api, "limit": 100} # Standard limit for space fetching, changed to 100
+        print(f"  Fetching next batch of spaces from Confluence: {url}?start={start_fetch_api}&limit=100")
         r = get_with_retry(url, params=params, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
         if r.status_code != 200:
             print(f"Failed to fetch spaces. Status code: {r.status_code}. Response: {r.text}")
@@ -259,7 +260,7 @@ def main():
             fetch_idx += 1
             # print(f"[{fetch_idx}] Fetched space metadata: key={sp.get('key')}, name={sp.get('name')}")
             all_spaces.append(sp)
-        if len(results) < 50: # API's limit for spaces is often 50 or per its documentation
+        if len(results) < 100: # API's limit for spaces is often 50 or per its documentation, changed to 100
             break
         start_fetch_api += len(results) # Correctly increment for next API page
     print(f"Total non-user spaces fetched: {len(all_spaces)}")
@@ -335,7 +336,7 @@ def main():
             print(f"  Skipping to next space due to error with {space_key}.")
             # Continue to the next space rather than breaking the whole script
     
-    print("\\nAll done!")
+    print("\nAll done!") # Corrected to \n
     final_processed_count = len(checkpoint.get("processed_spaces",[]))
     total_spaces_in_checkpoint = checkpoint.get("total_spaces", len(all_spaces))
     print(f"Successfully processed and sampled {final_processed_count} spaces out of {total_spaces_in_checkpoint} total non-user spaces.")
