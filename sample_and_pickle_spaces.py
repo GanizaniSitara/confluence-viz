@@ -9,6 +9,7 @@ import requests
 import time
 import urllib3
 import argparse
+import sys # Added import
 from config_loader import load_confluence_settings
 
 # Load settings
@@ -17,6 +18,7 @@ API_BASE_URL = settings['api_base_url']
 USERNAME = settings['username']
 PASSWORD = settings['password']
 VERIFY_SSL = settings['verify_ssl']
+BASE_URL = settings['base_url'] # Added BASE_URL from settings
 
 if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -51,9 +53,9 @@ def get_with_retry(url, params=None, auth=None, verify=False):
             print(f"Error {resp.status_code} fetching {url}. Response: {resp.text}")
         return resp
 
-TOP_N_ROOT = 20
-TOP_N_RECENT = 15
-TOP_N_FREQUENT = 15
+TOP_N_ROOT = 10
+TOP_N_RECENT = 30
+TOP_N_FREQUENT = 30
 OUTPUT_DIR = 'temp'
 CHECKPOINT_FILE = 'confluence_checkpoint.json'
 
@@ -153,93 +155,194 @@ def save_checkpoint(checkpoint):
 
 def main():
     # Parse command-line arguments
-    parser = argparse.ArgumentParser(description="Sample and pickle Confluence spaces")
-    parser.add_argument('--reset', action='store_true', help='Reset checkpoint and start from beginning')
+    parser = argparse.ArgumentParser(
+        description="Sample and pickle Confluence spaces. Handles checkpointing for resumable execution.",
+        epilog="If no specific run mode argument (--reset or --batch-continue) is provided, an interactive menu is shown."
+    )
+    parser.add_argument('--reset', action='store_true', help='Reset checkpoint and start from beginning (non-interactive).')
+    parser.add_argument('--batch-continue', action='store_true', help='Run in continue mode using checkpoint without interactive menu (non-interactive).')
     args = parser.parse_args()
+
+    perform_reset = False
+    # run_script = True # This variable was not used
+
+    if args.reset:
+        print("Mode: Running with --reset")
+        perform_reset = True
+    elif args.batch_continue:
+        print("Mode: Running with --batch-continue (using checkpoint)")
+        perform_reset = False # Default for continue is not to reset
+    else: # Interactive mode
+        print("\\nConfluence Space Sampler and Pickler")
+        print("------------------------------------")
+        print("This script samples pages from Confluence spaces and saves them locally.")
+        print("It uses a checkpoint file (confluence_checkpoint.json) to resume progress.")
+        print("\\nAvailable command-line options for non-interactive use:")
+        print("  --reset           : Clears all previous progress and starts fresh.")
+        print("  --batch-continue  : Skips this menu and continues from the last checkpoint.")
+        print("------------------------------------\\n")
+        while True:
+            choice = input("Choose an action:\\n"
+                           "  1: Continue with existing progress (uses checkpoint)\\n"
+                           "  2: Reset and start from beginning (deletes checkpoint)\\n"
+                           "  q: Quit\\n"
+                           "Enter choice (1, 2, or q): ").strip().lower()
+            if choice == '1':
+                perform_reset = False
+                print("Mode: Continuing with existing progress.")
+                break
+            elif choice == '2':
+                perform_reset = True
+                print("Mode: Resetting and starting from beginning.")
+                break
+            elif choice == 'q':
+                print("Exiting script.")
+                sys.exit(0) # Exit gracefully
+            else:
+                print("Invalid choice. Please enter 1, 2, or q.")
     
-    # Initialize or load checkpoint
-    if args.reset and os.path.exists(CHECKPOINT_FILE):
-        print("Resetting checkpoint as requested")
-        os.remove(CHECKPOINT_FILE)
-        
-    checkpoint = load_checkpoint()
+    # --- Checkpoint handling ---
+    if perform_reset and os.path.exists(CHECKPOINT_FILE):
+        print("Resetting checkpoint file as requested...")
+        try:
+            os.remove(CHECKPOINT_FILE)
+            print(f"Successfully deleted {CHECKPOINT_FILE}.")
+        except OSError as e:
+            print(f"Error deleting checkpoint file {CHECKPOINT_FILE}: {e}. Continuing without reset if file persists.")
+            # If deletion fails, we might not be able to enforce a reset if load_checkpoint loads old data.
+            # The logic below will try to ensure the checkpoint object is fresh for the run.
+
+    # Load checkpoint. If perform_reset led to file deletion, load_checkpoint will return a fresh structure.
+    checkpoint = load_checkpoint() 
+
+    # Ensure checkpoint reflects a reset state for this run if perform_reset is true.
+    # This handles cases where os.remove might have failed or if we want to be absolutely sure.
+    if perform_reset:
+        checkpoint["processed_spaces"] = []
+        checkpoint["last_position"] = 0
+        # total_spaces will be updated later once all_spaces are fetched.
+        # last_updated will be set by load_checkpoint or save_checkpoint.
+        print("Checkpoint data has been reset for this run.")
+
     processed_space_keys = set(checkpoint.get("processed_spaces", []))
-    start_position = checkpoint.get("last_position", 0) if not args.reset else 0
+    # effective_start_idx_for_slicing is the 0-based index from which to start processing in all_spaces list.
+    # It's the number of spaces already processed.
+    effective_start_idx_for_slicing = checkpoint.get("last_position", 0) 
+                                                                      
+    print(f"\\nStarting Confluence sampling and pickling process...")
+    if perform_reset:
+        print("- Run type: Fresh run (checkpoint was reset or is new)")
+    elif effective_start_idx_for_slicing > 0:
+        print(f"- Run type: Continuing. {effective_start_idx_for_slicing} spaces recorded as processed in checkpoint.")
+    else:
+        print("- Run type: Starting new run (no prior progress in checkpoint).")
     
-    print(f"Starting Confluence sampling and pickling process...")
-    print(f"- Start position: {start_position}")
-    print(f"- Spaces already processed: {len(processed_space_keys)}")
-    
-    # Fetch all spaces (reuse your fetch_all_spaces logic)
-    spaces = []
-    start = 0
-    idx = 0
+    # Fetch all spaces
+    all_spaces = [] # Renamed from 'spaces' for clarity
+    start_fetch_api = 0 # API pagination start
+    fetch_idx = 0
+    print("Fetching list of all spaces from Confluence...")
     while True:
-        url = f"{API_BASE_URL}/rest/api/space"
-        params = {"start": start, "limit": 50}
+        # Use API_BASE_URL for /rest/api/space endpoint
+        url = f"{API_BASE_URL}/rest/api/space" 
+        params = {"start": start_fetch_api, "limit": 50} # Standard limit for space fetching
         r = get_with_retry(url, params=params, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
         if r.status_code != 200:
-            print(f"Failed to fetch spaces. Status code: {r.status_code}")
+            print(f"Failed to fetch spaces. Status code: {r.status_code}. Response: {r.text}")
             break
         results = r.json().get("results", [])
         if not results:
             break
         for sp in results:
             if sp.get("key", "").startswith("~"):  # Exclude user spaces
-                print(f"Skipping user space: key={sp.get('key')}, name={sp.get('name')}")
+                # print(f"Skipping user space: key={sp.get('key')}, name={sp.get('name')}")
                 continue
-            idx += 1
-            print(f"[{idx}] Fetched space: key={sp.get('key')}, name={sp.get('name')}")
-            spaces.append(sp)
-        if len(results) < 50:
+            fetch_idx += 1
+            # print(f"[{fetch_idx}] Fetched space metadata: key={sp.get('key')}, name={sp.get('name')}")
+            all_spaces.append(sp)
+        if len(results) < 50: # API's limit for spaces is often 50 or per its documentation
             break
-        start += 50    
-        print(f"Total spaces fetched: {len(spaces)}")
+        start_fetch_api += len(results) # Correctly increment for next API page
+    print(f"Total non-user spaces fetched: {len(all_spaces)}")
     
-    # Skip spaces that were already processed according to our checkpoint
-    spaces_to_process = spaces
-    if start_position > 0:
-        print(f"Resuming from position {start_position} based on checkpoint")
-        spaces_to_process = spaces[start_position:]
+    # Determine spaces to process based on checkpoint
+    if effective_start_idx_for_slicing >= len(all_spaces) and not perform_reset and len(all_spaces) > 0:
+        print(f"All {len(all_spaces)} spaces already processed according to checkpoint. Nothing to do.")
+        print("Run with --reset to process all spaces again.")
+        sys.exit(0)
+        
+    spaces_to_process = all_spaces[effective_start_idx_for_slicing:]
     
-    # Ensure checkpoint has the total spaces count
-    checkpoint["total_spaces"] = len(spaces)
-    save_checkpoint(checkpoint)
+    if not spaces_to_process and len(all_spaces) > 0 :
+        if not perform_reset: # Already covered by above check, but as a safeguard
+             print(f"No new spaces to process. All {len(all_spaces)} spaces seem to be processed per checkpoint.")
+             sys.exit(0)
+    elif not spaces_to_process and len(all_spaces) == 0:
+        print("No spaces found to process.")
+        sys.exit(0)
+
+    print(f"Spaces to process in this run: {len(spaces_to_process)}")
+
+    # Ensure checkpoint has the total spaces count (based on all fetched spaces)
+    checkpoint["total_spaces"] = len(all_spaces)
+    save_checkpoint(checkpoint) # Save potentially updated total_spaces or reset checkpoint
     
     # Process each space
-    for idx, space in enumerate(spaces_to_process, start=start_position + 1):
-        space_key = space.get('key') or space.get('space_key')
+    # idx will be the 1-based global index of the space in all_spaces
+    for loop_counter, space_data in enumerate(spaces_to_process):
+        # Calculate global 1-based index for checkpointing and logging
+        current_global_idx = effective_start_idx_for_slicing + loop_counter + 1
+        
+        space_key = space_data.get('key') # Ensure we use the correct variable name 'space_data'
         if not space_key:
+            print(f"Warning: Space data at global index {current_global_idx-1} missing key. Skipping: {space_data}")
             continue
             
-        # Skip if already processed (additional check)
-        if space_key in processed_space_keys:
-            print(f"Skipping already processed space {idx}/{len(spaces)}: {space_key}")
+        # This check is mostly redundant if effective_start_idx_for_slicing is correct,
+        # but good for safety if processed_space_keys was loaded from an out-of-sync checkpoint.
+        if space_key in processed_space_keys and not perform_reset:
+            print(f"Skipping already processed space (as per processed_keys set) {current_global_idx}/{len(all_spaces)}: {space_key}")
+            # If we skip here, we should ensure the checkpoint's last_position is updated if it was somehow behind.
+            # However, the main loop structure should prevent this if effective_start_idx_for_slicing is honored.
+            if checkpoint.get("last_position", 0) < current_global_idx:
+                 checkpoint["last_position"] = current_global_idx
+                 # save_checkpoint(checkpoint) # Potentially save if we want to mark skipped ones this way
             continue
             
         try:
-            print(f"Processing space {idx}/{len(spaces)}: {space_key}")
-            pages = fetch_page_metadata(space_key)
-            sampled, total_pages = sample_and_fetch_bodies(space_key, pages)
+            print(f"Processing space {current_global_idx}/{len(all_spaces)}: {space_key} (Name: {space_data.get('name', 'N/A')})")
+            pages_metadata = fetch_page_metadata(space_key) # Changed 'pages' to 'pages_metadata'
+            sampled_pages, total_pages_in_space = sample_and_fetch_bodies(space_key, pages_metadata) # Changed 'pages' to 'pages_metadata'
+            
             out_path = os.path.join(OUTPUT_DIR, f'{space_key}.pkl')
             with open(out_path, 'wb') as f:
-                pickle.dump({'space_key': space_key, 'sampled_pages': sampled, 'total_pages': total_pages}, f)
-            print(f'  Wrote {len(sampled)} sampled pages (with bodies) for space {space_key} to {out_path} (total pages: {total_pages})')
+                pickle.dump({'space_key': space_key, 'name': space_data.get('name'), 'sampled_pages': sampled_pages, 'total_pages_in_space': total_pages_in_space}, f)
+            print(f'  Successfully wrote {len(sampled_pages)} sampled pages for space {space_key} to {out_path} (total pages in space: {total_pages_in_space})')
             
             # Update checkpoint after each successful space processing
-            checkpoint["processed_spaces"].append(space_key)
-            checkpoint["last_position"] = idx
+            if space_key not in checkpoint["processed_spaces"]: # Add only if not already there (e.g. due to a partial run)
+                 checkpoint["processed_spaces"].append(space_key)
+            checkpoint["last_position"] = current_global_idx # Record 1-based index of last successfully processed space
             save_checkpoint(checkpoint)
             
         except Exception as e:
-            print(f"Error processing space {space_key}: {e}")
-            # Still update the position even if an error occurred
-            checkpoint["last_position"] = idx 
-            save_checkpoint(checkpoint)
-            # Continue to the next space rather than breaking
+            print(f"Error processing space {space_key} (Global Index {current_global_idx}): {e}")
+            # Decide if we want to update last_position even on error.
+            # If we do, a subsequent run will skip this problematic space.
+            # If we don't, it will be retried. For now, let's assume we want to retry.
+            # So, we don't update checkpoint["last_position"] here on error, it remains at the previously successful one.
+            # However, we should save any other checkpoint changes (like total_spaces if it was the first update)
+            save_checkpoint(checkpoint) # Save at least to persist last_updated and total_spaces
+            print(f"  Skipping to next space due to error with {space_key}.")
+            # Continue to the next space rather than breaking the whole script
     
-    print("All done!")
-    print(f"Processed {len(checkpoint['processed_spaces'])} spaces out of {len(spaces)} total spaces.")
+    print("\\nAll done!")
+    final_processed_count = len(checkpoint.get("processed_spaces",[]))
+    total_spaces_in_checkpoint = checkpoint.get("total_spaces", len(all_spaces))
+    print(f"Successfully processed and sampled {final_processed_count} spaces out of {total_spaces_in_checkpoint} total non-user spaces.")
+    if final_processed_count < total_spaces_in_checkpoint:
+        print(f"{total_spaces_in_checkpoint - final_processed_count} spaces may have been skipped due to errors or if the script was interrupted.")
+        print("You can re-run the script to attempt processing remaining/failed spaces.")
 
 if __name__ == '__main__':
     main()
