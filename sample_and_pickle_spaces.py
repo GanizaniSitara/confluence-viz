@@ -13,12 +13,11 @@ import sys # Added import
 from config_loader import load_confluence_settings
 
 # Load settings
-settings = load_confluence_settings()
-API_BASE_URL = settings['api_base_url']
-USERNAME = settings['username']
-PASSWORD = settings['password']
-VERIFY_SSL = settings['verify_ssl']
-BASE_URL = settings['base_url'] # Added BASE_URL from settings
+confluence_settings = load_confluence_settings()
+API_BASE_URL = confluence_settings['api_base_url']
+USERNAME = confluence_settings['username']
+PASSWORD = confluence_settings['password']
+VERIFY_SSL = confluence_settings['verify_ssl']
 
 if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -67,7 +66,7 @@ def fetch_page_metadata(space_key):
     pages = []
     start = 0
     while True:
-        url = f"{BASE_URL}/rest/api/content"
+        url = f"{API_BASE_URL}/content" # Corrected to use API_BASE_URL for API endpoint
         params = {"type": "page", "spaceKey": space_key, "start": start, "limit": 100, "expand": "version,ancestors"}
         r = get_with_retry(url, params=params, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
         if r.status_code != 200:
@@ -94,7 +93,7 @@ def fetch_page_metadata(space_key):
     return pages
 
 def fetch_page_body(page_id):
-    url = f"{API_BASE_URL}/rest/api/content/{page_id}"
+    url = f"{API_BASE_URL}/content/{page_id}" # Corrected: Removed redundant /rest/api
     params = {"expand": "body.storage"}
     r = get_with_retry(url, params=params, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
     if r.status_code == 200:
@@ -244,7 +243,7 @@ def main():
     print("Fetching list of all spaces from Confluence...")
     while True:
         # Use API_BASE_URL for /rest/api/space endpoint
-        url = f"{API_BASE_URL}/rest/api/space" 
+        url = f"{API_BASE_URL}/space" # Corrected: Removed redundant /rest/api
         params = {"start": start_fetch_api, "limit": 50} # Standard limit for space fetching
         r = get_with_retry(url, params=params, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
         if r.status_code != 200:
