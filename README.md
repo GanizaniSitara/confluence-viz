@@ -1,3 +1,4 @@
+
 # Confluence Visualization Project
 
 A comprehensive toolkit for extracting, analyzing, and visualizing data from Confluence spaces to gain insights into content organization, usage patterns, and semantic relationships.
@@ -143,3 +144,34 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+
+## SAMPLE_AND_PICKLE_SPACES.PY
+
+Output Directory (temp) for .pkl files:
+
+The script does not automatically delete the entire temp directory or its existing contents when it starts.
+
+When the script processes a specific Confluence space (e.g., with key SPACEXYZ), it saves its sampled data to a pickle file (e.g., temp/SPACEXYZ.pkl).
+
+If a file like temp/SPACEXYZ.pkl already exists from a previous run, and the script re-processes the SPACEXYZ space in the current run, the existing .pkl file for that specific space will be overwritten.
+
+If a .pkl file exists in temp for a space that is not re-processed in the current run (for example, if the script resumes from a checkpoint and skips already processed spaces, or if the script is terminated before it reaches that space), that existing .pkl file will remain untouched.
+Checkpoint File (confluence_checkpoint.json):
+
+Normal Re-run (without --reset):
+The script reads the confluence_checkpoint.json file to determine which spaces have already been processed and what the last position was.
+It will skip processing spaces that are already listed in the checkpoint as completed.
+The checkpoint file itself is updated as new spaces are processed.
+
+Re-run with --reset flag:
+The script accepts a --reset command-line argument (e.g., python [sample_and_pickle_spaces.py](http://_vscodecontentref_/8) --reset).
+
+If this flag is used, the existing confluence_checkpoint.json file will be deleted at the beginning of the script's execution.
+
+The script will then start processing all spaces from the beginning, as if it's a fresh run, and will create a new checkpoint file.
+
+In summary:
+Existing individual .pkl files for spaces in the temp directory are not automatically removed en masse. They are overwritten if and when the script re-processes that specific space.
+
+The confluence_checkpoint.json file is used to manage resumption and can be removed if you use the --reset option, forcing a full re-processing of all spaces.
