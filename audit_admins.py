@@ -19,8 +19,9 @@ warnings.filterwarnings('ignore', 'Unverified HTTPS request is being made to',
 # --- Configuration ---
 try:
     SETTINGS = load_confluence_settings()
-    # Fix: Properly strip /rest/api from the end if it exists
-    CONFLUENCE_BASE_URL = SETTINGS['api_base_url'].rstrip('/rest/api')  # Ensure no trailing /rest/api
+    # Assuming SETTINGS['api_base_url'] is the true base URL without /rest/api,
+    # as per user feedback that '/rest/api' has been removed from this setting's value.
+    CONFLUENCE_BASE_URL = SETTINGS['api_base_url']
     USERNAME = SETTINGS['username']
     PASSWORD = SETTINGS['password']
     VERIFY_SSL = SETTINGS['verify_ssl']
