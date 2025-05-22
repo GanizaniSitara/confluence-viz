@@ -131,50 +131,92 @@ def get_all_space_keys():
     return space_keys
 
 def get_space_admins(space_key):
-    """Fetches a list of usernames who have 'SETSPACEPERMISSIONS' for a given space key using JSON-RPC."""
-    rpc_url = f"{CONFLUENCE_BASE_URL}/rpc/json-rpc/confluenceservice-v2?os_authType=basic"
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
-    payload = {
-        "jsonrpc": "2.0",
-        "method": "getSpacePermissionSet",
-        "params": [space_key, "SETSPACEPERMISSIONS"],
-        "id": random.randint(1, 10000)
-    }
+    """
+    Fetches a list of usernames who have 'administer' permissions for a given space key using REST API.
+    This function replaces the previous JSON-RPC implementation.
+    """
     admin_usernames = []
+    admin_group_names = [] # To acknowledge groups that grant admin rights
 
-    try:
-        response = requests.post(rpc_url, auth=(USERNAME, PASSWORD), headers=headers, json=payload, verify=VERIFY_SSL)
-        response.raise_for_status()
-        response_data = response.json()
+    limit = 50  # Number of permissions to fetch per page
+    start = 0
+    print(f"Fetching admin permissions for space {space_key} using REST API...", file=sys.stderr)
+
+    while True:
+        permissions_url = f"{API_BASE}/space/{space_key}/permission"
+        params = {'limit': limit, 'start': start}
         
-        if 'error' in response_data and response_data['error'] is not None:
-            return None  # Return None to indicate an error
-        elif 'result' in response_data:
-            result_content = response_data['result']
-            if isinstance(result_content, dict) and 'spacePermissions' in result_content:
-                permissions_list = result_content['spacePermissions']
-                if isinstance(permissions_list, list):
-                    for perm_entry in permissions_list:
-                        if isinstance(perm_entry, dict) and perm_entry.get('userName'):
-                            admin_usernames.append(perm_entry['userName'])
-                else:
-                    pass # Silently ignore or decide if this should be an error
-            else:
-                pass # Silently ignore or decide if this should be an error
-        else:
-            return None # Treat as an error if structure is not as expected
+        response_data = make_api_request(permissions_url, params=params)
+
+        if response_data is None:
+            print(f"Error: Failed to fetch permissions for space {space_key} (url: {permissions_url}).", file=sys.stderr)
+            return None # Indicate error
+
+        results = response_data.get('results', [])
+        if not isinstance(results, list):
+            print(f"Error: Unexpected format for permissions results for space {space_key}.", file=sys.stderr)
+            print(f"Response: {str(response_data)[:200]}", file=sys.stderr)
+            return None
+
+        for perm in results:
+            operation = perm.get('operation', {})
+            is_admin_perm = False
             
-    except requests.exceptions.HTTPError as e:
-        return None  # Return None to indicate an error
-    except requests.exceptions.RequestException as e:
-        return None  # Return None to indicate an error
-    except json.JSONDecodeError:
-        return None  # Return None to indicate an error
-    
-    return list(set(admin_usernames))
+            # Check for 'administer' permission on the 'space'
+            # Structure can be: operation: {'operation': 'administer', 'targetType': 'space'}
+            # Or: operation: {'key': 'administer', 'target': 'space'}
+            if isinstance(operation, dict):
+                op_key = operation.get('operation') or operation.get('key')
+                target_type = operation.get('targetType') or operation.get('target')
+                if op_key == 'administer' and target_type == 'space':
+                    is_admin_perm = True
+            
+            if is_admin_perm:
+                username_to_add = None
+                group_name_to_add = None
+
+                # Try to get username from 'user' object or 'subject'
+                user_details = perm.get('user') # Older structure
+                subject = perm.get('subject')   # Newer structure
+
+                if subject and subject.get('type') == 'user':
+                    # Prefer explicit username fields if available within subject or its nested user object
+                    if 'username' in subject: username_to_add = subject['username']
+                    elif 'name' in subject: username_to_add = subject['name'] # Sometimes 'name' holds username
+                    elif isinstance(subject.get('user'), dict) and subject['user'].get('username'):
+                        username_to_add = subject['user']['username']
+                    # Note: subject.get('identifier') is often accountId, not directly used here to avoid listing accountIds.
+                elif user_details and isinstance(user_details, dict):
+                    if 'username' in user_details: username_to_add = user_details['username']
+                    elif 'name' in user_details: username_to_add = user_details['name']
+                
+                if username_to_add:
+                    admin_usernames.append(username_to_add)
+                else:
+                    # Check for group permissions
+                    if subject and subject.get('type') == 'group' and subject.get('identifier'):
+                        group_name_to_add = subject['identifier']
+                    elif perm.get('group') and isinstance(perm['group'], dict) and perm['group'].get('name'):
+                        group_name_to_add = perm['group']['name']
+                    
+                    if group_name_to_add:
+                        admin_group_names.append(group_name_to_add)
+
+        current_size = len(results)
+        is_last_page = True 
+        if '_links' in response_data and 'next' in response_data['_links']:
+            is_last_page = False
+            start += current_size 
+        
+        if is_last_page or current_size == 0:
+            break
+            
+    if admin_group_names:
+        unique_group_names = sorted(list(set(admin_group_names)))
+        print(f"Note: The following groups also have admin rights on space {space_key}: {', '.join(unique_group_names)}", file=sys.stderr)
+        print("This script primarily lists direct user admins. Group memberships are not expanded.", file=sys.stderr)
+
+    return sorted(list(set(admin_usernames)))
 
 def read_logins_from_csv(file_path):
     """Reads user logins from a CSV file into a set."""
@@ -378,18 +420,45 @@ def check_current_user_admin():
     print(f"Spaces with errors: {spaces_with_errors}")
     print("--- Admin Rights Check Complete ---")
 
+def list_admins_for_specific_space():
+    """Prompts for a space key and lists its administrators."""
+    space_key_input = input("Enter the space key to list admins for: ").strip().upper()
+    if not space_key_input:
+        print("No space key entered. Returning to menu.")
+        return
+
+    print(f"\\n--- Admins for Space: {space_key_input} ---")
+    admin_usernames = get_space_admins(space_key_input) # Uses the updated REST API based function
+
+    if admin_usernames is None:
+        print(f"Error: Could not retrieve admin information for space '{space_key_input}'.")
+        print("This could be due to an invalid space key, network issues, insufficient permissions, or the space not existing.")
+    elif not admin_usernames:
+        # This message might appear if only groups have admin rights and no direct users,
+        # or if user admins are identified by accountId only and username is not available.
+        print(f"No direct user administrators found for space '{space_key_input}'.")
+        print("Check notes above if any groups were listed with admin rights.")
+    else:
+        print(f"Found {len(admin_usernames)} direct user admin(s) for space '{space_key_input}':")
+        for username in admin_usernames:
+            print(f"  - {username}")
+    print("--- End of Admin List ---")
+
 if __name__ == "__main__":
     while True:
         print("\n--- Confluence Space Admin Audit Tool ---")
         print("1. Audit All Spaces for Admin Permissions")
         print("2. Check Admin Rights for Current User")
+        print("3. List Admins for a Specific Space") # New option
         print("Q. Exit")
-        choice = input("Enter your choice (1, 2, or Q): ").upper()
+        choice = input("Enter your choice (1, 2, 3, or Q): ").upper() # Updated prompt
 
         if choice == '1':
             audit_all_spaces()
         elif choice == '2': 
             check_current_user_admin()
+        elif choice == '3': # New handler
+            list_admins_for_specific_space()
         elif choice == 'Q':
             print("Exiting script.")
             break
