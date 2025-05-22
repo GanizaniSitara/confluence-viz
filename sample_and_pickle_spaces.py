@@ -59,6 +59,7 @@ TOP_N_FREQUENT = 30
 OUTPUT_DIR = 'temp'
 FULL_PICKLE_OUTPUT_DIR = os.path.join(OUTPUT_DIR, 'full_pickles') # New directory for full pickles
 CHECKPOINT_FILE = 'confluence_checkpoint.json'
+FULL_PICKLE_CHECKPOINT_FILE = 'confluence_full_pickle_checkpoint.json' # New checkpoint file for full pickle mode
 
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
@@ -139,33 +140,45 @@ def sample_and_fetch_bodies(space_key, pages, fetch_all=False):
         p['body'] = fetch_page_body(p.get('id'))
     return deduped, len(pages)
 
-def load_checkpoint():
+def load_checkpoint(filename=CHECKPOINT_FILE): # Added filename parameter with default
     """Load the checkpoint file if it exists."""
-    if os.path.exists(CHECKPOINT_FILE):
+    if os.path.exists(filename):
         try:
-            with open(CHECKPOINT_FILE, 'r') as f:
+            with open(filename, 'r') as f:
                 checkpoint = json.load(f)
-                print(f"Loaded checkpoint with {len(checkpoint.get('processed_spaces', []))} processed spaces")
+                processed_count = 0
+                if filename == FULL_PICKLE_CHECKPOINT_FILE:
+                    processed_count = len(checkpoint.get('processed_space_keys', []))
+                else:
+                    processed_count = len(checkpoint.get('processed_spaces', []))
+                print(f"Loaded checkpoint from {filename} with {processed_count} processed items.")
                 return checkpoint
         except Exception as e:
-            print(f"Error loading checkpoint file: {e}")
+            print(f"Error loading checkpoint file {filename}: {e}")
     
     # Return a new checkpoint structure if file doesn't exist or error occurred
-    return {
-        "total_spaces": 0,
-        "processed_spaces": [],
-        "last_position": 0,
-        "last_updated": datetime.now().isoformat()
-    }
+    if filename == FULL_PICKLE_CHECKPOINT_FILE:
+        return {
+            "all_fetched_space_keys": [], # For full pickle mode, to compare if the list of spaces changed
+            "processed_space_keys": [],
+            "last_updated": datetime.now().isoformat()
+        }
+    else: # Default structure for sampling checkpoint
+        return {
+            "total_spaces": 0,
+            "processed_spaces": [],
+            "last_position": 0,
+            "last_updated": datetime.now().isoformat()
+        }
 
-def save_checkpoint(checkpoint):
+def save_checkpoint(checkpoint, filename=CHECKPOINT_FILE): # Added filename parameter with default
     """Save the current checkpoint to disk."""
     checkpoint["last_updated"] = datetime.now().isoformat()
     try:
-        with open(CHECKPOINT_FILE, 'w') as f:
+        with open(filename, 'w') as f:
             json.dump(checkpoint, f, indent=2)
     except Exception as e:
-        print(f"Error saving checkpoint file: {e}")
+        print(f"Error saving checkpoint file {filename}: {e}")
 
 def fetch_space_details(target_space_key, auth_details, verify_ssl_cert):
     """Fetches details for a specific space, including description and icon."""
@@ -249,32 +262,60 @@ def main():
     mode_group.add_argument('--pickle-space-full', type=str, metavar='SPACE_KEY',
                                help='Pickle all pages for a single space. Saves to temp/full_pickles/. Bypasses sampling, checkpointing, and interactive menu.') # Updated help
     mode_group.add_argument('--pickle-all-spaces-full', action='store_true',
-                               help='Pickle all pages for ALL non-user spaces. Saves to temp/full_pickles/. Bypasses sampling, checkpointing, and interactive menu.') # New argument
+                               help=f'Pickle all pages for ALL non-user spaces. Saves to temp/full_pickles/. Uses checkpoint file \'{FULL_PICKLE_CHECKPOINT_FILE}\'. Bypasses sampling and interactive menu.') # New argument, updated help
     args = parser.parse_args()
 
     # Handle --pickle-all-spaces-full mode
     if args.pickle_all_spaces_full:
-        print("Mode: Pickling all pages for ALL non-user spaces.")
+        print(f"Mode: Pickling all pages for ALL non-user spaces (using checkpoint: {FULL_PICKLE_CHECKPOINT_FILE}).")
         
-        # Fetch all non-user spaces with details (name, key)
+        checkpoint = load_checkpoint(FULL_PICKLE_CHECKPOINT_FILE)
+        processed_space_keys_set = set(checkpoint.get("processed_space_keys", []))
+
         all_non_user_spaces = fetch_all_spaces_with_details(auth_details=(USERNAME, PASSWORD), verify_ssl_cert=VERIFY_SSL)
 
         if not all_non_user_spaces:
             print("No non-user spaces found to process. Exiting.")
             sys.exit(0)
 
-        print(f"Found {len(all_non_user_spaces)} non-user spaces to process.")
-        processed_count = 0
-        failed_count = 0
+        current_api_space_keys = sorted([s['key'] for s in all_non_user_spaces if s.get('key')])
+        
+        # If the list of spaces from API differs from what's in checkpoint, reset processed list for safety.
+        if sorted(checkpoint.get("all_fetched_space_keys", [])) != current_api_space_keys:
+            print("Warning: The list of spaces from Confluence API has changed since the last run or checkpoint is new.")
+            print("Resetting processed spaces list for this mode to ensure all current spaces are considered.")
+            checkpoint["all_fetched_space_keys"] = current_api_space_keys
+            checkpoint["processed_space_keys"] = []
+            processed_space_keys_set = set()
+            save_checkpoint(checkpoint, FULL_PICKLE_CHECKPOINT_FILE)
+        
+        print(f"Found {len(all_non_user_spaces)} non-user spaces. {len(processed_space_keys_set)} already processed according to checkpoint.")
+        
+        spaces_to_actually_process = [s for s in all_non_user_spaces if s.get('key') not in processed_space_keys_set]
 
-        for space_info in all_non_user_spaces:
+        if not spaces_to_actually_process:
+            print("All non-user spaces have already been processed according to the checkpoint. Exiting.")
+            sys.exit(0)
+            
+        print(f"Attempting to process {len(spaces_to_actually_process)} remaining non-user spaces.")
+
+        overall_processed_count = len(processed_space_keys_set) # Count from checkpoint
+        newly_processed_this_run = 0
+        failed_this_run = 0
+
+        for space_info in spaces_to_actually_process: # Iterate only through spaces not yet processed
             target_space_key = space_info.get('key')
             space_name_for_pickle = space_info.get('name', "N/A (Full Pickle)")
             
-            if not target_space_key:
-                print(f"  Warning: Found a space without a key. Skipping: {space_info}")
-                failed_count += 1
+            if not target_space_key: # Should have been filtered by current_api_space_keys logic, but good check
+                print(f"  Warning: Found a space without a key during iteration. Skipping: {space_info}")
+                failed_this_run += 1
                 continue
+
+            # This check is now implicitly handled by iterating `spaces_to_actually_process`
+            # if target_space_key in processed_space_keys_set:
+            # print(f"Skipping already processed space {target_space_key} (Name: {space_name_for_pickle}) as per checkpoint.")
+            # continue
 
             print(f"\nProcessing space: {target_space_key} (Name: {space_name_for_pickle})")
             
@@ -283,7 +324,7 @@ def main():
 
                 if not pages_metadata:
                     print(f"  No pages found for space {target_space_key} or error fetching metadata. Skipping.")
-                    failed_count +=1
+                    failed_this_run +=1
                     continue
 
                 pages_with_bodies, total_pages_metadata = sample_and_fetch_bodies(target_space_key, pages_metadata, fetch_all=True)
@@ -299,14 +340,23 @@ def main():
                         'total_pages_in_space': total_pages_metadata
                     }, f)
                 print(f'  Successfully wrote {len(pages_with_bodies)} pages for space {target_space_key} to {out_path} (total pages in space: {total_pages_metadata})')
-                processed_count += 1
+                
+                # Update checkpoint after successful processing
+                checkpoint["processed_space_keys"].append(target_space_key)
+                # No need to re-add to set, just save checkpoint
+                save_checkpoint(checkpoint, FULL_PICKLE_CHECKPOINT_FILE)
+                newly_processed_this_run += 1
             except Exception as e:
                 print(f"  An unexpected error occurred during pickling for space {target_space_key}: {e}")
-                failed_count += 1
+                failed_this_run += 1
         
-        print(f"\nFinished pickling all non-user spaces.")
-        print(f"Successfully processed: {processed_count} spaces.")
-        print(f"Failed to process: {failed_count} spaces.")
+        overall_processed_count += newly_processed_this_run
+        print(f"\nFinished pickling all non-user spaces for this run.")
+        print(f"Total successfully processed (including previous runs): {overall_processed_count} spaces based on checkpoint.")
+        print(f"Newly processed in this run: {newly_processed_this_run} spaces.")
+        print(f"Failed to process in this run: {failed_this_run} spaces.")
+        if failed_this_run > 0:
+            print("Rerun the script to attempt processing failed spaces.")
         sys.exit(0)
 
     # Handle --pickle-space-full first as it\'s a distinct mode
@@ -416,7 +466,7 @@ def main():
             # The logic below will try to ensure the checkpoint object is fresh for the run.
 
     # Load checkpoint. If perform_reset led to file deletion, load_checkpoint will return a fresh structure.
-    checkpoint = load_checkpoint() 
+    checkpoint = load_checkpoint() # Defaults to CHECKPOINT_FILE for sampling mode
 
     # Ensure checkpoint reflects a reset state for this run if perform_reset is true.
     # This handles cases where os.remove might have failed or if we want to be absolutely sure.
