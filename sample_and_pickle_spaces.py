@@ -187,7 +187,7 @@ def fetch_all_spaces_with_details(auth_details, verify_ssl_cert):
     print("Fetching all non-personal spaces with details...")
     spaces_data = []
     start = 0
-    limit = 50
+    limit = 100 # Changed from 50 to 100
 
     while True:
         # Construct URL using BASE_URL and API_ENDPOINT
@@ -276,7 +276,7 @@ def main():
                 failed_count += 1
                 continue
 
-            print(f"\\nProcessing space: {target_space_key} (Name: {space_name_for_pickle})")
+            print(f"\nProcessing space: {target_space_key} (Name: {space_name_for_pickle})")
             
             try:
                 pages_metadata = fetch_page_metadata(target_space_key)
@@ -304,7 +304,7 @@ def main():
                 print(f"  An unexpected error occurred during pickling for space {target_space_key}: {e}")
                 failed_count += 1
         
-        print(f"\\nFinished pickling all non-user spaces.")
+        print(f"\nFinished pickling all non-user spaces.")
         print(f"Successfully processed: {processed_count} spaces.")
         print(f"Failed to process: {failed_count} spaces.")
         sys.exit(0)
@@ -372,23 +372,23 @@ def main():
         print("Mode: Running with --batch-continue (using checkpoint)")
         perform_reset = False # Default for continue is not to reset
     else: # Interactive mode
-        print("\\nConfluence Space Sampler and Pickler") # Corrected to \\n
+        print("\nConfluence Space Sampler and Pickler") # Corrected to \n
         print("------------------------------------")
         print("This script samples pages from Confluence spaces and saves them locally (standard mode),")
         print("or pickles all pages from a single specified space (full pickle mode).") # Added line
         print("Standard mode uses a checkpoint file (confluence_checkpoint.json) to resume progress.")
-        print("\\nAvailable command-line options for non-interactive use:") # Corrected to \\n
+        print("\nAvailable command-line options for non-interactive use:") # Corrected to \n
         print("  --reset                       : Clears all previous progress and starts fresh (standard mode).") # Updated help
         print("  --batch-continue              : Skips this menu and continues from the last checkpoint (standard mode).") # Updated help
         print("  --pickle-space-full SPACE_KEY : Pickles all pages for a single space. Saves to temp/full_pickles/.")
         print("  --pickle-all-spaces-full      : Pickles all pages for ALL non-user spaces. Saves to temp/full_pickles/.") # New help line
         print("                                  Bypasses sampling, checkpointing, and this interactive menu.") # Added help
-        print("------------------------------------\\n") # Corrected to \\n
+        print("------------------------------------\n") # Corrected to \n
         while True:
-            choice = input("Choose an action for standard sampling mode:\\n" # Updated prompt
-                           "  1: Continue with existing progress (uses checkpoint)\\n"
-                           "  2: Reset and start from beginning (deletes checkpoint)\\n"
-                           "  q: Quit\\n"
+            choice = input("Choose an action for standard sampling mode:\n" # Updated prompt
+                           "  1: Continue with existing progress (uses checkpoint)\n"
+                           "  2: Reset and start from beginning (deletes checkpoint)\n"
+                           "  q: Quit\n"
                            "Enter choice (1, 2, or q): ").strip().lower()
             if choice == '1':
                 perform_reset = False
