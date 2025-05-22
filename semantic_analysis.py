@@ -22,12 +22,14 @@ from config_loader import load_confluence_settings
 OUTPUT_PICKLE = "confluence_semantic_data.pkl"
 ORIGINAL_PICKLE = "confluence_data.pkl"
 N_COMPONENTS = 50  # Dimensions for LSA
+API_ENDPOINT = "/rest/api" # Define the API endpoint suffix
 
 
-def extract_text_from_space(space_key, api_base_url, auth, verify_ssl=False):
+def extract_text_from_space(space_key, confluence_base_url, auth, verify_ssl=False):
     """Fast fetch of page content from a space"""
     print(f"Starting extraction for space: {space_key}")
-    pages_url = f"{api_base_url}/content?spaceKey={space_key}&expand=body.storage&limit=100"
+    # Construct URL using confluence_base_url (which is now the base URL) and API_ENDPOINT
+    pages_url = f"{confluence_base_url}{API_ENDPOINT}/content?spaceKey={space_key}&expand=body.storage&limit=100"
     response = requests.get(pages_url, auth=auth, verify=verify_ssl)
 
     if response.status_code != 200:
@@ -48,7 +50,7 @@ def extract_text_from_space(space_key, api_base_url, auth, verify_ssl=False):
     return " ".join(all_text)
 
 
-def process_spaces_parallel(spaces, api_base_url, auth, verify_ssl=False):
+def process_spaces_parallel(spaces, confluence_base_url, auth, verify_ssl=False):
     """Process all spaces in parallel for faster computation"""
     space_texts = {}
 
@@ -57,7 +59,8 @@ def process_spaces_parallel(spaces, api_base_url, auth, verify_ssl=False):
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         future_to_space = {
-            executor.submit(extract_text_from_space, space["key"], api_base_url, auth, verify_ssl): space["key"]
+            # Pass confluence_base_url (which is the base URL) to the function
+            executor.submit(extract_text_from_space, space["key"], confluence_base_url, auth, verify_ssl): space["key"]
             for space in spaces
         }
         for future in concurrent.futures.as_completed(future_to_space):
@@ -101,7 +104,7 @@ def main():
     print("Starting semantic analysis data fetch process...")
     try:
         settings = load_confluence_settings()
-        api_base_url = settings['api_base_url']
+        confluence_base_url = settings['base_url'] # Changed from api_base_url
         auth = (settings['username'], settings['password'])
         verify_ssl = settings['verify_ssl']
 
@@ -124,7 +127,8 @@ def main():
         extract_spaces(original_data)
 
         print(f"Found {len(spaces)} spaces. Extracting text from each...")
-        space_texts = process_spaces_parallel(spaces, api_base_url, auth, verify_ssl)
+        # Pass confluence_base_url (which is the base URL) to the function
+        space_texts = process_spaces_parallel(spaces, confluence_base_url, auth, verify_ssl)
 
         print("Computing semantic vectors...")
         vector_map, lsa_pipeline = compute_semantic_vectors(space_texts)

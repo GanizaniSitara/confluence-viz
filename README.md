@@ -1,4 +1,3 @@
-
 # Confluence Visualization Project
 
 A comprehensive toolkit for extracting, analyzing, and visualizing data from Confluence spaces to gain insights into content organization, usage patterns, and semantic relationships.
@@ -59,7 +58,8 @@ This project helps organizations understand how their Confluence instance is bei
 4. Edit settings.ini with your Confluence credentials and settings:
    ```ini
    [confluence]
-   api_base_url = https://your-confluence-instance.atlassian.net/rest/api
+   # Base URL for your Confluence instance (e.g., http://localhost:8090 or https://your-domain.atlassian.net)
+   base_url = https://your-confluence-instance.atlassian.net
    username = your_username
    password = your_api_token
    verify_ssl = True
