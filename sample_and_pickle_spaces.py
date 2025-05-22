@@ -167,14 +167,14 @@ def main():
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
         description="Sample and pickle Confluence spaces. Handles checkpointing for resumable execution.",
-        epilog="If no run mode argument (--reset, --batch-continue, --pickle-space-full) is provided, an interactive menu is shown." # Updated epilog
+        epilog="If no run mode argument (--reset, --batch-continue, --pickle-space-full SPACE_KEY) is provided, an interactive menu is shown." # Updated epilog
     )
     # Group for mutually exclusive run modes
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument('--reset', action='store_true', help='Reset checkpoint and start from beginning (non-interactive).')
     mode_group.add_argument('--batch-continue', action='store_true', help='Run in continue mode using checkpoint without interactive menu (non-interactive).')
     mode_group.add_argument('--pickle-space-full', type=str, metavar='SPACE_KEY',
-                               help='Pickle all accessible pages for a single specified space key. Bypasses sampling, checkpointing, and interactive menu.')
+                               help='Pickle all pages for a single space. Saves to temp/full_pickles/. Bypasses sampling, checkpointing, and interactive menu.') # Updated help
     args = parser.parse_args()
 
     # Handle --pickle-space-full first as it's a distinct mode
@@ -240,19 +240,22 @@ def main():
         print("Mode: Running with --batch-continue (using checkpoint)")
         perform_reset = False # Default for continue is not to reset
     else: # Interactive mode
-        print("\nConfluence Space Sampler and Pickler") # Corrected to \n
+        print("\\nConfluence Space Sampler and Pickler") # Corrected to \\n
         print("------------------------------------")
-        print("This script samples pages from Confluence spaces and saves them locally.")
-        print("It uses a checkpoint file (confluence_checkpoint.json) to resume progress.")
-        print("\nAvailable command-line options for non-interactive use:") # Corrected to \n
-        print("  --reset           : Clears all previous progress and starts fresh.")
-        print("  --batch-continue  : Skips this menu and continues from the last checkpoint.")
-        print("------------------------------------\n") # Corrected to \n
+        print("This script samples pages from Confluence spaces and saves them locally (standard mode),")
+        print("or pickles all pages from a single specified space (full pickle mode).") # Added line
+        print("Standard mode uses a checkpoint file (confluence_checkpoint.json) to resume progress.")
+        print("\\nAvailable command-line options for non-interactive use:") # Corrected to \\n
+        print("  --reset                       : Clears all previous progress and starts fresh (standard mode).") # Updated help
+        print("  --batch-continue              : Skips this menu and continues from the last checkpoint (standard mode).") # Updated help
+        print("  --pickle-space-full SPACE_KEY : Pickles all pages for a single space. Saves to temp/full_pickles/.") # Added help
+        print("                                  Bypasses sampling, checkpointing, and this interactive menu.") # Added help
+        print("------------------------------------\\n") # Corrected to \\n
         while True:
-            choice = input("Choose an action:\n"
-                           "  1: Continue with existing progress (uses checkpoint)\n"
-                           "  2: Reset and start from beginning (deletes checkpoint)\n"
-                           "  q: Quit\n"
+            choice = input("Choose an action for standard sampling mode:\\n" # Updated prompt
+                           "  1: Continue with existing progress (uses checkpoint)\\n"
+                           "  2: Reset and start from beginning (deletes checkpoint)\\n"
+                           "  q: Quit\\n"
                            "Enter choice (1, 2, or q): ").strip().lower()
             if choice == '1':
                 perform_reset = False
