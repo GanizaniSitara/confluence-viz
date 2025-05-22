@@ -21,7 +21,7 @@ try:
     SETTINGS = load_confluence_settings()
     # Assuming SETTINGS['api_base_url'] is the true base URL without /rest/api,
     # as per user feedback that '/rest/api' has been removed from this setting's value.
-    CONFLUENCE_BASE_URL = SETTINGS['api_base_url']
+    CONFLUENCE_BASE_URL = SETTINGS['base_url']
     USERNAME = SETTINGS['username']
     PASSWORD = SETTINGS['password']
     VERIFY_SSL = SETTINGS['verify_ssl']
