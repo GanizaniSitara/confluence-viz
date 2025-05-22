@@ -14,17 +14,18 @@ from config_loader import load_confluence_settings
 
 # Load settings
 confluence_settings = load_confluence_settings()
-API_BASE_URL = confluence_settings['api_base_url']
 USERNAME = confluence_settings['username']
 PASSWORD = confluence_settings['password']
+BASE_URL = confluence_settings['base_url'] # Ensure this is base_url
+API_ENDPOINT = "/rest/api" # Define the API endpoint suffix
 VERIFY_SSL = confluence_settings['verify_ssl']
 
 if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-def get_with_retry(url, params=None, auth=None, verify=False):
+def get_with_retry(url, params=None, auth=None, headers=None, verify=False, stream=False, timeout=30):
     while True:
-        resp = requests.get(url, params=params, auth=auth, verify=verify)
+        resp = requests.get(url, params=params, auth=auth, headers=headers, verify=verify, stream=stream, timeout=timeout)
         if resp.status_code == 429:
             # Extract the Retry-After header value
             retry_after = resp.headers.get('Retry-After')
@@ -68,9 +69,11 @@ def fetch_page_metadata(space_key):
     print(f"  Fetching page metadata for space: {space_key}")
     pages = []
     start = 0
+    page_limit = 100 # Define page_limit
     while True:
-        url = f"{API_BASE_URL}/content" # Corrected to use API_BASE_URL for API endpoint
-        params = {"type": "page", "spaceKey": space_key, "start": start, "limit": 100, "expand": "version,ancestors"}
+        # Construct URL using BASE_URL and API_ENDPOINT
+        url = f"{BASE_URL}{API_ENDPOINT}/content"
+        params = {"type": "page", "spaceKey": space_key, "start": start, "limit": page_limit, "expand": "version,ancestors"}
         r = get_with_retry(url, params=params, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
         if r.status_code != 200:
             print(f"  Failed to fetch pages for space {space_key}. Status code: {r.status_code}")
@@ -89,14 +92,15 @@ def fetch_page_metadata(space_key):
                 'space_key': space_key
             }
             pages.append(page_info)
-        if len(results) < 100:
+        if len(results) < page_limit:
             break
-        start += 100
+        start += page_limit
     print(f"  Total metadata pages fetched for space {space_key}: {len(pages)}")
     return pages
 
 def fetch_page_body(page_id):
-    url = f"{API_BASE_URL}/content/{page_id}" # Corrected: Removed redundant /rest/api
+    # Construct URL using BASE_URL and API_ENDPOINT
+    url = f"{BASE_URL}{API_ENDPOINT}/content/{page_id}"
     params = {"expand": "body.storage"}
     r = get_with_retry(url, params=params, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
     if r.status_code == 200:
@@ -163,6 +167,75 @@ def save_checkpoint(checkpoint):
     except Exception as e:
         print(f"Error saving checkpoint file: {e}")
 
+def fetch_space_details(target_space_key, auth_details, verify_ssl_cert):
+    """Fetches details for a specific space, including description and icon."""
+    # Construct URL using BASE_URL and API_ENDPOINT
+    space_details_url = f"{BASE_URL}{API_ENDPOINT}/space/{target_space_key}"
+    params = {"expand": "description.plain,icon"}
+    sd_r = get_with_retry(space_details_url, params=params, auth=auth_details, verify=verify_ssl_cert)
+    if sd_r.status_code == 200:
+        try:
+            return sd_r.json()
+        except requests.exceptions.JSONDecodeError:
+            print(f"  Warning: Could not parse JSON response for space details of {target_space_key}. Response: {sd_r.text}")
+    else:
+        print(f"  Warning: Could not fetch space details for {target_space_key}. Status: {sd_r.status_code}")
+    return {}
+
+def fetch_all_spaces_with_details(auth_details, verify_ssl_cert):
+    """Fetches all spaces with their details, excluding personal spaces."""
+    print("Fetching all non-personal spaces with details...")
+    spaces_data = []
+    start = 0
+    limit = 50
+
+    while True:
+        # Construct URL using BASE_URL and API_ENDPOINT
+        url = f"{BASE_URL}{API_ENDPOINT}/space"
+        params = {
+            "start": start,
+            "limit": limit,
+            "type": "global", 
+            "expand": "description.plain,icon"
+        }
+        print(f"  Fetching next batch of spaces from Confluence: {url}?start={start}&limit={limit}")
+        r = get_with_retry(url, params=params, auth=auth_details, verify=verify_ssl_cert)
+        if r.status_code != 200:
+            print(f"Failed to fetch spaces. Status code: {r.status_code}. Response: {r.text}")
+            break
+        results = r.json().get("results", [])
+        if not results:
+            break
+        for sp in results:
+            if sp.get("key", "").startswith("~"):  # Exclude user spaces
+                # print(f"Skipping user space: key={sp.get('key')}, name={sp.get('name')}")
+                continue
+            # print(f"[{fetch_idx}] Fetched space metadata: key={sp.get('key')}, name={sp.get('name')}")
+            spaces_data.append(sp)
+        if len(results) < limit: # API's limit for spaces is often 50 or per its documentation, changed to 100
+            break
+        start += len(results) # Correctly increment for next API page
+    print(f"Total non-user spaces fetched: {len(spaces_data)}")
+    return spaces_data
+
+def fetch_pages_for_space_concurrently(space_key, auth_details, verify_ssl_cert, max_workers=10):
+    """
+    Fetches all pages for a given space key concurrently, including their content and version history.
+    """
+    # Initialize start and page_limit for this function
+    start = 0
+    page_limit = 100 # Or another appropriate limit
+    while True:
+        # Construct URL using BASE_URL and API_ENDPOINT
+        url = f"{BASE_URL}{API_ENDPOINT}/content"
+        params = {
+            "spaceKey": space_key,
+            "start": start, # Now defined
+            "limit": page_limit, # Now defined
+            "expand": "body.storage,version,history.previousVersion"
+        }
+        # ...existing code...
+
 def main():
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
@@ -183,12 +256,12 @@ def main():
         print(f"Mode: Pickling all pages for space: {target_space_key}")
 
         # Fetch space details to get the name
-        space_details_url = f"{API_BASE_URL}/space/{target_space_key}"
-        # Ensure no double slashes if API_BASE_URL ends with / and space endpoint starts with /
-        if API_BASE_URL.endswith('/') and "/space/".startswith('/'):
-            space_details_url = f"{API_BASE_URL}space/{target_space_key}"
-        else:
-            space_details_url = f"{API_BASE_URL}/space/{target_space_key}"
+        # Construct URL using BASE_URL and API_ENDPOINT
+        space_details_url = f"{BASE_URL}{API_ENDPOINT}/space/{target_space_key}"
+        
+        # The check for double slashes is good, but API_ENDPOINT starts with /, so BASE_URL should not end with /
+        # Assuming BASE_URL does not end with / and API_ENDPOINT starts with /
+        # No special handling needed here if BASE_URL is truly a base like http://host:port
 
         print(f"  Fetching details for space {target_space_key} from {space_details_url}...")
         sd_r = get_with_retry(space_details_url, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
@@ -313,9 +386,9 @@ def main():
     fetch_idx = 0
     print("Fetching list of all spaces from Confluence...")
     while True:
-        # Use API_BASE_URL for /rest/api/space endpoint
-        url = f"{API_BASE_URL}/space" # Corrected: Removed redundant /rest/api
-        params = {"start": start_fetch_api, "limit": 100} # Standard limit for space fetching, changed to 100
+        # Construct URL using BASE_URL and API_ENDPOINT
+        url = f"{BASE_URL}{API_ENDPOINT}/space"
+        params = {"start": start_fetch_api, "limit": 100}
         print(f"  Fetching next batch of spaces from Confluence: {url}?start={start_fetch_api}&limit=100")
         r = get_with_retry(url, params=params, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
         if r.status_code != 200:
