@@ -11,7 +11,7 @@ def load_confluence_settings(config_path='settings.ini'):
     config.read(config_path)
     confluence = config['confluence']
     return {
-        'api_base_url': confluence.get('api_base_url'),
+        'base_url': confluence.get('base_url'),
         'username': confluence.get('username'),
         'password': confluence.get('password'),
         'verify_ssl': confluence.getboolean('verify_ssl', fallback=True)
