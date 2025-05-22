@@ -56,10 +56,13 @@ TOP_N_ROOT = 10
 TOP_N_RECENT = 30
 TOP_N_FREQUENT = 30
 OUTPUT_DIR = 'temp'
+FULL_PICKLE_OUTPUT_DIR = os.path.join(OUTPUT_DIR, 'full_pickles') # New directory for full pickles
 CHECKPOINT_FILE = 'confluence_checkpoint.json'
 
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
+if not os.path.exists(FULL_PICKLE_OUTPUT_DIR): # Ensure the new directory is created
+    os.makedirs(FULL_PICKLE_OUTPUT_DIR)
 
 def fetch_page_metadata(space_key):
     print(f"  Fetching page metadata for space: {space_key}")
@@ -209,7 +212,7 @@ def main():
         pages_with_bodies, total_pages_metadata = sample_and_fetch_bodies(target_space_key, pages_metadata, fetch_all=True)
 
         out_filename = f'{target_space_key}_full.pkl'
-        out_path = os.path.join(OUTPUT_DIR, out_filename)
+        out_path = os.path.join(FULL_PICKLE_OUTPUT_DIR, out_filename) # Updated path
         try:
             with open(out_path, 'wb') as f:
                 pickle.dump({
