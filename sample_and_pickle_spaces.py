@@ -248,9 +248,68 @@ def main():
     mode_group.add_argument('--batch-continue', action='store_true', help='Run in continue mode using checkpoint without interactive menu (non-interactive).')
     mode_group.add_argument('--pickle-space-full', type=str, metavar='SPACE_KEY',
                                help='Pickle all pages for a single space. Saves to temp/full_pickles/. Bypasses sampling, checkpointing, and interactive menu.') # Updated help
+    mode_group.add_argument('--pickle-all-spaces-full', action='store_true',
+                               help='Pickle all pages for ALL non-user spaces. Saves to temp/full_pickles/. Bypasses sampling, checkpointing, and interactive menu.') # New argument
     args = parser.parse_args()
 
-    # Handle --pickle-space-full first as it's a distinct mode
+    # Handle --pickle-all-spaces-full mode
+    if args.pickle_all_spaces_full:
+        print("Mode: Pickling all pages for ALL non-user spaces.")
+        
+        # Fetch all non-user spaces with details (name, key)
+        all_non_user_spaces = fetch_all_spaces_with_details(auth_details=(USERNAME, PASSWORD), verify_ssl_cert=VERIFY_SSL)
+
+        if not all_non_user_spaces:
+            print("No non-user spaces found to process. Exiting.")
+            sys.exit(0)
+
+        print(f"Found {len(all_non_user_spaces)} non-user spaces to process.")
+        processed_count = 0
+        failed_count = 0
+
+        for space_info in all_non_user_spaces:
+            target_space_key = space_info.get('key')
+            space_name_for_pickle = space_info.get('name', "N/A (Full Pickle)")
+            
+            if not target_space_key:
+                print(f"  Warning: Found a space without a key. Skipping: {space_info}")
+                failed_count += 1
+                continue
+
+            print(f"\\nProcessing space: {target_space_key} (Name: {space_name_for_pickle})")
+            
+            try:
+                pages_metadata = fetch_page_metadata(target_space_key)
+
+                if not pages_metadata:
+                    print(f"  No pages found for space {target_space_key} or error fetching metadata. Skipping.")
+                    failed_count +=1
+                    continue
+
+                pages_with_bodies, total_pages_metadata = sample_and_fetch_bodies(target_space_key, pages_metadata, fetch_all=True)
+
+                out_filename = f'{target_space_key}_full.pkl'
+                out_path = os.path.join(FULL_PICKLE_OUTPUT_DIR, out_filename)
+                
+                with open(out_path, 'wb') as f:
+                    pickle.dump({
+                        'space_key': target_space_key,
+                        'name': space_name_for_pickle,
+                        'sampled_pages': pages_with_bodies, # These are all pages with their bodies
+                        'total_pages_in_space': total_pages_metadata
+                    }, f)
+                print(f'  Successfully wrote {len(pages_with_bodies)} pages for space {target_space_key} to {out_path} (total pages in space: {total_pages_metadata})')
+                processed_count += 1
+            except Exception as e:
+                print(f"  An unexpected error occurred during pickling for space {target_space_key}: {e}")
+                failed_count += 1
+        
+        print(f"\\nFinished pickling all non-user spaces.")
+        print(f"Successfully processed: {processed_count} spaces.")
+        print(f"Failed to process: {failed_count} spaces.")
+        sys.exit(0)
+
+    # Handle --pickle-space-full first as it\'s a distinct mode
     if args.pickle_space_full:
         target_space_key = args.pickle_space_full
         print(f"Mode: Pickling all pages for space: {target_space_key}")
@@ -321,7 +380,8 @@ def main():
         print("\\nAvailable command-line options for non-interactive use:") # Corrected to \\n
         print("  --reset                       : Clears all previous progress and starts fresh (standard mode).") # Updated help
         print("  --batch-continue              : Skips this menu and continues from the last checkpoint (standard mode).") # Updated help
-        print("  --pickle-space-full SPACE_KEY : Pickles all pages for a single space. Saves to temp/full_pickles/.") # Added help
+        print("  --pickle-space-full SPACE_KEY : Pickles all pages for a single space. Saves to temp/full_pickles/.")
+        print("  --pickle-all-spaces-full      : Pickles all pages for ALL non-user spaces. Saves to temp/full_pickles/.") # New help line
         print("                                  Bypasses sampling, checkpointing, and this interactive menu.") # Added help
         print("------------------------------------\\n") # Corrected to \\n
         while True:
