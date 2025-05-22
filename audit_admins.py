@@ -160,16 +160,39 @@ def get_space_admins(space_key):
             return None
 
         for perm in results:
-            operation = perm.get('operation', {})
-            is_admin_perm = False
-            
-            # Check for 'administer' permission on the 'space'
-            # Structure can be: operation: {'operation': 'administer', 'targetType': 'space'}
-            # Or: operation: {'key': 'administer', 'target': 'space'}
-            if isinstance(operation, dict):
-                op_key = operation.get('operation') or operation.get('key')
-                target_type = operation.get('targetType') or operation.get('target')
-                if op_key == 'administer' and target_type == 'space':
+            operation_details = perm.get('operation', {}) # operation_details is a dict
+            if not isinstance(operation_details, dict):
+                continue # Should not happen if API is consistent, but good for safety
+
+            is_admin_perm = False # Initialize for current permission entry
+
+            # Extract operation name
+            op_name = operation_details.get('operation') # Primary field for operation name
+            if not isinstance(op_name, str):
+                op_name = operation_details.get('key') # Fallback field
+
+            # Extract target type
+            target_name = operation_details.get('targetType') # Primary field for target
+            if not isinstance(target_name, str):
+                target_name = operation_details.get('target') # Fallback field
+
+            if isinstance(op_name, str): # Ensure op_name is a string (already assumed to be UPPERCASE from API)
+                # target_name is used directly (assumed to be UPPERCASE if string, or handled if not)
+                current_target_name_for_comparison = target_name if isinstance(target_name, str) else ""
+
+                # Condition 1: Operation is 'ADMINISTER' AND target is 'SPACE'
+                is_admin_by_administer_space = (op_name == 'ADMINISTER' and current_target_name_for_comparison == 'SPACE')
+                
+                # Condition 2: Operation is 'SETSPACEPERMISSIONS'. 
+                # The target for 'SETSPACEPERMISSIONS' should be 'SPACE'.
+                # If current_target_name_for_comparison is empty, we assume the space context from the API endpoint.
+                # If current_target_name_for_comparison is present, it must be 'SPACE'.
+                is_admin_by_setspacepermissions_on_space = (
+                    op_name == 'SETSPACEPERMISSIONS' and
+                    (current_target_name_for_comparison == 'SPACE' or not current_target_name_for_comparison) # Target is 'SPACE' or not specified
+                )
+
+                if is_admin_by_administer_space or is_admin_by_setspacepermissions_on_space:
                     is_admin_perm = True
             
             if is_admin_perm:
