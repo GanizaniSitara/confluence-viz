@@ -9,6 +9,14 @@ from datetime import datetime # Added for parsing dates if needed, though string
 OUTPUT_DIR = 'temp'
 FULL_PICKLE_SUBDIR = 'full_pickles' # New line
 
+def link(uri, label=None):
+    if label is None: 
+        label = uri
+    parameters = ''
+    # OSC 8 ; params ; URI ST <name> OSC 8 ;; ST 
+    escape_mask = '\\033]8;{};{}\\033\\\\{}\033]8;;\\033\\\\'
+    return escape_mask.format(parameters, uri, label)
+
 def analyze_pickle(space_key):
     pickle_filename = f'{space_key}_full.pkl'
     # Updated path construction
@@ -90,13 +98,25 @@ def analyze_pickle(space_key):
 
             print("\\nTop 5 most recently updated pages:")
             for i, page in enumerate(sorted_by_update_desc[:5]):
-                link = f" - Link: {confluence_base_url}/pages/viewpage.action?pageId={page.get('id')}" if confluence_base_url and page.get('id') else ""
-                print(f"  {i+1}. '{page.get('title', 'N/A')}' (Updated: {page.get('updated')}){link}")
+                page_id = page.get('id')
+                page_title = page.get('title', 'N/A')
+                page_updated = page.get('updated')
+                link_text = ""
+                if confluence_base_url and page_id:
+                    page_url = f"{confluence_base_url}/pages/viewpage.action?pageId={page_id}"
+                    link_text = f" - {link(page_url, 'Link')}"
+                print(f"  {i+1}. '{page_title}' (Updated: {page_updated}){link_text}")
 
             print("\\nTop 5 least recently updated pages:")
             for i, page in enumerate(sorted_by_update_asc[:5]):
-                link = f" - Link: {confluence_base_url}/pages/viewpage.action?pageId={page.get('id')}" if confluence_base_url and page.get('id') else ""
-                print(f"  {i+1}. '{page.get('title', 'N/A')}' (Updated: {page.get('updated')}){link}")
+                page_id = page.get('id')
+                page_title = page.get('title', 'N/A')
+                page_updated = page.get('updated')
+                link_text = ""
+                if confluence_base_url and page_id:
+                    page_url = f"{confluence_base_url}/pages/viewpage.action?pageId={page_id}"
+                    link_text = f" - {link(page_url, 'Link')}"
+                print(f"  {i+1}. '{page_title}' (Updated: {page_updated}){link_text}")
         else:
             print("\\nNo pages with update information found to sort by date.")
 
@@ -105,7 +125,31 @@ def analyze_pickle(space_key):
         sorted_pages_by_size = sorted(sampled_pages, key=lambda p: len(p.get('body', '')), reverse=True)
         print("\nTop 5 largest pages (by content length):")
         for i, page in enumerate(sorted_pages_by_size[:5]):
-            print(f"  {i+1}. '{page.get('title', 'N/A')}' (ID: {page.get('id', 'N/A')}) - Length: {len(page.get('body', ''))}")
+            page_id = page.get('id')
+            page_title = page.get('title', 'N/A')
+            link_text = ""
+            if confluence_base_url and page_id:
+                page_url = f"{confluence_base_url}/pages/viewpage.action?pageId={page_id}"
+                link_text = f" - {link(page_url, 'Link')}"
+            print(f"  {i+1}. '{page_title}' (ID: {page.get('id', 'N/A')}) - Length: {len(page.get('body', ''))}{link_text}")
+
+    # Print titles of top 5 pages with most collaborators (by update_count)
+    if sampled_pages:
+        pages_with_update_count = [p for p in sampled_pages if p.get('update_count') is not None]
+        if pages_with_update_count:
+            sorted_by_collaborators = sorted(pages_with_update_count, key=lambda p: p['update_count'], reverse=True)
+            print("\nTop 5 pages with most collaborators (by update count/versions):")
+            for i, page in enumerate(sorted_by_collaborators[:5]):
+                page_id = page.get('id')
+                page_title = page.get('title', 'N/A')
+                update_count = page.get('update_count')
+                link_text = ""
+                if confluence_base_url and page_id:
+                    page_url = f"{confluence_base_url}/pages/viewpage.action?pageId={page_id}"
+                    link_text = f" - {link(page_url, 'Link')}"
+                print(f"  {i+1}. '{page_title}' (Update Count: {update_count}){link_text}")
+        else:
+            print("\nNo pages with update count information found.")
 
 def main():
     parser = argparse.ArgumentParser(description='Analyze a "full" pickle file generated for a Confluence space.')
