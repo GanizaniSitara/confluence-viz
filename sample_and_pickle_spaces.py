@@ -103,25 +103,33 @@ def fetch_page_body(page_id):
         print(f"    Failed to fetch body for page {page_id}. Status code: {r.status_code}")
         return ''
 
-def sample_and_fetch_bodies(space_key, pages):
-    # Root + 1 level (up to 20)
-    root_and_first = [p for p in pages if p.get('level', 0) <= 1][:TOP_N_ROOT]
-    # Top 15 most recently updated
-    most_recent = sorted(pages, key=lambda p: p.get('updated', ''), reverse=True)[:TOP_N_RECENT]
-    # Top 15 most frequently updated
-    most_frequent = sorted(pages, key=lambda p: p.get('update_count', 0), reverse=True)[:TOP_N_FREQUENT]
-    # Combine and deduplicate by page id
-    all_pages = root_and_first + most_recent + most_frequent
-    seen = set()
-    deduped = []
-    for p in all_pages:
-        pid = p.get('id')
-        if pid and pid not in seen:
-            deduped.append(p)
-            seen.add(pid)
-    # Fetch bodies for each unique page
-    for p in deduped:
-        p['body'] = fetch_page_body(p['id'])
+def sample_and_fetch_bodies(space_key, pages, fetch_all=False):
+    if fetch_all:
+        print(f"  Fetching bodies for all {len(pages)} pages in space {space_key} (full pickle mode)...")
+        deduped = pages # In full mode, all fetched metadata pages are processed
+    else:
+        # Root + 1 level (up to TOP_N_ROOT)
+        root_and_first = [p for p in pages if p.get('level', 0) <= 1][:TOP_N_ROOT]
+        # Top TOP_N_RECENT most recently updated
+        most_recent = sorted(pages, key=lambda p: p.get('updated', ''), reverse=True)[:TOP_N_RECENT]
+        # Top TOP_N_FREQUENT most frequently updated
+        most_frequent = sorted(pages, key=lambda p: p.get('update_count', 0), reverse=True)[:TOP_N_FREQUENT]
+        # Combine and deduplicate by page id
+        all_pages_sampled = root_and_first + most_recent + most_frequent
+        seen = set()
+        deduped = []
+        for p in all_pages_sampled:
+            pid = p.get('id')
+            if pid and pid not in seen:
+                deduped.append(p)
+                seen.add(pid)
+        print(f"  Sampling resulted in {len(deduped)} unique pages to fetch bodies for space {space_key}.")
+
+    # Fetch bodies for each page (either all or sampled)
+    for i, p in enumerate(deduped):
+        if (i + 1) % 10 == 0 or i == 0 or (i + 1) == len(deduped):
+            print(f"    Fetching body for page {i+1}/{len(deduped)} (ID: {p.get('id')})...")
+        p['body'] = fetch_page_body(p.get('id'))
     return deduped, len(pages)
 
 def load_checkpoint():
@@ -156,11 +164,68 @@ def main():
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
         description="Sample and pickle Confluence spaces. Handles checkpointing for resumable execution.",
-        epilog="If no specific run mode argument (--reset or --batch-continue) is provided, an interactive menu is shown."
+        epilog="If no run mode argument (--reset, --batch-continue, --pickle-space-full) is provided, an interactive menu is shown." # Updated epilog
     )
-    parser.add_argument('--reset', action='store_true', help='Reset checkpoint and start from beginning (non-interactive).')
-    parser.add_argument('--batch-continue', action='store_true', help='Run in continue mode using checkpoint without interactive menu (non-interactive).')
+    # Group for mutually exclusive run modes
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument('--reset', action='store_true', help='Reset checkpoint and start from beginning (non-interactive).')
+    mode_group.add_argument('--batch-continue', action='store_true', help='Run in continue mode using checkpoint without interactive menu (non-interactive).')
+    mode_group.add_argument('--pickle-space-full', type=str, metavar='SPACE_KEY',
+                               help='Pickle all accessible pages for a single specified space key. Bypasses sampling, checkpointing, and interactive menu.')
     args = parser.parse_args()
+
+    # Handle --pickle-space-full first as it's a distinct mode
+    if args.pickle_space_full:
+        target_space_key = args.pickle_space_full
+        print(f"Mode: Pickling all pages for space: {target_space_key}")
+
+        # Fetch space details to get the name
+        space_details_url = f"{API_BASE_URL}/space/{target_space_key}"
+        # Ensure no double slashes if API_BASE_URL ends with / and space endpoint starts with /
+        if API_BASE_URL.endswith('/') and "/space/".startswith('/'):
+            space_details_url = f"{API_BASE_URL}space/{target_space_key}"
+        else:
+            space_details_url = f"{API_BASE_URL}/space/{target_space_key}"
+
+        print(f"  Fetching details for space {target_space_key} from {space_details_url}...")
+        sd_r = get_with_retry(space_details_url, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
+        space_name_for_pickle = "N/A (Full Pickle)" # Default space name
+        if sd_r.status_code == 200:
+            try:
+                space_name_for_pickle = sd_r.json().get('name', space_name_for_pickle)
+            except requests.exceptions.JSONDecodeError:
+                print(f"  Warning: Could not parse JSON response for space details of {target_space_key}. Response: {sd_r.text}")
+        else:
+            print(f"  Warning: Could not fetch space name for {target_space_key}. Status: {sd_r.status_code}")
+
+        print(f"  Processing space: {target_space_key} (Name: {space_name_for_pickle})")
+        pages_metadata = fetch_page_metadata(target_space_key)
+
+        if not pages_metadata:
+            print(f"  No pages found for space {target_space_key} or error fetching metadata. Exiting.")
+            sys.exit(1)
+
+        # sample_and_fetch_bodies will be modified to accept fetch_all=True
+        pages_with_bodies, total_pages_metadata = sample_and_fetch_bodies(target_space_key, pages_metadata, fetch_all=True)
+
+        out_filename = f'{target_space_key}_full.pkl'
+        out_path = os.path.join(OUTPUT_DIR, out_filename)
+        try:
+            with open(out_path, 'wb') as f:
+                pickle.dump({
+                    'space_key': target_space_key,
+                    'name': space_name_for_pickle,
+                    'sampled_pages': pages_with_bodies, # These are all pages with their bodies
+                    'total_pages_in_space': total_pages_metadata
+                }, f)
+            print(f'  Successfully wrote {len(pages_with_bodies)} pages for space {target_space_key} to {out_path} (total pages in space: {total_pages_metadata})')
+        except IOError as e:
+            print(f"  Error writing pickle file {out_path}: {e}")
+            sys.exit(1)
+        except Exception as e:
+            print(f"  An unexpected error occurred during pickling for space {target_space_key}: {e}")
+            sys.exit(1)
+        sys.exit(0)
 
     perform_reset = False
     # run_script = True # This variable was not used
