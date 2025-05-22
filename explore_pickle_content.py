@@ -96,7 +96,7 @@ def analyze_pickle(space_key):
             sorted_by_update_desc = sorted(pages_with_date, key=lambda p: p['updated'], reverse=True)
             sorted_by_update_asc = sorted(pages_with_date, key=lambda p: p['updated'])
 
-            print("\\nTop 5 most recently updated pages:")
+            print("\nTop 5 most recently updated pages:")
             for i, page in enumerate(sorted_by_update_desc[:5]):
                 page_id = page.get('id')
                 page_title = page.get('title', 'N/A')
@@ -104,10 +104,10 @@ def analyze_pickle(space_key):
                 link_text = ""
                 if confluence_base_url and page_id:
                     page_url = f"{confluence_base_url}/pages/viewpage.action?pageId={page_id}"
-                    link_text = f" - {link(page_url, 'Link')}"
+                    link_text = f" - Link: {page_url}" # Reverted to plain text URL
                 print(f"  {i+1}. '{page_title}' (Updated: {page_updated}){link_text}")
 
-            print("\\nTop 5 least recently updated pages:")
+            print("\nTop 5 least recently updated pages:")
             for i, page in enumerate(sorted_by_update_asc[:5]):
                 page_id = page.get('id')
                 page_title = page.get('title', 'N/A')
@@ -115,10 +115,10 @@ def analyze_pickle(space_key):
                 link_text = ""
                 if confluence_base_url and page_id:
                     page_url = f"{confluence_base_url}/pages/viewpage.action?pageId={page_id}"
-                    link_text = f" - {link(page_url, 'Link')}"
+                    link_text = f" - Link: {page_url}" # Reverted to plain text URL
                 print(f"  {i+1}. '{page_title}' (Updated: {page_updated}){link_text}")
         else:
-            print("\\nNo pages with update information found to sort by date.")
+            print("\nNo pages with update information found to sort by date.")
 
     # Example: Print titles of top 5 largest pages
     if sampled_pages:
@@ -130,7 +130,7 @@ def analyze_pickle(space_key):
             link_text = ""
             if confluence_base_url and page_id:
                 page_url = f"{confluence_base_url}/pages/viewpage.action?pageId={page_id}"
-                link_text = f" - {link(page_url, 'Link')}"
+                link_text = f" - Link: {page_url}" # Reverted to plain text URL
             print(f"  {i+1}. '{page_title}' (ID: {page.get('id', 'N/A')}) - Length: {len(page.get('body', ''))}{link_text}")
 
     # Print titles of top 5 pages with most collaborators (by update_count)
@@ -146,7 +146,7 @@ def analyze_pickle(space_key):
                 link_text = ""
                 if confluence_base_url and page_id:
                     page_url = f"{confluence_base_url}/pages/viewpage.action?pageId={page_id}"
-                    link_text = f" - {link(page_url, 'Link')}"
+                    link_text = f" - Link: {page_url}" # Reverted to plain text URL
                 print(f"  {i+1}. '{page_title}' (Update Count: {update_count}){link_text}")
         else:
             print("\nNo pages with update count information found.")
