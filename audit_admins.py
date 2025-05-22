@@ -423,7 +423,7 @@ def check_current_user_admin():
 
 def list_admins_for_specific_space():
     """Prompts for a space key and lists its administrators."""
-    space_key_input = input("Enter the space key to list admins for: ").strip().upper()
+    space_key_input = input("Enter the space key to list admins for: ").strip() # Removed .upper()
     if not space_key_input:
         print("No space key entered. Returning to menu.")
         return
