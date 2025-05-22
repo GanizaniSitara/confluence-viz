@@ -3,6 +3,8 @@ import pickle
 import os
 import sys
 import numpy as np # For calculating mean, ignoring NaNs
+from config_loader import load_visualization_settings # Added import
+from datetime import datetime # Added for parsing dates if needed, though string comparison works for ISO
 
 OUTPUT_DIR = 'temp'
 FULL_PICKLE_SUBDIR = 'full_pickles' # New line
@@ -63,6 +65,40 @@ def analyze_pickle(space_key):
     print(f"Min Content Length: {min_content_length} characters")
     print(f"Max Content Length: {max_content_length} characters")
     print(f"Median Content Length: {median_content_length:.2f} characters")
+
+    # Load Confluence base URL for links
+    try:
+        viz_settings = load_visualization_settings()
+        confluence_base_url = viz_settings.get('confluence_base_url')
+        if not confluence_base_url:
+            print("\\nWarning: Confluence base URL not found in settings. Links will not be generated.")
+    except FileNotFoundError:
+        print("\\nWarning: settings.ini not found. Links will not be generated.")
+        confluence_base_url = None
+    except Exception as e:
+        print(f"\\nWarning: Error loading visualization settings: {e}. Links will not be generated.")
+        confluence_base_url = None
+
+    if sampled_pages:
+        # Filter pages that have an 'updated' field.
+        pages_with_date = [p for p in sampled_pages if p.get('updated')]
+
+        if pages_with_date:
+            # Sort by 'updated' field. ISO 8601 format strings can be compared directly.
+            sorted_by_update_desc = sorted(pages_with_date, key=lambda p: p['updated'], reverse=True)
+            sorted_by_update_asc = sorted(pages_with_date, key=lambda p: p['updated'])
+
+            print("\\nTop 5 most recently updated pages:")
+            for i, page in enumerate(sorted_by_update_desc[:5]):
+                link = f" - Link: {confluence_base_url}/pages/viewpage.action?pageId={page.get('id')}" if confluence_base_url and page.get('id') else ""
+                print(f"  {i+1}. '{page.get('title', 'N/A')}' (Updated: {page.get('updated')}){link}")
+
+            print("\\nTop 5 least recently updated pages:")
+            for i, page in enumerate(sorted_by_update_asc[:5]):
+                link = f" - Link: {confluence_base_url}/pages/viewpage.action?pageId={page.get('id')}" if confluence_base_url and page.get('id') else ""
+                print(f"  {i+1}. '{page.get('title', 'N/A')}' (Updated: {page.get('updated')}){link}")
+        else:
+            print("\\nNo pages with update information found to sort by date.")
 
     # Example: Print titles of top 5 largest pages
     if sampled_pages:
