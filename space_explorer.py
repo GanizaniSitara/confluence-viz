@@ -25,12 +25,13 @@ warnings.filterwarnings('ignore', 'Unverified HTTPS request is being made to',
 # --- Configuration ---
 try:
     settings = load_confluence_settings()
-    CONFLUENCE_BASE_URL = settings['api_base_url'].rstrip('/rest/api') # Ensure no trailing /rest/api
+    CONFLUENCE_API_BASE_URL = settings['base_url'] # Changed from api_base_url
+    API_ENDPOINT = "/rest/api" # Define the API endpoint suffix
     USERNAME = settings['username']
     PASSWORD = settings['password']
     VERIFY_SSL = settings['verify_ssl']
     print("Settings loaded successfully.")
-    print(f"Base URL: {CONFLUENCE_BASE_URL}")
+    print(f"Base URL: {CONFLUENCE_API_BASE_URL}")
     print(f"Username: {USERNAME}")
     print(f"Verify SSL: {VERIFY_SSL}")
 except Exception as e:
@@ -40,7 +41,7 @@ except Exception as e:
 # ---------------------
 
 # Define API endpoints dynamically
-API_BASE = f'{CONFLUENCE_BASE_URL}/rest/api'
+API_BASE = f'{CONFLUENCE_API_BASE_URL}{API_ENDPOINT}'
 API_CONTENT_ENDPOINT = f'{API_BASE}/content'
 API_USER_ENDPOINT = f'{API_BASE}/user' # May need this later
 
@@ -656,7 +657,7 @@ def show_main_menu():
 
 if __name__ == "__main__":
     print("Starting Confluence Space Explorer...")
-    if not CONFLUENCE_BASE_URL or not USERNAME:
+    if not CONFLUENCE_API_BASE_URL or not USERNAME:
          print("\nWarning: Confluence URL or Username might be missing in settings.")
          print("API calls may fail. Please check settings.ini.")
 

@@ -20,7 +20,8 @@ from datetime import datetime
 from config_loader import load_confluence_settings
 settings = load_confluence_settings()
 
-CONFLUENCE_URL = settings['api_base_url']
+CONFLUENCE_BASE_URL = settings['base_url'] # Changed from api_base_url
+API_ENDPOINT = "/rest/api" # Define the API endpoint suffix
 USERNAME = settings['username']
 PASSWORD = settings['password']
 VERIFY_SSL = settings['verify_ssl']
@@ -199,7 +200,7 @@ def fetch_all_spaces():
     start = 0
     idx = 0
     while True:
-        url = f"{CONFLUENCE_URL}/rest/api/space"
+        url = f"{CONFLUENCE_BASE_URL}{API_ENDPOINT}/space" # Construct URL using CONFLUENCE_BASE_URL and API_ENDPOINT
         params = {"start": start, "limit": SPACES_PAGE_LIMIT}
         r = get_with_retry(url, params=params, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
         if r.status_code != 200:
@@ -230,7 +231,7 @@ def fetch_page_data_for_space(space_key):
     start = 0
     print(f"  Fetching pages for space: {space_key}")
     while True:
-        url = f"{CONFLUENCE_URL}/rest/api/content"
+        url = f"{CONFLUENCE_BASE_URL}{API_ENDPOINT}/content" # Construct URL using CONFLUENCE_BASE_URL and API_ENDPOINT
         params = {"type": "page", "spaceKey": space_key,
                   "start": start, "limit": CONTENT_PAGE_LIMIT, "expand": "version"}
         r = get_with_retry(url, params=params, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
