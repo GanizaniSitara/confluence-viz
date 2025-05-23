@@ -10,6 +10,8 @@ from utils.html_cleaner import clean_confluence_html # Added import
 
 OUTPUT_DIR = 'temp'
 FULL_PICKLE_SUBDIR = 'full_pickles' # New line
+SNIPPET_LINES = 10 # Number of lines for snippets
+
 
 def link(uri, label=None):
     if label is None: 
@@ -129,8 +131,8 @@ def analyze_pickle(pickle_data, confluence_base_url): # Modified arguments
             print("\nNo pages with update count information found.")
 
 
-def display_page_content(page, confluence_base_url, show_full_content=False, cleaned_text=None): # Added cleaned_text argument
-    """Displays the content of a single page."""
+def display_page_content(page, confluence_base_url, view_mode, cleaned_text_content=None):
+    """Displays the content of a single page based on the view_mode."""
     page_id = page.get('id', 'N/A')
     title = page.get('title', 'N/A')
     updated = page.get('updated', 'N/A')
@@ -143,7 +145,7 @@ def display_page_content(page, confluence_base_url, show_full_content=False, cle
     print(f"\n--- Page: {title} (ID: {page_id}) ---")
     print(f"Space Key: {space_key}")
     print(f"Last Updated: {updated}")
-    print(f"Content Length: {content_length} characters")
+    print(f"Content Length (raw): {content_length} characters")
     print(f"Version (Update Count): {update_count}")
     print(f"Hierarchy Level: {level}")
     print(f"Parent ID: {parent_id}")
@@ -153,17 +155,34 @@ def display_page_content(page, confluence_base_url, show_full_content=False, cle
         print(f"Link: {page_url}")
 
     body = page.get('body', '')
-    if cleaned_text is not None:
-        print("\n--- Cleaned Content ---")
-        print(cleaned_text if cleaned_text else "[NO CONTENT AFTER CLEANING]")
-    elif show_full_content:
-        print("\n--- Full Content ---")
-        print(body if body else "[NO CONTENT]")
-    else:
-        snippet_length = 200
-        snippet = body[:snippet_length] + ('...' if len(body) > snippet_length else '')
-        print("\n--- Content Snippet ---")
-        print(snippet if snippet else "[NO CONTENT]")
+
+    if view_mode == 'raw_snippet':
+        print("\n--- Raw HTML Content (Snippet) ---")
+        if body:
+            lines = body.splitlines()
+            snippet = "\n".join(lines[:SNIPPET_LINES])
+            print(snippet)
+            if len(lines) > SNIPPET_LINES:
+                print("... (more content available)")
+        else:
+            print("[NO RAW CONTENT]")
+    elif view_mode == 'raw_full':
+        print("\n--- Raw HTML Content (Full) ---")
+        print(body if body else "[NO RAW CONTENT]")
+    elif view_mode == 'cleaned_snippet':
+        print("\n--- Cleaned Text Content (Snippet) ---")
+        if cleaned_text_content:
+            lines = cleaned_text_content.splitlines()
+            snippet = "\n".join(lines[:SNIPPET_LINES])
+            print(snippet)
+            if len(lines) > SNIPPET_LINES:
+                print("... (more content available)")
+        else:
+            print("[NO CONTENT AFTER CLEANING or NO RAW CONTENT]")
+    elif view_mode == 'cleaned_full':
+        print("\n--- Cleaned Text Content (Full) ---")
+        print(cleaned_text_content if cleaned_text_content else "[NO CONTENT AFTER CLEANING or NO RAW CONTENT]")
+    
     print("--- End of Page ---")
 
 
@@ -176,33 +195,35 @@ def page_explorer(pickle_data, confluence_base_url):
 
     num_pages = len(sampled_pages)
     current_page_index = 0
-    view_mode = 'snippet' # 'snippet', 'full', 'cleaned'
+    # view_mode can be: 'raw_snippet', 'raw_full', 'cleaned_snippet', 'cleaned_full'
+    view_mode = 'raw_snippet' 
     current_cleaned_text = None # Cache for cleaned text of the current page
 
     while True:
         page = sampled_pages[current_page_index]
         
-        if view_mode == 'cleaned':
-            if current_cleaned_text is None: # Clean only if not already cleaned for this page view
+        if view_mode in ['cleaned_snippet', 'cleaned_full']:
+            if current_cleaned_text is None: # Clean only if not already cleaned for this page
                 raw_html_body = page.get('body', '')
-                current_cleaned_text = clean_confluence_html(raw_html_body)
-            display_page_content(page, confluence_base_url, cleaned_text=current_cleaned_text)
-        elif view_mode == 'full':
-            display_page_content(page, confluence_base_url, show_full_content=True)
-        else: # snippet
-            display_page_content(page, confluence_base_url, show_full_content=False)
+                if raw_html_body: # Only clean if there is body content
+                    current_cleaned_text = clean_confluence_html(raw_html_body)
+                else:
+                    current_cleaned_text = "" # Set to empty if no raw body to clean
+            display_page_content(page, confluence_base_url, view_mode, cleaned_text_content=current_cleaned_text)
+        else: # raw_snippet or raw_full
+            display_page_content(page, confluence_base_url, view_mode)
         
         print(f"\nPage {current_page_index + 1} of {num_pages}")
-        prompt = f"Options: (n)ext, (p)revious, (j)ump, (f)ull/snippet raw, (c)leaned text, (q)uit explorer [View: {view_mode}]: "
+        prompt = f"Options: (n)ext, (p)revious, (j)ump, (f)toggle raw, (c)toggle cleaned, (q)uit [View: {view_mode.replace('_', ' ')}]: "
         action = input(prompt).strip().lower()
 
         if action == 'n':
             current_page_index = min(current_page_index + 1, num_pages - 1)
-            view_mode = 'snippet' # Default to snippet for new page
+            view_mode = 'raw_snippet' # Default to raw snippet for new page
             current_cleaned_text = None # Reset cleaned text cache
         elif action == 'p':
             current_page_index = max(current_page_index - 1, 0)
-            view_mode = 'snippet' # Default to snippet for new page
+            view_mode = 'raw_snippet' # Default to raw snippet for new page
             current_cleaned_text = None # Reset cleaned text cache
         elif action == 'j':
             try:
@@ -210,25 +231,33 @@ def page_explorer(pickle_data, confluence_base_url):
                 page_num = int(page_num_str)
                 if 1 <= page_num <= num_pages:
                     current_page_index = page_num - 1
-                    view_mode = 'snippet' # Default to snippet for new page
+                    view_mode = 'raw_snippet' # Default to raw snippet for new page
                     current_cleaned_text = None # Reset cleaned text cache
                 else:
                     print("Invalid page number.")
             except ValueError:
                 print("Invalid input. Please enter a number.")
-        elif action == 'f':
-            if view_mode == 'full':
-                view_mode = 'snippet'
-            else:
-                view_mode = 'full'
-            print(f"Displaying {view_mode} raw HTML.")
-        elif action == 'c':
-            if view_mode == 'cleaned':
-                view_mode = 'snippet' # Toggle back to snippet if already cleaned
-                print("Displaying snippet raw HTML.")
-            else:
-                view_mode = 'cleaned'
-                print("Displaying cleaned text.")
+        elif action == 'f': # Toggle raw view
+            if view_mode == 'raw_snippet':
+                view_mode = 'raw_full'
+            elif view_mode == 'raw_full':
+                view_mode = 'raw_snippet'
+            else: # Was in a cleaned view, switch to raw_snippet
+                view_mode = 'raw_snippet'
+            print(f"Displaying {view_mode.replace('_', ' ')}.")
+        elif action == 'c': # Toggle cleaned view
+            if view_mode == 'cleaned_snippet':
+                view_mode = 'cleaned_full'
+            elif view_mode == 'cleaned_full':
+                view_mode = 'cleaned_snippet'
+            else: # Was in a raw view, switch to cleaned_snippet
+                view_mode = 'cleaned_snippet'
+            # Ensure cleaned text is generated if switching to a cleaned view
+            if current_cleaned_text is None and page.get('body', ''):
+                current_cleaned_text = clean_confluence_html(page.get('body', ''))
+            elif not page.get('body', ''):
+                 current_cleaned_text = "" # Handle case where there's no body to clean
+            print(f"Displaying {view_mode.replace('_', ' ')}.")
         elif action == 'q':
             break
         else:
