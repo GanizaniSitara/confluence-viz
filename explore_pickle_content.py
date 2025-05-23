@@ -482,113 +482,97 @@ def run_explorer_for_space(pickle_data, confluence_base_url):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Analyze a "full" pickle file generated for a Confluence space.')
-    # Make space_key argument optional
-    parser.add_argument('space_key', type=str, nargs='?', default=None, 
-                        help='Optional: The space key for which to analyze the _full.pkl file directly.')
+    """Main function to handle argument parsing and initiate the space exploration."""
+    parser = argparse.ArgumentParser(description="Explore content of pickled Confluence spaces.")
+    parser.add_argument("space_key", nargs='?', help="Optional space key to load directly.")
     args = parser.parse_args()
 
-    confluence_base_url = None
-    remote_pickle_dir_for_direct_load = None
+    settings = load_visualization_settings()
+    # Ensure pickle_dir is correctly determined (local 'temp' or from settings)
+    # The list_and_select_pickled_space function handles remote_full_pickle_dir,
+    # but direct loading via CLI arg needs a consistent base path.
+    # For simplicity, direct CLI load will use the local 'temp' or settings-defined 'pickle_dir'.
+    # If remote_full_pickle_dir is the primary source, this might need adjustment
+    # or ensure CLI-passed keys are expected in the local/default pickle_dir.
+    
+    # Default to 'temp' if not in settings, then join with FULL_PICKLE_SUBDIR for CLI loading.
+    local_base_pickle_dir = settings.get('pickle_dir', 'temp')
+    # This is the directory where _full.pkl files are expected for direct CLI loading.
+    # list_and_select_pickled_space has its own logic to check remote_full_pickle_dir.
+    cli_load_pickle_dir = os.path.join(local_base_pickle_dir, FULL_PICKLE_SUBDIR)
 
-    try:
-        confluence_settings = load_confluence_settings()
-        confluence_base_url = confluence_settings.get('base_url')
-    except FileNotFoundError:
-        print("\\nWarning: settings.ini not found. Confluence base URL could not be loaded. Links in statistics might not be generated.")
-    except Exception as e:
-        print(f"\\nWarning: Error loading Confluence settings: {e}. Links in statistics might not be generated.")
 
-    try:
-        viz_settings = load_visualization_settings()
-        # confluence_base_url = viz_settings.get('confluence_base_url') # Removed, loaded from confluence_settings now
-        remote_pickle_dir_for_direct_load = viz_settings.get('remote_full_pickle_dir')
-        # if not confluence_base_url: # This check is now implicitly handled by the first try-except
-        #     print("\\nWarning: Confluence base URL not found in settings. Links in statistics might not be generated.")
-    except FileNotFoundError:
-        # This specific warning for viz_settings might be redundant if settings.ini is already checked by load_confluence_settings
-        # However, keeping it in case load_confluence_settings succeeds but load_visualization_settings has a specific issue
-        # or if load_confluence_settings is skipped due to an early exit/error.
-        print("\\nWarning: settings.ini not found (when loading visualization settings).")
-    except Exception as e:
-        print(f"\\nWarning: Error loading visualization settings: {e}.")
+    confluence_settings = load_confluence_settings()
+    confluence_base_url = confluence_settings.get('base_url')
 
     if not confluence_base_url:
-        print("\\nReminder: Confluence base URL is not set. Page links will not be generated.")
-
-    pickle_to_load = None
+        print("Error: Confluence base URL not found in settings.ini.")
+        sys.exit(1)
 
     if args.space_key:
-        print(f"Attempting to load specified space key: {args.space_key}")
-        pickle_filename = f'{args.space_key}_full.pkl'
+        space_key_upper = args.space_key.upper()
+        # Try loading from the path derived for CLI arguments first
+        pickle_file_path_cli = os.path.join(cli_load_pickle_dir, f"{space_key_upper}_full.pkl")
         
-        # Determine path for direct load
-        base_load_path = os.path.join(OUTPUT_DIR, FULL_PICKLE_SUBDIR)
-        if remote_pickle_dir_for_direct_load and os.path.exists(remote_pickle_dir_for_direct_load) and os.path.isdir(remote_pickle_dir_for_direct_load):
-            print(f"Checking remote pickle directory for direct load: {remote_pickle_dir_for_direct_load}")
-            pickle_to_load = os.path.join(remote_pickle_dir_for_direct_load, pickle_filename)
-            if not os.path.exists(pickle_to_load):
-                print(f"Pickle not found in remote directory. Checking local: {base_load_path}")
-                pickle_to_load = os.path.join(base_load_path, pickle_filename) # Fallback to local
-        else:
-            print(f"Using local pickle directory for direct load: {base_load_path}")
-            pickle_to_load = os.path.join(base_load_path, pickle_filename)
+        # Fallback: Check remote_full_pickle_dir if specified and file not in cli_load_pickle_dir
+        remote_full_pickle_dir = settings.get('remote_full_pickle_dir')
+        pickle_file_path_remote = None
+        if remote_full_pickle_dir and os.path.isdir(remote_full_pickle_dir):
+            pickle_file_path_remote = os.path.join(remote_full_pickle_dir, f"{space_key_upper}_full.pkl")
 
-        if not os.path.exists(pickle_to_load):
-            print(f"Error: Pickle file not found at {pickle_to_load} (checked remote and local if applicable)")
-            print(f"Please ensure you have run 'python sample_and_pickle_spaces.py --pickle-space-full {args.space_key}' first, or try selecting from the list.")
-            pickle_to_load = None # Reset if not found, to allow menu selection
-            # sys.exit(1) # Don't exit, allow user to select from menu
-    
-    # Main interactive loop if no specific pickle was successfully identified via args
-    while True:
-        if pickle_to_load: # A pickle path is set (either from args or previous menu selection)
-            pass # Proceed to load this pickle
-        else: # No pickle path set, show selection menu
-            print("\n--- Main Menu ---")
-            print("1. List and select a pickled space to explore")
-            print("q. Quit")
-            top_choice = input("Enter your choice: ").strip().lower()
-
-            if top_choice == '1':
-                pickle_to_load = list_and_select_pickled_space()
-                if not pickle_to_load: # User selected 'back' or no files
-                    continue # Go back to top menu
-            elif top_choice == 'q':
-                print("Exiting.")
-                sys.exit(0)
-            else:
-                print("Invalid choice. Please try again.")
-                continue
+        actual_pickle_file_path = None
+        if os.path.exists(pickle_file_path_cli):
+            actual_pickle_file_path = pickle_file_path_cli
+            print(f"Found pickle for '{space_key_upper}' in local/default directory: {cli_load_pickle_dir}")
+        elif pickle_file_path_remote and os.path.exists(pickle_file_path_remote):
+            actual_pickle_file_path = pickle_file_path_remote
+            print(f"Found pickle for '{space_key_upper}' in remote directory: {remote_full_pickle_dir}")
         
-        # Attempt to load and explore the selected pickle
-        if pickle_to_load:
+        if actual_pickle_file_path:
             try:
-                print(f"\nLoading pickle file: {pickle_to_load}")
-                with open(pickle_to_load, 'rb') as f:
+                with open(actual_pickle_file_path, 'rb') as f:
                     pickle_data = pickle.load(f)
-                
-                # Run the explorer for the loaded data
-                run_explorer_for_space(pickle_data, confluence_base_url)
-                
-                # After returning from run_explorer_for_space (user chose 'b'), 
-                # reset pickle_to_load to show the main menu again
-                pickle_to_load = None 
-                if args.space_key: # If a space key was given via CLI, exit after exploring it once.
-                    print("Exiting after exploring command-line specified space.")
-                    sys.exit(0)
-
-            except FileNotFoundError: # Should be caught earlier if from args, but good for safety
-                 print(f"Error: Selected pickle file not found at {pickle_to_load}")
-                 pickle_to_load = None # Reset to allow re-selection
+                space_display_name = pickle_data.get('name', pickle_data.get('space_key', 'Unknown Space'))
+                space_key_display = pickle_data.get('space_key', 'N/A')
+                print(f"Loaded data for space: {space_display_name} ({space_key_display})")
+                run_explorer_for_space(pickle_data, confluence_base_url) # <--- MODIFIED HERE
             except Exception as e:
-                print(f"Error loading or processing pickle file {pickle_to_load}: {e}")
-                pickle_to_load = None # Reset to allow re-selection
-            
-            # If args.space_key was provided and we've processed it, we should exit.
-            # The loop continues only for interactive menu mode.
-            if args.space_key and pickle_to_load is None: # Check if it was reset after processing
-                 break # Exit the while True loop, and thus main()
+                print(f"Error loading pickle file {actual_pickle_file_path}: {e}")
+                sys.exit(1)
+        else:
+            print(f"Pickle file for space key '{space_key_upper}' not found in specified local ('{cli_load_pickle_dir}') or remote ('{remote_full_pickle_dir or 'Not configured'}') directories.")
+            # Fall through to listing available spaces
+            selected_pickle_file = list_and_select_pickled_space() # This handles remote dir logic internally
+            if selected_pickle_file:
+                try:
+                    with open(selected_pickle_file, 'rb') as f:
+                        pickle_data = pickle.load(f)
+                    space_display_name = pickle_data.get('name', pickle_data.get('space_key', 'Unknown Space'))
+                    space_key_display = pickle_data.get('space_key', 'N/A')
+                    print(f"Loaded data for space: {space_display_name} ({space_key_display})")
+                    run_explorer_for_space(pickle_data, confluence_base_url) # <--- MODIFIED HERE
+                except Exception as e:
+                    print(f"Error loading selected pickle file {selected_pickle_file}: {e}")
+                    sys.exit(1)
+            else:
+                print("No space selected. Exiting.")
+                sys.exit(0)
+    else:
+        selected_pickle_file = list_and_select_pickled_space() # This handles remote dir logic internally
+        if selected_pickle_file:
+            try:
+                with open(selected_pickle_file, 'rb') as f:
+                    pickle_data = pickle.load(f)
+                space_display_name = pickle_data.get('name', pickle_data.get('space_key', 'Unknown Space'))
+                space_key_display = pickle_data.get('space_key', 'N/A')
+                print(f"Loaded data for space: {space_display_name} ({space_key_display})")
+                run_explorer_for_space(pickle_data, confluence_base_url) # <--- MODIFIED HERE
+            except Exception as e:
+                print(f"Error loading selected pickle file {selected_pickle_file}: {e}")
+                sys.exit(1)
+        else:
+            print("No space selected. Exiting.")
+            sys.exit(0)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
