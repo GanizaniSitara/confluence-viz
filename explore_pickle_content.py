@@ -149,7 +149,11 @@ def display_page_content(page, confluence_base_url, view_mode, cleaned_text_cont
     parent_id = page.get('parent_id', 'N/A')
     update_count = page.get('update_count', 'N/A')
 
-    print(f"\n--- Page: {title} (ID: {page_id}) ---")
+    terminal_width = shutil.get_terminal_size().columns
+    delimiter_line = '=' * terminal_width
+
+    print(f"\n{delimiter_line}") # Extra newline and full width delimiter
+    print(f"--- Page: {title} (ID: {page_id}) ---")
     print(f"Space Key: {space_key}")
     print(f"Last Updated: {updated}")
     print(f"Content Length (raw): {content_length} characters")
@@ -190,7 +194,7 @@ def display_page_content(page, confluence_base_url, view_mode, cleaned_text_cont
         print("\n--- Cleaned Text Content (Full) ---")
         print(cleaned_text_content if cleaned_text_content else "[NO CONTENT AFTER CLEANING or NO RAW CONTENT]")
     
-    print("--- End of Page ---")
+    print(f"\n{delimiter_line}") # Extra newline and full width delimiter
 
 def page_explorer(pickle_data, confluence_base_url):
     """Allows interactive exploration of pages within the pickle."""
