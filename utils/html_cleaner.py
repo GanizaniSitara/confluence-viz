@@ -52,6 +52,49 @@ def get_jira_placeholder(macro_tag: Tag) -> str:
         pass
     return '[JIRA ISSUE]'
 
+def _format_table_for_console(table_tag: Tag) -> str:
+    """Formats a BeautifulSoup table Tag into a simple text-based table for console output."""
+    output_lines = []
+    rows = table_tag.find_all('tr')
+    if not rows:
+        return "[TABLE DATA (empty)]"
+
+    # Determine column widths (very basic, assumes all rows have same number of cells as first row)
+    # and extracts cell data.
+    first_row_cells = rows[0].find_all(['td', 'th'])
+    if not first_row_cells:
+        return "[TABLE DATA (no cells in first row)]"
+    
+    num_cols = len(first_row_cells)
+    col_widths = [0] * num_cols
+    table_data = []
+
+    for row_idx, row in enumerate(rows):
+        cells = row.find_all(['td', 'th'])
+        row_data = []
+        for i in range(num_cols):
+            if i < len(cells):
+                cell_text = cells[i].get_text(separator=' ', strip=True)
+                row_data.append(cell_text)
+                col_widths[i] = max(col_widths[i], len(cell_text))
+            else:
+                row_data.append("") # Handle rows with fewer cells than header
+        table_data.append(row_data)
+
+    # Create the formatted table string
+    header_separator = "-" * (sum(col_widths) + (num_cols * 3) - 1) # +3 for ' | ' separator
+
+    for row_idx, row_data in enumerate(table_data):
+        line_parts = []
+        for i in range(num_cols):
+            line_parts.append(row_data[i].ljust(col_widths[i]))
+        output_lines.append(" | ".join(line_parts))
+        if row_idx == 0 and any(c.name == 'th' for c in rows[0].find_all(True, recursive=False)):
+             # Add a separator after the header row if it contains <th> elements
+            output_lines.append(header_separator)
+    
+    return "\n[TABLE_START]\n" + "\n".join(output_lines) + "\n[TABLE_END]\n"
+
 def clean_confluence_html(html_content: str) -> str:
     """
     Cleans Confluence HTML content by removing/replacing specific macros 
@@ -84,6 +127,11 @@ def clean_confluence_html(html_content: str) -> str:
             placeholder_tag = soup.new_string(placeholder_text)
             macro.replace_with(placeholder_tag)
             continue
+
+    # Handle tables before general text extraction
+    for table in soup.find_all('table'):
+        table_text_representation = _format_table_for_console(table)
+        table.replace_with(soup.new_string(table_text_representation))
         
     for hr_tag in soup.find_all('hr'):
         hr_tag.replace_with(soup.new_string(' ---HR_PLACEHOLDER--- '))
