@@ -3,8 +3,9 @@ import pickle
 import os
 import sys
 import numpy as np # For calculating mean, ignoring NaNs
-from config_loader import load_visualization_settings # Added import
+from config_loader import load_visualization_settings, load_confluence_settings # Added load_confluence_settings
 from datetime import datetime # Added for parsing dates if needed, though string comparison works for ISO
+from utils.html_cleaner import clean_confluence_html # Added import
 
 OUTPUT_DIR = 'temp'
 FULL_PICKLE_SUBDIR = 'full_pickles' # New line
@@ -127,6 +128,112 @@ def analyze_pickle(pickle_data, confluence_base_url): # Modified arguments
             print("\nNo pages with update count information found.")
 
 
+def display_page_content(page, confluence_base_url, show_full_content=False, cleaned_text=None): # Added cleaned_text argument
+    """Displays the content of a single page."""
+    page_id = page.get('id', 'N/A')
+    title = page.get('title', 'N/A')
+    updated = page.get('updated', 'N/A')
+    content_length = len(page.get('body', ''))
+    space_key = page.get('space_key', 'N/A')
+    level = page.get('level', 'N/A')
+    parent_id = page.get('parent_id', 'N/A')
+    update_count = page.get('update_count', 'N/A')
+
+    print(f"\n--- Page: {title} (ID: {page_id}) ---")
+    print(f"Space Key: {space_key}")
+    print(f"Last Updated: {updated}")
+    print(f"Content Length: {content_length} characters")
+    print(f"Version (Update Count): {update_count}")
+    print(f"Hierarchy Level: {level}")
+    print(f"Parent ID: {parent_id}")
+    
+    if confluence_base_url and page_id != 'N/A':
+        page_url = f"{confluence_base_url}/pages/viewpage.action?pageId={page_id}"
+        print(f"Link: {page_url}")
+
+    body = page.get('body', '')
+    if cleaned_text is not None:
+        print("\n--- Cleaned Content ---")
+        print(cleaned_text if cleaned_text else "[NO CONTENT AFTER CLEANING]")
+    elif show_full_content:
+        print("\n--- Full Content ---")
+        print(body if body else "[NO CONTENT]")
+    else:
+        snippet_length = 200
+        snippet = body[:snippet_length] + ('...' if len(body) > snippet_length else '')
+        print("\n--- Content Snippet ---")
+        print(snippet if snippet else "[NO CONTENT]")
+    print("--- End of Page ---")
+
+
+def page_explorer(pickle_data, confluence_base_url):
+    """Allows interactive exploration of pages within the pickle."""
+    sampled_pages = pickle_data.get('sampled_pages', [])
+    if not sampled_pages:
+        print("No pages to explore in this pickle.")
+        return
+
+    num_pages = len(sampled_pages)
+    current_page_index = 0
+    view_mode = 'snippet' # 'snippet', 'full', 'cleaned'
+    current_cleaned_text = None # Cache for cleaned text of the current page
+
+    while True:
+        page = sampled_pages[current_page_index]
+        
+        if view_mode == 'cleaned':
+            if current_cleaned_text is None: # Clean only if not already cleaned for this page view
+                raw_html_body = page.get('body', '')
+                current_cleaned_text = clean_confluence_html(raw_html_body)
+            display_page_content(page, confluence_base_url, cleaned_text=current_cleaned_text)
+        elif view_mode == 'full':
+            display_page_content(page, confluence_base_url, show_full_content=True)
+        else: # snippet
+            display_page_content(page, confluence_base_url, show_full_content=False)
+        
+        print(f"\nPage {current_page_index + 1} of {num_pages}")
+        prompt = f"Options: (n)ext, (p)revious, (j)ump, (f)ull/snippet raw, (c)leaned text, (q)uit explorer [View: {view_mode}]: "
+        action = input(prompt).strip().lower()
+
+        if action == 'n':
+            current_page_index = min(current_page_index + 1, num_pages - 1)
+            view_mode = 'snippet' # Default to snippet for new page
+            current_cleaned_text = None # Reset cleaned text cache
+        elif action == 'p':
+            current_page_index = max(current_page_index - 1, 0)
+            view_mode = 'snippet' # Default to snippet for new page
+            current_cleaned_text = None # Reset cleaned text cache
+        elif action == 'j':
+            try:
+                page_num_str = input(f"Enter page number (1-{num_pages}): ")
+                page_num = int(page_num_str)
+                if 1 <= page_num <= num_pages:
+                    current_page_index = page_num - 1
+                    view_mode = 'snippet' # Default to snippet for new page
+                    current_cleaned_text = None # Reset cleaned text cache
+                else:
+                    print("Invalid page number.")
+            except ValueError:
+                print("Invalid input. Please enter a number.")
+        elif action == 'f':
+            if view_mode == 'full':
+                view_mode = 'snippet'
+            else:
+                view_mode = 'full'
+            print(f"Displaying {view_mode} raw HTML.")
+        elif action == 'c':
+            if view_mode == 'cleaned':
+                view_mode = 'snippet' # Toggle back to snippet if already cleaned
+                print("Displaying snippet raw HTML.")
+            else:
+                view_mode = 'cleaned'
+                print("Displaying cleaned text.")
+        elif action == 'q':
+            break
+        else:
+            print("Invalid option.")
+
+
 def print_content_size_bar_chart(pickle_data):
     """Prints a text-based bar chart of page content sizes in KB."""
     sampled_pages = pickle_data.get('sampled_pages', [])
@@ -134,7 +241,7 @@ def print_content_size_bar_chart(pickle_data):
         print("No page data found in the pickle to generate a bar chart.")
         return
 
-    print("\\n--- Content Size per Page (KB) ---")
+    print("\n--- Content Size per Page (KB) ---")
     
     page_sizes_kb = []
     for page in sampled_pages:
@@ -167,7 +274,7 @@ def print_content_size_bar_chart(pickle_data):
         
         print(f"{display_title:<{max_title_len}} | {bar} ({size_kb:.2f} KB)")
 
-    print("\\nNote: Bar length is proportional to content size.")
+    print("\nNote: Bar length is proportional to content size.")
 
 
 def print_content_size_list_sorted(pickle_data, smallest_first=True):
@@ -178,7 +285,7 @@ def print_content_size_list_sorted(pickle_data, smallest_first=True):
         return
 
     sort_order = "Smallest to Largest" if smallest_first else "Largest to Smallest"
-    print(f"\\n--- Content Size per Page (KB) - Sorted: {sort_order} ---")
+    print(f"\n--- Content Size per Page (KB) - Sorted: {sort_order} ---")
     
     page_sizes_kb = []
     for page in sampled_pages:
@@ -207,46 +314,87 @@ def print_content_size_list_sorted(pickle_data, smallest_first=True):
         print(f"{display_title:<{max_title_len}} (ID: {page_id}) - {size_kb:.2f} KB")
 
 
-def main():
-    parser = argparse.ArgumentParser(description='Analyze a "full" pickle file generated for a Confluence space.')
-    parser.add_argument('space_key', type=str, help='The space key for which to analyze the _full.pkl file.')
-    args = parser.parse_args()
-
-    pickle_filename = f'{args.space_key}_full.pkl'
-    pickle_path = os.path.join(OUTPUT_DIR, FULL_PICKLE_SUBDIR, pickle_filename)
-
-    if not os.path.exists(pickle_path):
-        print(f"Error: Pickle file not found at {pickle_path}")
-        print(f"Please ensure you have run 'python sample_and_pickle_spaces.py --pickle-space-full {args.space_key}' first.")
-        sys.exit(1)
-
-    try:
-        with open(pickle_path, 'rb') as f:
-            pickle_data = pickle.load(f)
-    except Exception as e:
-        print(f"Error loading pickle file {pickle_path}: {e}")
-        sys.exit(1)
-
-    # Load Confluence base URL for links
-    confluence_base_url = None
+def list_and_select_pickled_space():
+    """Lists available _full.pkl files and allows user to select one by number or space key."""
+    # Determine the directory to scan for pickles
+    pickle_dir_to_scan = os.path.join(OUTPUT_DIR, FULL_PICKLE_SUBDIR) # Default local path
+    remote_pickle_dir = None
     try:
         viz_settings = load_visualization_settings()
-        confluence_base_url = viz_settings.get('confluence_base_url')
-        if not confluence_base_url:
-            print("\\nWarning: Confluence base URL not found in settings. Links in statistics might not be generated.")
-    except FileNotFoundError:
-        print("\\nWarning: settings.ini not found. Links in statistics might not be generated.")
+        remote_pickle_dir = viz_settings.get('remote_full_pickle_dir')
     except Exception as e:
-        print(f"\\nWarning: Error loading visualization settings: {e}. Links in statistics might not be generated.")
+        print(f"Warning: Could not load remote_full_pickle_dir from settings: {e}")
+
+    if remote_pickle_dir and os.path.exists(remote_pickle_dir) and os.path.isdir(remote_pickle_dir):
+        print(f"Using remote pickle directory from settings: {remote_pickle_dir}")
+        pickle_dir_to_scan = remote_pickle_dir
+    elif remote_pickle_dir:
+        print(f"Warning: remote_full_pickle_dir '{remote_pickle_dir}' not found or not a directory. Falling back to local path: {pickle_dir_to_scan}")
+    else:
+        print(f"Using local pickle directory: {pickle_dir_to_scan}")
+
+    if not os.path.exists(pickle_dir_to_scan):
+        print(f"Directory not found: {pickle_dir_to_scan}")
+        print("Please ensure spaces have been pickled using the '--pickle-space-full' or '--pickle-all-spaces-full' options")
+        print("in the sample_and_pickle_spaces.py script, or check your remote_full_pickle_dir setting.")
+        return None
+
+    pickle_files = [f for f in os.listdir(pickle_dir_to_scan) if f.endswith("_full.pkl")]
+
+    if not pickle_files:
+        print(f"No '*_full.pkl' files found in {pickle_dir_to_scan}.")
+        return None
+
+    print(f"\n--- Available Pickled Spaces in {pickle_dir_to_scan} ---")
+    spaces = []
+    for i, filename in enumerate(pickle_files):
+        space_key = filename.replace("_full.pkl", "")
+        spaces.append({'key': space_key, 'filename': filename, 'number': i + 1})
+        print(f"{i + 1}. {space_key}")
+    
+    print("q. Quit to main menu") # Changed from 'b. Back to main menu'
 
     while True:
-        print("\\n--- Pickle Explorer Menu ---")
-        print(f"Space: {pickle_data.get('space_key', 'N/A')} - {pickle_data.get('name', 'N/A')}")
+        choice_str = input("Select a space by number or space key (or 'q' to quit to main menu): ").strip() # Changed prompt
+        if choice_str.lower() == 'q': # Changed from 'b'
+            return None
+        
+        # Try to match by space key first (case-insensitive)
+        selected_space = next((s for s in spaces if s['key'].lower() == choice_str.lower()), None)
+        
+        if selected_space:
+            return os.path.join(pickle_dir_to_scan, selected_space['filename'])
+
+        # If not matched by key, try by number
+        try:
+            choice_idx = int(choice_str) - 1
+            if 0 <= choice_idx < len(spaces):
+                selected_space = spaces[choice_idx]
+                return os.path.join(pickle_dir_to_scan, selected_space['filename'])
+            else:
+                print("Invalid number. Please try again.")
+        except ValueError:
+            # Input was not a number and not a recognized space key
+            print("Invalid input. Please enter a number, a valid space key, or 'q'.") # Changed prompt in error message
+
+
+def run_explorer_for_space(pickle_data, confluence_base_url):
+    """Runs the main explorer menu loop for the loaded pickle data."""
+    while True:
+        print("\n--- Pickle Explorer Menu ---")
+        space_key_display = pickle_data.get('space_key', 'N/A')
+        space_name_display = pickle_data.get('name', 'N/A')
+        # Handle cases where name might be None or empty, more gracefully
+        if not space_name_display or str(space_name_display).strip() == "":
+            space_name_display = "(Name not available)"
+        
+        print(f"Space: {space_key_display} - {space_name_display}")
         print("1. Display Page Statistics")
         print("2. Display Content Size Bar Chart (KB)")
         print("3. List Pages by Size (Smallest to Largest)")
         print("4. List Pages by Size (Largest to Smallest)")
-        print("q. Quit")
+        print("5. Explore Pages (Paginator)")
+        print("q. Quit to main menu / Select another space") # Changed from 'b.'
         choice = input("Enter your choice: ").strip().lower()
 
         if choice == '1':
@@ -257,11 +405,123 @@ def main():
             print_content_size_list_sorted(pickle_data, smallest_first=True)
         elif choice == '4':
             print_content_size_list_sorted(pickle_data, smallest_first=False)
-        elif choice == 'q':
-            print("Exiting.")
+        elif choice == '5':
+            page_explorer(pickle_data, confluence_base_url)
+        elif choice == 'q': # Changed from 'b'
+            print("Returning to main menu...")
             break
         else:
             print("Invalid choice. Please try again.")
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Analyze a "full" pickle file generated for a Confluence space.')
+    # Make space_key argument optional
+    parser.add_argument('space_key', type=str, nargs='?', default=None, 
+                        help='Optional: The space key for which to analyze the _full.pkl file directly.')
+    args = parser.parse_args()
+
+    confluence_base_url = None
+    remote_pickle_dir_for_direct_load = None
+
+    try:
+        confluence_settings = load_confluence_settings()
+        confluence_base_url = confluence_settings.get('base_url')
+    except FileNotFoundError:
+        print("\\nWarning: settings.ini not found. Confluence base URL could not be loaded. Links in statistics might not be generated.")
+    except Exception as e:
+        print(f"\\nWarning: Error loading Confluence settings: {e}. Links in statistics might not be generated.")
+
+    try:
+        viz_settings = load_visualization_settings()
+        # confluence_base_url = viz_settings.get('confluence_base_url') # Removed, loaded from confluence_settings now
+        remote_pickle_dir_for_direct_load = viz_settings.get('remote_full_pickle_dir')
+        # if not confluence_base_url: # This check is now implicitly handled by the first try-except
+        #     print("\\nWarning: Confluence base URL not found in settings. Links in statistics might not be generated.")
+    except FileNotFoundError:
+        # This specific warning for viz_settings might be redundant if settings.ini is already checked by load_confluence_settings
+        # However, keeping it in case load_confluence_settings succeeds but load_visualization_settings has a specific issue
+        # or if load_confluence_settings is skipped due to an early exit/error.
+        print("\\nWarning: settings.ini not found (when loading visualization settings).")
+    except Exception as e:
+        print(f"\\nWarning: Error loading visualization settings: {e}.")
+
+    if not confluence_base_url:
+        print("\\nReminder: Confluence base URL is not set. Page links will not be generated.")
+
+    pickle_to_load = None
+
+    if args.space_key:
+        print(f"Attempting to load specified space key: {args.space_key}")
+        pickle_filename = f'{args.space_key}_full.pkl'
+        
+        # Determine path for direct load
+        base_load_path = os.path.join(OUTPUT_DIR, FULL_PICKLE_SUBDIR)
+        if remote_pickle_dir_for_direct_load and os.path.exists(remote_pickle_dir_for_direct_load) and os.path.isdir(remote_pickle_dir_for_direct_load):
+            print(f"Checking remote pickle directory for direct load: {remote_pickle_dir_for_direct_load}")
+            pickle_to_load = os.path.join(remote_pickle_dir_for_direct_load, pickle_filename)
+            if not os.path.exists(pickle_to_load):
+                print(f"Pickle not found in remote directory. Checking local: {base_load_path}")
+                pickle_to_load = os.path.join(base_load_path, pickle_filename) # Fallback to local
+        else:
+            print(f"Using local pickle directory for direct load: {base_load_path}")
+            pickle_to_load = os.path.join(base_load_path, pickle_filename)
+
+        if not os.path.exists(pickle_to_load):
+            print(f"Error: Pickle file not found at {pickle_to_load} (checked remote and local if applicable)")
+            print(f"Please ensure you have run 'python sample_and_pickle_spaces.py --pickle-space-full {args.space_key}' first, or try selecting from the list.")
+            pickle_to_load = None # Reset if not found, to allow menu selection
+            # sys.exit(1) # Don't exit, allow user to select from menu
+    
+    # Main interactive loop if no specific pickle was successfully identified via args
+    while True:
+        if pickle_to_load: # A pickle path is set (either from args or previous menu selection)
+            pass # Proceed to load this pickle
+        else: # No pickle path set, show selection menu
+            print("\n--- Main Menu ---")
+            print("1. List and select a pickled space to explore")
+            print("q. Quit")
+            top_choice = input("Enter your choice: ").strip().lower()
+
+            if top_choice == '1':
+                pickle_to_load = list_and_select_pickled_space()
+                if not pickle_to_load: # User selected 'back' or no files
+                    continue # Go back to top menu
+            elif top_choice == 'q':
+                print("Exiting.")
+                sys.exit(0)
+            else:
+                print("Invalid choice. Please try again.")
+                continue
+        
+        # Attempt to load and explore the selected pickle
+        if pickle_to_load:
+            try:
+                print(f"\nLoading pickle file: {pickle_to_load}")
+                with open(pickle_to_load, 'rb') as f:
+                    pickle_data = pickle.load(f)
+                
+                # Run the explorer for the loaded data
+                run_explorer_for_space(pickle_data, confluence_base_url)
+                
+                # After returning from run_explorer_for_space (user chose 'b'), 
+                # reset pickle_to_load to show the main menu again
+                pickle_to_load = None 
+                if args.space_key: # If a space key was given via CLI, exit after exploring it once.
+                    print("Exiting after exploring command-line specified space.")
+                    sys.exit(0)
+
+            except FileNotFoundError: # Should be caught earlier if from args, but good for safety
+                 print(f"Error: Selected pickle file not found at {pickle_to_load}")
+                 pickle_to_load = None # Reset to allow re-selection
+            except Exception as e:
+                print(f"Error loading or processing pickle file {pickle_to_load}: {e}")
+                pickle_to_load = None # Reset to allow re-selection
+            
+            # If args.space_key was provided and we've processed it, we should exit.
+            # The loop continues only for interactive menu mode.
+            if args.space_key and pickle_to_load is None: # Check if it was reset after processing
+                 break # Exit the while True loop, and thus main()
 
 if __name__ == '__main__':
     main()

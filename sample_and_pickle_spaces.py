@@ -425,34 +425,174 @@ def main():
         print("\nConfluence Space Sampler and Pickler") # Corrected to \n
         print("------------------------------------")
         print("This script samples pages from Confluence spaces and saves them locally (standard mode),")
-        print("or pickles all pages from a single specified space (full pickle mode).") # Added line
+        print("or pickles all pages from a single specified space or all spaces (full pickle modes).") # Updated line
         print("Standard mode uses a checkpoint file (confluence_checkpoint.json) to resume progress.")
+        print("Full pickle modes for all spaces use a separate checkpoint (confluence_full_pickle_checkpoint.json).") # New line
         print("\nAvailable command-line options for non-interactive use:") # Corrected to \n
-        print("  --reset                       : Clears all previous progress and starts fresh (standard mode).") # Updated help
-        print("  --batch-continue              : Skips this menu and continues from the last checkpoint (standard mode).") # Updated help
+        print("  --reset                       : Clears all previous progress and starts fresh (standard sampling mode).") # Updated help
+        print("  --batch-continue              : Skips this menu and continues from the last checkpoint (standard sampling mode).") # Updated help
         print("  --pickle-space-full SPACE_KEY : Pickles all pages for a single space. Saves to temp/full_pickles/.")
         print("  --pickle-all-spaces-full      : Pickles all pages for ALL non-user spaces. Saves to temp/full_pickles/.") # New help line
-        print("                                  Bypasses sampling, checkpointing, and this interactive menu.") # Added help
+        print("                                  Uses its own checkpoint and bypasses sampling and this interactive menu.") # Updated help
         print("------------------------------------\n") # Corrected to \n
         while True:
-            choice = input("Choose an action for standard sampling mode:\n" # Updated prompt
-                           "  1: Continue with existing progress (uses checkpoint)\n"
-                           "  2: Reset and start from beginning (deletes checkpoint)\n"
+            choice = input("Choose an action:\n" # Updated prompt
+                           "  1: Continue with existing progress (standard sampling mode, uses checkpoint)\n"
+                           "  2: Reset and start from beginning (standard sampling mode, deletes checkpoint)\n"
+                           "  3: Pickle all pages for a single space (e.g., DOC). Saves to temp/full_pickles/\n"
+                           "  4: Pickle all pages for ALL non-user spaces. Saves to temp/full_pickles/ (uses its own checkpoint)\n"
                            "  q: Quit\n"
-                           "Enter choice (1, 2, or q): ").strip().lower()
+                           "Enter choice (1, 2, 3, 4, or q): ").strip().lower()
             if choice == '1':
                 perform_reset = False
-                print("Mode: Continuing with existing progress.")
+                print("Mode: Continuing with existing progress (standard sampling).")
                 break
             elif choice == '2':
                 perform_reset = True
-                print("Mode: Resetting and starting from beginning.")
+                print("Mode: Resetting and starting from beginning (standard sampling).")
                 break
+            elif choice == '3':
+                target_space_key_interactive = input("Enter the SPACE_KEY to pickle in full: ").strip().upper()
+                if not target_space_key_interactive:
+                    print("No space key provided. Please try again.")
+                    continue
+                # Simulate args for --pickle-space-full
+                args.pickle_space_full = target_space_key_interactive
+                # Call the relevant part of main or refactor to a function
+                print(f"Mode: Pickling all pages for space: {args.pickle_space_full}")
+
+                # Fetch space details to get the name
+                space_details_url = f"{BASE_URL}{API_ENDPOINT}/space/{args.pickle_space_full}"
+                print(f"  Fetching details for space {args.pickle_space_full} from {space_details_url}...")
+                sd_r = get_with_retry(space_details_url, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
+                space_name_for_pickle = "N/A (Full Pickle)"
+                if sd_r.status_code == 200:
+                    try:
+                        space_name_for_pickle = sd_r.json().get('name', space_name_for_pickle)
+                    except requests.exceptions.JSONDecodeError:
+                        print(f"  Warning: Could not parse JSON response for space details of {args.pickle_space_full}. Response: {sd_r.text}")
+                else:
+                    print(f"  Warning: Could not fetch space name for {args.pickle_space_full}. Status: {sd_r.status_code}")
+
+                print(f"  Processing space: {args.pickle_space_full} (Name: {space_name_for_pickle})")
+                pages_metadata = fetch_page_metadata(args.pickle_space_full)
+
+                if not pages_metadata:
+                    print(f"  No pages found for space {args.pickle_space_full} or error fetching metadata. Exiting.")
+                    sys.exit(1)
+
+                pages_with_bodies, total_pages_metadata = sample_and_fetch_bodies(args.pickle_space_full, pages_metadata, fetch_all=True)
+
+                out_filename = f'{args.pickle_space_full}_full.pkl'
+                out_path = os.path.join(FULL_PICKLE_OUTPUT_DIR, out_filename)
+                try:
+                    with open(out_path, 'wb') as f:
+                        pickle.dump({
+                            'space_key': args.pickle_space_full,
+                            'name': space_name_for_pickle,
+                            'sampled_pages': pages_with_bodies,
+                            'total_pages_in_space': total_pages_metadata
+                        }, f)
+                    print(f'  Successfully wrote {len(pages_with_bodies)} pages for space {args.pickle_space_full} to {out_path} (total pages in space: {total_pages_metadata})')
+                except IOError as e:
+                    print(f"  Error writing pickle file {out_path}: {e}")
+                    sys.exit(1)
+                except Exception as e:
+                    print(f"  An unexpected error occurred during pickling for space {args.pickle_space_full}: {e}")
+                    sys.exit(1)
+                sys.exit(0) # Exit after this action
+            elif choice == '4':
+                # Simulate args for --pickle-all-spaces-full
+                args.pickle_all_spaces_full = True
+                # Call the relevant part of main or refactor to a function
+                print(f"Mode: Pickling all pages for ALL non-user spaces (using checkpoint: {FULL_PICKLE_CHECKPOINT_FILE}).")
+        
+                checkpoint = load_checkpoint(FULL_PICKLE_CHECKPOINT_FILE)
+                processed_space_keys_set = set(checkpoint.get("processed_space_keys", []))
+
+                all_non_user_spaces = fetch_all_spaces_with_details(auth_details=(USERNAME, PASSWORD), verify_ssl_cert=VERIFY_SSL)
+
+                if not all_non_user_spaces:
+                    print("No non-user spaces found to process. Exiting.")
+                    sys.exit(0)
+
+                current_api_space_keys = sorted([s['key'] for s in all_non_user_spaces if s.get('key')])
+                
+                if sorted(checkpoint.get("all_fetched_space_keys", [])) != current_api_space_keys:
+                    print("Warning: The list of spaces from Confluence API has changed since the last run or checkpoint is new.")
+                    print("Resetting processed spaces list for this mode to ensure all current spaces are considered.")
+                    checkpoint["all_fetched_space_keys"] = current_api_space_keys
+                    checkpoint["processed_space_keys"] = []
+                    processed_space_keys_set = set()
+                    save_checkpoint(checkpoint, FULL_PICKLE_CHECKPOINT_FILE)
+                
+                print(f"Found {len(all_non_user_spaces)} non-user spaces. {len(processed_space_keys_set)} already processed according to checkpoint.")
+                
+                spaces_to_actually_process = [s for s in all_non_user_spaces if s.get('key') not in processed_space_keys_set]
+
+                if not spaces_to_actually_process:
+                    print("All non-user spaces have already been processed according to the checkpoint. Exiting.")
+                    sys.exit(0)
+                    
+                print(f"Attempting to process {len(spaces_to_actually_process)} remaining non-user spaces.")
+
+                overall_processed_count = len(processed_space_keys_set)
+                newly_processed_this_run = 0
+                failed_this_run = 0
+
+                for space_info in spaces_to_actually_process:
+                    target_space_key = space_info.get('key')
+                    space_name_for_pickle = space_info.get('name', "N/A (Full Pickle)")
+                    
+                    if not target_space_key:
+                        print(f"  Warning: Found a space without a key during iteration. Skipping: {space_info}")
+                        failed_this_run += 1
+                        continue
+
+                    print(f"  Processing space: {target_space_key} (Name: {space_name_for_pickle})")
+                    
+                    try:
+                        pages_metadata = fetch_page_metadata(target_space_key)
+
+                        if not pages_metadata:
+                            print(f"  No pages found for space {target_space_key} or error fetching metadata. Skipping.")
+                            failed_this_run +=1
+                            continue
+
+                        pages_with_bodies, total_pages_metadata = sample_and_fetch_bodies(target_space_key, pages_metadata, fetch_all=True)
+
+                        out_filename = f'{target_space_key}_full.pkl'
+                        out_path = os.path.join(FULL_PICKLE_OUTPUT_DIR, out_filename)
+                        
+                        with open(out_path, 'wb') as f:
+                            pickle.dump({
+                                'space_key': target_space_key,
+                                'name': space_name_for_pickle,
+                                'sampled_pages': pages_with_bodies,
+                                'total_pages_in_space': total_pages_metadata
+                            }, f)
+                        print(f'  Successfully wrote {len(pages_with_bodies)} pages for space {target_space_key} to {out_path} (total pages in space: {total_pages_metadata})')
+                        
+                        checkpoint["processed_space_keys"].append(target_space_key)
+                        save_checkpoint(checkpoint, FULL_PICKLE_CHECKPOINT_FILE)
+                        newly_processed_this_run += 1
+                    except Exception as e:
+                        print(f"  An unexpected error occurred during pickling for space {target_space_key}: {e}")
+                        failed_this_run += 1
+                
+                overall_processed_count += newly_processed_this_run
+                print(f"\nFinished pickling all non-user spaces for this run.")
+                print(f"Total successfully processed (including previous runs): {overall_processed_count} spaces based on checkpoint.")
+                print(f"Newly processed in this run: {newly_processed_this_run} spaces.")
+                print(f"Failed to process in this run: {failed_this_run} spaces.")
+                if failed_this_run > 0:
+                    print("Rerun the script to attempt processing failed spaces.")
+                sys.exit(0) # Exit after this action
             elif choice == 'q':
                 print("Exiting script.")
                 sys.exit(0) # Exit gracefully
             else:
-                print("Invalid choice. Please enter 1, 2, or q.")
+                print("Invalid choice. Please enter 1, 2, 3, 4, or q.")
     
     # --- Checkpoint handling ---
     if perform_reset and os.path.exists(CHECKPOINT_FILE):
