@@ -3,6 +3,7 @@ import pickle
 import os
 import sys
 import numpy as np # For calculating mean, ignoring NaNs
+import shutil # Added for getting terminal size
 from config_loader import load_visualization_settings, load_confluence_settings # Added load_confluence_settings
 from datetime import datetime # Added for parsing dates if needed, though string comparison works for ISO
 from utils.html_cleaner import clean_confluence_html # Added import
@@ -350,32 +351,51 @@ def list_and_select_pickled_space():
     for i, filename in enumerate(pickle_files):
         space_key = filename.replace("_full.pkl", "")
         spaces.append({'key': space_key, 'filename': filename, 'number': i + 1})
-        print(f"{i + 1}. {space_key}")
     
-    print("q. Quit to main menu") # Changed from 'b. Back to main menu'
+    # Sort spaces by key for consistent ordering
+    spaces.sort(key=lambda s: s['key'])
+    # Re-assign numbers after sorting if necessary, though selection logic uses key or original index if not re-numbered
+    # For display, we'll use the sorted order and their new index + 1 for numbering in the list.
+
+    terminal_width = shutil.get_terminal_size().columns
+    item_width = 20  # Approximate width for "123. SPACEXYZ      "
+    num_columns = max(1, terminal_width // item_width)
+
+    for i in range(0, len(spaces), num_columns):
+        line_items = []
+        for j in range(num_columns):
+            if i + j < len(spaces):
+                space = spaces[i+j]
+                # Use original number for selection, but display based on sorted order index for clarity
+                display_number = i + j + 1 
+                item_text = f"{display_number}. {space['key']}"
+                line_items.append(f"{item_text:<{item_width-1}}") # -1 for a space between columns
+            else:
+                line_items.append(" " * (item_width-1))
+        print(" ".join(line_items))
+    
+    print("q. Quit to main menu")
 
     while True:
-        choice_str = input("Select a space by number or space key (or 'q' to quit to main menu): ").strip() # Changed prompt
-        if choice_str.lower() == 'q': # Changed from 'b'
+        choice_str = input("Select a space by number (from the list above) or space key (or 'q' to quit to main menu): ").strip()
+        if choice_str.lower() == 'q':
             return None
         
-        # Try to match by space key first (case-insensitive)
         selected_space = next((s for s in spaces if s['key'].lower() == choice_str.lower()), None)
         
         if selected_space:
             return os.path.join(pickle_dir_to_scan, selected_space['filename'])
 
-        # If not matched by key, try by number
         try:
-            choice_idx = int(choice_str) - 1
+            # Adjust choice_idx to match the displayed number which is 1-based index of the sorted list
+            choice_idx = int(choice_str) - 1 
             if 0 <= choice_idx < len(spaces):
-                selected_space = spaces[choice_idx]
+                selected_space = spaces[choice_idx] # Use the index from the sorted list
                 return os.path.join(pickle_dir_to_scan, selected_space['filename'])
             else:
                 print("Invalid number. Please try again.")
         except ValueError:
-            # Input was not a number and not a recognized space key
-            print("Invalid input. Please enter a number, a valid space key, or 'q'.") # Changed prompt in error message
+            print("Invalid input. Please enter a number (from the list), a valid space key, or 'q'.")
 
 
 def run_explorer_for_space(pickle_data, confluence_base_url):
