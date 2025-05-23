@@ -638,7 +638,8 @@ def main():
         print(f"                                  Uses its own checkpoint ({FULL_PICKLE_CHECKPOINT_FILENAME}) and bypasses sampling and this interactive menu.") # Updated help
         print("  --list-spaces                 : Lists all non-user spaces (key, name, description) to the console and exits.") # MODIFIED HELP
         print("  --list-space-keys             : Lists only the keys of all non-user spaces to the console and exits.") # NEW HELP LINE
-        print("------------------------------------\n") # Corrected to \n
+        print("  --download-attachments        : When used with --pickle-space-full or --pickle-all-spaces-full, downloads attachments.") # NEW HELP LINE FOR INTERACTIVE MODE
+        print("------------------------------------\n") # Corrected to \\n
         while True:
             choice = input("Choose an action:\n" # Updated prompt
                            "  1: Continue with existing progress (standard sampling mode, uses checkpoint)\n"
