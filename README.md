@@ -64,11 +64,15 @@ This project helps organizations understand how their Confluence instance is bei
    username = your_username
    password = your_api_token
    verify_ssl = True
-   base_url = https://your-confluence-instance.atlassian.net
+   # base_url = https://your-confluence-instance.atlassian.net ; Note: This is a duplicate entry for base_url. The first one is used for API calls.
 
    [visualization]
    default_clusters = 20
    default_min_pages = 5
+   # Optional: Path to a directory containing pre-generated full pickle files (e.g., from a remote server or shared location)
+   # If set, explore_pickle_content.py will look for <SPACE_KEY>_full.pkl files here when 'full content' is requested.
+   # Example: remote_full_pickle_dir = /mnt/shared_pickles/ or C:\shared_pickles\
+   remote_full_pickle_dir = 
    ```
 
 ## Usage
