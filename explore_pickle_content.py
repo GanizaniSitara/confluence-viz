@@ -219,11 +219,17 @@ def page_explorer(pickle_data, confluence_base_url):
 
         if action == 'n':
             current_page_index = min(current_page_index + 1, num_pages - 1)
-            view_mode = 'raw_snippet' # Default to raw snippet for new page
+            if view_mode.startswith('cleaned'):
+                view_mode = 'cleaned_snippet'
+            else:
+                view_mode = 'raw_snippet'
             current_cleaned_text = None # Reset cleaned text cache
         elif action == 'p':
             current_page_index = max(current_page_index - 1, 0)
-            view_mode = 'raw_snippet' # Default to raw snippet for new page
+            if view_mode.startswith('cleaned'):
+                view_mode = 'cleaned_snippet'
+            else:
+                view_mode = 'raw_snippet'
             current_cleaned_text = None # Reset cleaned text cache
         elif action == 'j':
             try:
@@ -231,7 +237,10 @@ def page_explorer(pickle_data, confluence_base_url):
                 page_num = int(page_num_str)
                 if 1 <= page_num <= num_pages:
                     current_page_index = page_num - 1
-                    view_mode = 'raw_snippet' # Default to raw snippet for new page
+                    if view_mode.startswith('cleaned'):
+                        view_mode = 'cleaned_snippet'
+                    else:
+                        view_mode = 'raw_snippet'
                     current_cleaned_text = None # Reset cleaned text cache
                 else:
                     print("Invalid page number.")
