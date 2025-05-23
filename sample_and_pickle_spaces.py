@@ -10,7 +10,7 @@ import time
 import urllib3
 import argparse
 import sys # Added import
-from config_loader import load_confluence_settings
+from config_loader import load_confluence_settings, load_visualization_settings # MODIFIED IMPORT
 
 # Load settings
 confluence_settings = load_confluence_settings()
@@ -19,6 +19,10 @@ PASSWORD = confluence_settings['password']
 BASE_URL = confluence_settings['base_url'] # Ensure this is base_url
 API_ENDPOINT = "/rest/api" # Define the API endpoint suffix
 VERIFY_SSL = confluence_settings['verify_ssl']
+
+# Load visualization settings to get remote_full_pickle_dir
+visualization_settings = load_visualization_settings()
+REMOTE_FULL_PICKLE_DIR = visualization_settings.get('remote_full_pickle_dir')
 
 if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -57,14 +61,47 @@ TOP_N_ROOT = 10
 TOP_N_RECENT = 30
 TOP_N_FREQUENT = 30
 OUTPUT_DIR = 'temp'
-FULL_PICKLE_OUTPUT_DIR = os.path.join(OUTPUT_DIR, 'full_pickles') # New directory for full pickles
-CHECKPOINT_FILE = 'confluence_checkpoint.json'
-FULL_PICKLE_CHECKPOINT_FILE = 'confluence_full_pickle_checkpoint.json' # New checkpoint file for full pickle mode
 
+# Determine the effective directory for full pickles
+DEFAULT_FULL_PICKLE_SUBDIR = 'full_pickles' # Subdirectory within the local OUTPUT_DIR
+EFFECTIVE_FULL_PICKLE_OUTPUT_DIR = OUTPUT_DIR # Default to local ./temp
+
+if REMOTE_FULL_PICKLE_DIR and os.path.exists(REMOTE_FULL_PICKLE_DIR) and os.path.isdir(REMOTE_FULL_PICKLE_DIR):
+    EFFECTIVE_FULL_PICKLE_OUTPUT_DIR = REMOTE_FULL_PICKLE_DIR
+    print(f"Using remote directory for full pickles: {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}")
+else:
+    EFFECTIVE_FULL_PICKLE_OUTPUT_DIR = os.path.join(OUTPUT_DIR, DEFAULT_FULL_PICKLE_SUBDIR)
+    if REMOTE_FULL_PICKLE_DIR:
+        print(f"Warning: remote_full_pickle_dir '{REMOTE_FULL_PICKLE_DIR}' not found or not a directory. Using local: {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}")
+    else:
+        print(f"Using local directory for full pickles: {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}")
+
+# Checkpoint file for full pickle mode will be relative to the EFFECTIVE_FULL_PICKLE_OUTPUT_DIR
+# However, for simplicity and to avoid writing into a potentially read-only remote_full_pickle_dir for checkpoints,
+# let's keep the full_pickle_checkpoint in the local OUTPUT_DIR for now, unless specified otherwise.
+# For this iteration, we will place it next to the pickles if remote, or in local temp if local.
+# This means if remote_full_pickle_dir is used, the checkpoint goes there too.
+CHECKPOINT_FILE = 'confluence_checkpoint.json' # For standard sampling, always local
+FULL_PICKLE_CHECKPOINT_FILENAME = 'confluence_full_pickle_checkpoint.json' # Just the filename
+
+# Ensure local OUTPUT_DIR exists (for standard pickles and potentially the full pickle checkpoint if local)
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
-if not os.path.exists(FULL_PICKLE_OUTPUT_DIR): # Ensure the new directory is created
-    os.makedirs(FULL_PICKLE_OUTPUT_DIR)
+
+# Ensure the EFFECTIVE_FULL_PICKLE_OUTPUT_DIR exists
+if not os.path.exists(EFFECTIVE_FULL_PICKLE_OUTPUT_DIR):
+    try:
+        os.makedirs(EFFECTIVE_FULL_PICKLE_OUTPUT_DIR)
+        print(f"Created directory: {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}")
+    except OSError as e:
+        print(f"Error creating directory {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}: {e}. Please check permissions or path.")
+        # Depending on the mode, we might need to exit if this dir is crucial and cannot be created.
+        # For now, we'll let it proceed, and failures will occur during file writing.
+
+# Define the full path for the full pickle checkpoint file
+# It will reside in the same directory as the full pickles themselves.
+FULL_PICKLE_CHECKPOINT_FILE_PATH = os.path.join(EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, FULL_PICKLE_CHECKPOINT_FILENAME)
+
 
 def fetch_page_metadata(space_key):
     print(f"  Fetching page metadata for space: {space_key}")
@@ -147,7 +184,7 @@ def load_checkpoint(filename=CHECKPOINT_FILE): # Added filename parameter with d
             with open(filename, 'r') as f:
                 checkpoint = json.load(f)
                 processed_count = 0
-                if filename == FULL_PICKLE_CHECKPOINT_FILE:
+                if filename == FULL_PICKLE_CHECKPOINT_FILE_PATH:
                     processed_count = len(checkpoint.get('processed_space_keys', []))
                 else:
                     processed_count = len(checkpoint.get('processed_spaces', []))
@@ -157,7 +194,7 @@ def load_checkpoint(filename=CHECKPOINT_FILE): # Added filename parameter with d
             print(f"Error loading checkpoint file {filename}: {e}")
     
     # Return a new checkpoint structure if file doesn't exist or error occurred
-    if filename == FULL_PICKLE_CHECKPOINT_FILE:
+    if filename == FULL_PICKLE_CHECKPOINT_FILE_PATH:
         return {
             "all_fetched_space_keys": [], # For full pickle mode, to compare if the list of spaces changed
             "processed_space_keys": [],
@@ -260,16 +297,16 @@ def main():
     mode_group.add_argument('--reset', action='store_true', help='Reset checkpoint and start from beginning (non-interactive).')
     mode_group.add_argument('--batch-continue', action='store_true', help='Run in continue mode using checkpoint without interactive menu (non-interactive).')
     mode_group.add_argument('--pickle-space-full', type=str, metavar='SPACE_KEY',
-                               help='Pickle all pages for a single space. Saves to temp/full_pickles/. Bypasses sampling, checkpointing, and interactive menu.') # Updated help
+                               help=f'Pickle all pages for a single space. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}. Bypasses sampling, checkpointing, and interactive menu.') # Updated help
     mode_group.add_argument('--pickle-all-spaces-full', action='store_true',
-                               help=f'Pickle all pages for ALL non-user spaces. Saves to temp/full_pickles/. Uses checkpoint file \'{FULL_PICKLE_CHECKPOINT_FILE}\'. Bypasses sampling and interactive menu.') # New argument, updated help
+                               help=f'Pickle all pages for ALL non-user spaces. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}. Uses checkpoint file \'{FULL_PICKLE_CHECKPOINT_FILENAME}\' in that directory. Bypasses sampling and interactive menu.') # New argument, updated help
     args = parser.parse_args()
 
     # Handle --pickle-all-spaces-full mode
     if args.pickle_all_spaces_full:
-        print(f"Mode: Pickling all pages for ALL non-user spaces (using checkpoint: {FULL_PICKLE_CHECKPOINT_FILE}).")
+        print(f"Mode: Pickling all pages for ALL non-user spaces (Target dir: {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}, Checkpoint: {FULL_PICKLE_CHECKPOINT_FILE_PATH}).")
         
-        checkpoint = load_checkpoint(FULL_PICKLE_CHECKPOINT_FILE)
+        checkpoint = load_checkpoint(FULL_PICKLE_CHECKPOINT_FILE_PATH) # MODIFIED
         processed_space_keys_set = set(checkpoint.get("processed_space_keys", []))
 
         all_non_user_spaces = fetch_all_spaces_with_details(auth_details=(USERNAME, PASSWORD), verify_ssl_cert=VERIFY_SSL)
@@ -287,7 +324,7 @@ def main():
             checkpoint["all_fetched_space_keys"] = current_api_space_keys
             checkpoint["processed_space_keys"] = []
             processed_space_keys_set = set()
-            save_checkpoint(checkpoint, FULL_PICKLE_CHECKPOINT_FILE)
+            save_checkpoint(checkpoint, FULL_PICKLE_CHECKPOINT_FILE_PATH) # MODIFIED
         
         print(f"Found {len(all_non_user_spaces)} non-user spaces. {len(processed_space_keys_set)} already processed according to checkpoint.")
         
@@ -312,10 +349,17 @@ def main():
                 failed_this_run += 1
                 continue
 
-            # This check is now implicitly handled by iterating `spaces_to_actually_process`
-            # if target_space_key in processed_space_keys_set:
-            # print(f"Skipping already processed space {target_space_key} (Name: {space_name_for_pickle}) as per checkpoint.")
-            # continue
+            # Check if pickle file already exists BEFORE attempting to process
+            out_filename_check = f'{target_space_key}_full.pkl'
+            out_path_check = os.path.join(EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, out_filename_check)
+            if os.path.exists(out_path_check):
+                print(f"  Pickle file {out_path_check} already exists. Skipping space {target_space_key}.")
+                # Ensure it's marked as processed in checkpoint if not already, then continue
+                if target_space_key not in processed_space_keys_set:
+                    checkpoint["processed_space_keys"].append(target_space_key)
+                    processed_space_keys_set.add(target_space_key) # Keep the set in sync
+                    save_checkpoint(checkpoint, FULL_PICKLE_CHECKPOINT_FILE_PATH) # MODIFIED
+                continue
 
             print(f"\nProcessing space: {target_space_key} (Name: {space_name_for_pickle})")
             
@@ -330,7 +374,7 @@ def main():
                 pages_with_bodies, total_pages_metadata = sample_and_fetch_bodies(target_space_key, pages_metadata, fetch_all=True)
 
                 out_filename = f'{target_space_key}_full.pkl'
-                out_path = os.path.join(FULL_PICKLE_OUTPUT_DIR, out_filename)
+                out_path = os.path.join(EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, out_filename) # Use effective path
                 
                 with open(out_path, 'wb') as f:
                     pickle.dump({
@@ -344,7 +388,7 @@ def main():
                 # Update checkpoint after successful processing
                 checkpoint["processed_space_keys"].append(target_space_key)
                 # No need to re-add to set, just save checkpoint
-                save_checkpoint(checkpoint, FULL_PICKLE_CHECKPOINT_FILE)
+                save_checkpoint(checkpoint, FULL_PICKLE_CHECKPOINT_FILE_PATH) # MODIFIED
                 newly_processed_this_run += 1
             except Exception as e:
                 print(f"  An unexpected error occurred during pickling for space {target_space_key}: {e}")
@@ -362,7 +406,14 @@ def main():
     # Handle --pickle-space-full first as it\'s a distinct mode
     if args.pickle_space_full:
         target_space_key = args.pickle_space_full
-        print(f"Mode: Pickling all pages for space: {target_space_key}")
+        print(f"Mode: Pickling all pages for space: {target_space_key}. Target dir: {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}")
+
+        # Check if pickle file already exists
+        out_filename_check = f'{target_space_key}_full.pkl'
+        out_path_check = os.path.join(EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, out_filename_check)
+        if os.path.exists(out_path_check):
+            print(f"Pickle file {out_path_check} already exists. Exiting.")
+            sys.exit(0)
 
         # Fetch space details to get the name
         # Construct URL using BASE_URL and API_ENDPOINT
@@ -394,7 +445,7 @@ def main():
         pages_with_bodies, total_pages_metadata = sample_and_fetch_bodies(target_space_key, pages_metadata, fetch_all=True)
 
         out_filename = f'{target_space_key}_full.pkl'
-        out_path = os.path.join(FULL_PICKLE_OUTPUT_DIR, out_filename) # Updated path
+        out_path = os.path.join(EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, out_filename) # MODIFIED path
         try:
             with open(out_path, 'wb') as f:
                 pickle.dump({
@@ -427,20 +478,20 @@ def main():
         print("This script samples pages from Confluence spaces and saves them locally (standard mode),")
         print("or pickles all pages from a single specified space or all spaces (full pickle modes).") # Updated line
         print("Standard mode uses a checkpoint file (confluence_checkpoint.json) to resume progress.")
-        print("Full pickle modes for all spaces use a separate checkpoint (confluence_full_pickle_checkpoint.json).") # New line
+        print(f"Full pickle modes for all spaces use a separate checkpoint ({FULL_PICKLE_CHECKPOINT_FILENAME}) in the target pickle directory.") # New line
         print("\nAvailable command-line options for non-interactive use:") # Corrected to \n
         print("  --reset                       : Clears all previous progress and starts fresh (standard sampling mode).") # Updated help
         print("  --batch-continue              : Skips this menu and continues from the last checkpoint (standard sampling mode).") # Updated help
-        print("  --pickle-space-full SPACE_KEY : Pickles all pages for a single space. Saves to temp/full_pickles/.")
-        print("  --pickle-all-spaces-full      : Pickles all pages for ALL non-user spaces. Saves to temp/full_pickles/.") # New help line
-        print("                                  Uses its own checkpoint and bypasses sampling and this interactive menu.") # Updated help
+        print(f"  --pickle-space-full SPACE_KEY : Pickles all pages for a single space. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}.") # Updated help
+        print(f"  --pickle-all-spaces-full      : Pickles all pages for ALL non-user spaces. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}.") # New help line
+        print(f"                                  Uses its own checkpoint ({FULL_PICKLE_CHECKPOINT_FILENAME}) and bypasses sampling and this interactive menu.") # Updated help
         print("------------------------------------\n") # Corrected to \n
         while True:
             choice = input("Choose an action:\n" # Updated prompt
                            "  1: Continue with existing progress (standard sampling mode, uses checkpoint)\n"
                            "  2: Reset and start from beginning (standard sampling mode, deletes checkpoint)\n"
-                           "  3: Pickle all pages for a single space (e.g., DOC). Saves to temp/full_pickles/\n"
-                           "  4: Pickle all pages for ALL non-user spaces. Saves to temp/full_pickles/ (uses its own checkpoint)\n"
+                           "  3: Pickle all pages for a single space (e.g., DOC). Saves to configured full pickle directory.\n"
+                           "  4: Pickle all pages for ALL non-user spaces. Saves to configured full pickle directory (uses its own checkpoint).\n"
                            "  q: Quit\n"
                            "Enter choice (1, 2, 3, 4, or q): ").strip().lower()
             if choice == '1':
@@ -456,10 +507,16 @@ def main():
                 if not target_space_key_interactive:
                     print("No space key provided. Please try again.")
                     continue
-                # Simulate args for --pickle-space-full
                 args.pickle_space_full = target_space_key_interactive
                 # Call the relevant part of main or refactor to a function
-                print(f"Mode: Pickling all pages for space: {args.pickle_space_full}")
+                print(f"Mode: Pickling all pages for space: {args.pickle_space_full}. Target dir: {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}")
+
+                # Check if pickle file already exists
+                out_filename_check_interactive = f'{args.pickle_space_full}_full.pkl'
+                out_path_check_interactive = os.path.join(EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, out_filename_check_interactive)
+                if os.path.exists(out_path_check_interactive):
+                    print(f"Pickle file {out_path_check_interactive} already exists. Returning to menu.")
+                    continue # Go back to the interactive menu
 
                 # Fetch space details to get the name
                 space_details_url = f"{BASE_URL}{API_ENDPOINT}/space/{args.pickle_space_full}"
@@ -484,7 +541,7 @@ def main():
                 pages_with_bodies, total_pages_metadata = sample_and_fetch_bodies(args.pickle_space_full, pages_metadata, fetch_all=True)
 
                 out_filename = f'{args.pickle_space_full}_full.pkl'
-                out_path = os.path.join(FULL_PICKLE_OUTPUT_DIR, out_filename)
+                out_path = os.path.join(EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, out_filename) # MODIFIED path
                 try:
                     with open(out_path, 'wb') as f:
                         pickle.dump({
@@ -505,9 +562,9 @@ def main():
                 # Simulate args for --pickle-all-spaces-full
                 args.pickle_all_spaces_full = True
                 # Call the relevant part of main or refactor to a function
-                print(f"Mode: Pickling all pages for ALL non-user spaces (using checkpoint: {FULL_PICKLE_CHECKPOINT_FILE}).")
+                print(f"Mode: Pickling all pages for ALL non-user spaces (Target dir: {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}, Checkpoint: {FULL_PICKLE_CHECKPOINT_FILE_PATH}).")
         
-                checkpoint = load_checkpoint(FULL_PICKLE_CHECKPOINT_FILE)
+                checkpoint = load_checkpoint(FULL_PICKLE_CHECKPOINT_FILE_PATH) # MODIFIED
                 processed_space_keys_set = set(checkpoint.get("processed_space_keys", []))
 
                 all_non_user_spaces = fetch_all_spaces_with_details(auth_details=(USERNAME, PASSWORD), verify_ssl_cert=VERIFY_SSL)
@@ -524,7 +581,7 @@ def main():
                     checkpoint["all_fetched_space_keys"] = current_api_space_keys
                     checkpoint["processed_space_keys"] = []
                     processed_space_keys_set = set()
-                    save_checkpoint(checkpoint, FULL_PICKLE_CHECKPOINT_FILE)
+                    save_checkpoint(checkpoint, FULL_PICKLE_CHECKPOINT_FILE_PATH) # MODIFIED
                 
                 print(f"Found {len(all_non_user_spaces)} non-user spaces. {len(processed_space_keys_set)} already processed according to checkpoint.")
                 
@@ -549,6 +606,17 @@ def main():
                         failed_this_run += 1
                         continue
 
+                    # Check if pickle file already exists BEFORE attempting to process
+                    out_filename_check_interactive_all = f'{target_space_key}_full.pkl'
+                    out_path_check_interactive_all = os.path.join(EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, out_filename_check_interactive_all)
+                    if os.path.exists(out_path_check_interactive_all):
+                        print(f"  Pickle file {out_path_check_interactive_all} already exists. Skipping space {target_space_key}.")
+                        if target_space_key not in processed_space_keys_set:
+                            checkpoint["processed_space_keys"].append(target_space_key)
+                            processed_space_keys_set.add(target_space_key) # Keep set in sync
+                            save_checkpoint(checkpoint, FULL_PICKLE_CHECKPOINT_FILE_PATH) # MODIFIED
+                        continue
+
                     print(f"  Processing space: {target_space_key} (Name: {space_name_for_pickle})")
                     
                     try:
@@ -562,7 +630,7 @@ def main():
                         pages_with_bodies, total_pages_metadata = sample_and_fetch_bodies(target_space_key, pages_metadata, fetch_all=True)
 
                         out_filename = f'{target_space_key}_full.pkl'
-                        out_path = os.path.join(FULL_PICKLE_OUTPUT_DIR, out_filename)
+                        out_path = os.path.join(EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, out_filename) # MODIFIED path
                         
                         with open(out_path, 'wb') as f:
                             pickle.dump({
@@ -574,7 +642,7 @@ def main():
                         print(f'  Successfully wrote {len(pages_with_bodies)} pages for space {target_space_key} to {out_path} (total pages in space: {total_pages_metadata})')
                         
                         checkpoint["processed_space_keys"].append(target_space_key)
-                        save_checkpoint(checkpoint, FULL_PICKLE_CHECKPOINT_FILE)
+                        save_checkpoint(checkpoint, FULL_PICKLE_CHECKPOINT_FILE_PATH) # MODIFIED
                         newly_processed_this_run += 1
                     except Exception as e:
                         print(f"  An unexpected error occurred during pickling for space {target_space_key}: {e}")
