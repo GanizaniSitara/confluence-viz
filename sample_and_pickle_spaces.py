@@ -141,7 +141,7 @@ def fetch_page_metadata(space_key):
     while True:
         # Construct URL using BASE_URL and API_ENDPOINT
         url = f"{BASE_URL}{API_ENDPOINT}/content"
-        params = {"type": "page", "spaceKey": space_key, "start": start, "limit": page_limit, "expand": "version,ancestors"}
+        params = {"type": "page", "spaceKey": space_key, "start": start, "limit": page_limit, "expand": "version,ancestors,children.page,children.attachment"} # MODIFIED expand
         r = get_with_retry(url, params=params, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
         if r.status_code != 200:
             print(f"  Failed to fetch pages for space {space_key}. Status code: {r.status_code}")
@@ -157,7 +157,10 @@ def fetch_page_metadata(space_key):
                 'update_count': page.get('version', {}).get('number', 0),
                 'parent_id': page['ancestors'][0]['id'] if page.get('ancestors') else None,
                 'level': len(page.get('ancestors', [])),
-                'space_key': space_key
+                'space_key': space_key,
+                # NEW METADATA
+                'attachments': page.get('children', {}).get('attachment', {}).get('results', []),
+                'child_pages': [{'id': child.get('id'), 'title': child.get('title')} for child in page.get('children', {}).get('page', {}).get('results', [])]
             }
             pages.append(page_info)
         if len(results) < page_limit:
@@ -316,6 +319,89 @@ def fetch_pages_for_space_concurrently(space_key, auth_details, verify_ssl_cert,
         }
         # ...existing code...
 
+def download_attachments_for_space(space_key, pages_metadata_list, base_output_dir, auth_tuple, verify_ssl_flag, base_confluence_url):
+    if not pages_metadata_list:
+        print(f"  No page metadata provided for space {space_key}, cannot download attachments.")
+        return
+
+    # Attachments will be stored in a folder named after the space_key, inside the base_output_dir
+    space_attachment_dir = os.path.join(base_output_dir, space_key)
+    
+    if not os.path.exists(base_output_dir):
+        print(f"  Error: Base output directory {base_output_dir} does not exist. Cannot create attachment folder for {space_key}.")
+        return
+
+    try:
+        if not os.path.exists(space_attachment_dir):
+            os.makedirs(space_attachment_dir)
+            print(f"  Created attachment directory: {space_attachment_dir}")
+    except OSError as e:
+        print(f"  Error creating attachment directory {space_attachment_dir}: {e}. Skipping attachment downloads for this space.")
+        return
+
+    print(f"  Downloading attachments for space {space_key} to {space_attachment_dir}...")
+    download_count = 0
+    total_attachments_processed = 0
+
+    for page_meta in pages_metadata_list:
+        page_id = page_meta.get('id')
+        attachments_on_page = page_meta.get('attachments', [])
+        if not attachments_on_page:
+            continue
+
+        for att in attachments_on_page:
+            total_attachments_processed += 1
+            att_title = att.get('title')
+            att_download_link_suffix = att.get('_links', {}).get('download')
+
+            if not att_title or not att_download_link_suffix:
+                print(f"    Skipping attachment with missing title or download link on page {page_id}.")
+                continue
+            
+            # Sanitize filename (basic sanitization)
+            # Replace characters that are problematic in filenames on some OSes
+            # This is a basic sanitization, more robust might be needed depending on titles
+            safe_att_title = "".join(c if c.isalnum() or c in ('.', '_', '-') else '_' for c in att_title)
+            if not safe_att_title:
+                safe_att_title = f"attachment_{att.get('id', 'unknown')}" # Fallback if title becomes empty
+
+            file_path = os.path.join(space_attachment_dir, safe_att_title)
+            
+            if os.path.exists(file_path):
+                # print(f"    Attachment {safe_att_title} already exists. Skipping download.")
+                continue
+
+            # Construct full download URL
+            if att_download_link_suffix.startswith('/'):
+                att_download_url = f"{base_confluence_url.rstrip('/')}{att_download_link_suffix}"
+            else:
+                att_download_url = f"{base_confluence_url.rstrip('/')}/{att_download_link_suffix}"
+
+            try:
+                # print(f"    Downloading: {safe_att_title} (Page ID: {page_id})")
+                response = get_with_retry(att_download_url, auth=auth_tuple, verify=verify_ssl_flag, stream=True, timeout=60) # Increased timeout for downloads
+                response.raise_for_status()
+
+                with open(file_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                download_count += 1
+                if download_count % 20 == 0: # Log progress less frequently for downloads
+                     print(f"    Downloaded {download_count} new attachments so far for space {space_key}...")
+            except requests.exceptions.RequestException as e:
+                print(f"    Error downloading attachment {safe_att_title} from {att_download_url}: {e}")
+            except IOError as e:
+                print(f"    Error writing attachment {safe_att_title} to {file_path}: {e}")
+            except Exception as e:
+                print(f"    Unexpected error with attachment {safe_att_title} on page {page_id}: {e}")
+    
+    if download_count > 0:
+        print(f"  Finished: Downloaded {download_count} new attachments for space {space_key} (out of {total_attachments_processed} total attachment entries found).")
+    elif total_attachments_processed > 0:
+        print(f"  Finished: No new attachments downloaded for space {space_key} (all {total_attachments_processed} found attachments may already exist or had errors).")
+    else:
+        print(f"  Finished: No attachments found or processed for space {space_key}.")
+
 def main():
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
@@ -332,6 +418,8 @@ def main():
                                help=f'Pickle all pages for ALL non-user spaces. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}. Uses checkpoint file \'{FULL_PICKLE_CHECKPOINT_FILENAME}\' in that directory. Bypasses sampling and interactive menu.') # New argument, updated help
     parser.add_argument('--list-spaces', action='store_true', help='List all non-user spaces (key, name, description) to the console and exit.') # MODIFIED HELP
     parser.add_argument('--list-space-keys', action='store_true', help='List only the keys of all non-user spaces to the console and exit.') # NEW ARGUMENT
+    parser.add_argument('--download-attachments', action='store_true',
+                           help='Download attachments for processed spaces during full pickle modes. Attachments are saved into a subfolder named after the space key, within the full pickle output directory.')
     args = parser.parse_args()
 
     # Handle --list-spaces mode first as it's a simple informational command
@@ -351,6 +439,8 @@ def main():
     # Handle --pickle-all-spaces-full mode
     if args.pickle_all_spaces_full:
         print(f"Mode: Pickling all pages for ALL non-user spaces (Target dir: {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}, Checkpoint: {FULL_PICKLE_CHECKPOINT_FILE_PATH}).")
+        if args.download_attachments:
+            print("Attachment download enabled via --download-attachments flag.")
         
         checkpoint = load_checkpoint(FULL_PICKLE_CHECKPOINT_FILE_PATH) # MODIFIED
         processed_space_keys_set = set(checkpoint.get("processed_space_keys", []))
@@ -436,8 +526,14 @@ def main():
                 # No need to re-add to set, just save checkpoint
                 save_checkpoint(checkpoint, FULL_PICKLE_CHECKPOINT_FILE_PATH) # MODIFIED
                 newly_processed_this_run += 1
+
+                # Download attachments if flag is set
+                if args.download_attachments:
+                    print(f"  Initiating attachment download for space {target_space_key}...")
+                    # pages_metadata was fetched for this space_info earlier in the loop
+                    download_attachments_for_space(target_space_key, pages_metadata, EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, (USERNAME, PASSWORD), VERIFY_SSL, BASE_URL)
             except Exception as e:
-                print(f"  An unexpected error occurred during pickling for space {target_space_key}: {e}")
+                print(f"  An unexpected error occurred during pickling or attachment download for space {target_space_key}: {e}")
                 failed_this_run += 1
         
         overall_processed_count += newly_processed_this_run
@@ -453,6 +549,8 @@ def main():
     if args.pickle_space_full:
         target_space_key = args.pickle_space_full
         print(f"Mode: Pickling all pages for space: {target_space_key}. Target dir: {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}")
+        if args.download_attachments:
+            print("Attachment download enabled via --download-attachments flag.")
 
         # Check if pickle file already exists
         out_filename_check = f'{target_space_key}_full.pkl'
@@ -507,6 +605,13 @@ def main():
         except Exception as e:
             print(f"  An unexpected error occurred during pickling for space {target_space_key}: {e}")
             sys.exit(1)
+
+        # Download attachments if flag is set
+        if args.download_attachments:
+            print(f"  Initiating attachment download for space {target_space_key}...")
+            # pages_metadata was fetched for this space earlier
+            download_attachments_for_space(target_space_key, pages_metadata, EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, (USERNAME, PASSWORD), VERIFY_SSL, BASE_URL)
+
         sys.exit(0)
 
     perform_reset = False
@@ -557,7 +662,18 @@ def main():
                 if not target_space_key_interactive:
                     print("No space key provided. Please try again.")
                     continue
-                args.pickle_space_full = target_space_key_interactive
+                args.pickle_space_full = target_space_key_interactive # Set this for logic reuse
+                
+                # Determine if attachments should be downloaded for this interactive session
+                should_download_attachments_interactive_single = args.download_attachments # Respect CLI flag if present
+                if not should_download_attachments_interactive_single:
+                    dl_choice_single = input(f"Download attachments for space {args.pickle_space_full}? (y/n, default n): ").strip().lower()
+                    if dl_choice_single == 'y':
+                        should_download_attachments_interactive_single = True
+                
+                if should_download_attachments_interactive_single:
+                    print(f"Attachment download will be attempted for {args.pickle_space_full}.")
+
                 # Call the relevant part of main or refactor to a function
                 print(f"Mode: Pickling all pages for space: {args.pickle_space_full}. Target dir: {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}")
 
@@ -603,14 +719,33 @@ def main():
                     print(f'  Successfully wrote {len(pages_with_bodies)} pages for space {args.pickle_space_full} to {out_path} (total pages in space: {total_pages_metadata})')
                 except IOError as e:
                     print(f"  Error writing pickle file {out_path}: {e}")
+                    # Potentially continue to attachment download if desired, or exit. For now, exiting on pickle error.
                     sys.exit(1)
                 except Exception as e:
                     print(f"  An unexpected error occurred during pickling for space {args.pickle_space_full}: {e}")
                     sys.exit(1)
+
+                # Download attachments if determined interactively or by flag
+                if should_download_attachments_interactive_single:
+                    print(f"  Initiating attachment download for space {args.pickle_space_full}...")
+                    # pages_metadata was fetched for this space earlier in this block
+                    download_attachments_for_space(args.pickle_space_full, pages_metadata, EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, (USERNAME, PASSWORD), VERIFY_SSL, BASE_URL)
+
                 sys.exit(0) # Exit after this action
             elif choice == '4':
                 # Simulate args for --pickle-all-spaces-full
-                args.pickle_all_spaces_full = True
+                # args.pickle_all_spaces_full = True # This is implicitly handled by falling into the shared logic
+                
+                # Determine if attachments should be downloaded for this interactive session
+                should_download_attachments_interactive_all = args.download_attachments # Respect CLI flag
+                if not should_download_attachments_interactive_all:
+                    dl_choice_all = input("Download attachments for ALL spaces in this operation? (y/n, default n): ").strip().lower()
+                    if dl_choice_all == 'y':
+                        should_download_attachments_interactive_all = True
+                
+                if should_download_attachments_interactive_all:
+                    print("Attachment download will be attempted for all processed spaces.")
+
                 # Call the relevant part of main or refactor to a function
                 print(f"Mode: Pickling all pages for ALL non-user spaces (Target dir: {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}, Checkpoint: {FULL_PICKLE_CHECKPOINT_FILE_PATH}).")
         
@@ -694,8 +829,14 @@ def main():
                         checkpoint["processed_space_keys"].append(target_space_key)
                         save_checkpoint(checkpoint, FULL_PICKLE_CHECKPOINT_FILE_PATH) # MODIFIED
                         newly_processed_this_run += 1
+
+                        # Download attachments if determined interactively or by flag
+                        if should_download_attachments_interactive_all:
+                            print(f"  Initiating attachment download for space {target_space_key}...")
+                            # pages_metadata was fetched for this space_info earlier in this loop
+                            download_attachments_for_space(target_space_key, pages_metadata, EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, (USERNAME, PASSWORD), VERIFY_SSL, BASE_URL)
                     except Exception as e:
-                        print(f"  An unexpected error occurred during pickling for space {target_space_key}: {e}")
+                        print(f"  An unexpected error occurred during pickling or attachment download for space {target_space_key}: {e}")
                         failed_this_run += 1
                 
                 overall_processed_count += newly_processed_this_run
