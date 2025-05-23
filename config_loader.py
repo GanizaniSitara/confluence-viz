@@ -18,26 +18,31 @@ def load_confluence_settings(config_path='settings.ini'):
     }
 
 def load_visualization_settings(config_path='settings.ini'):
-    """Load visualization settings including Confluence base URL from the configuration file."""
-    # Try to load config file, use defaults if not available
+    """Load visualization settings from the configuration file."""
     config = configparser.ConfigParser()
     
-    # Set default values
-    config['confluence'] = {
-        'base_url': 'http://example.atlassian.net'
-    }
+    # Set default values for visualization section only
     config['visualization'] = {
         'default_clusters': '20',
-        'default_min_pages': '5'
+        'default_min_pages': '5',
+        'remote_full_pickle_dir': ''  # Default to empty string, meaning not set
     }
     
     # Override with values from config file if it exists
     if os.path.exists(config_path):
-        config.read(config_path)
+        # Ensure we read into the existing config object to merge,
+        # or handle sections carefully if they might not exist in defaults.
+        # Reading directly might overwrite the whole config if not careful with sections.
+        # A safer way is to read into a new parser and then copy values.
+        temp_config = configparser.ConfigParser()
+        temp_config.read(config_path)
+        if 'visualization' in temp_config:
+            for key, value in temp_config['visualization'].items():
+                config['visualization'][key] = value
     
     # Return as dictionary
     return {
-        'base_url': config['confluence'].get('base_url'),
         'default_clusters': int(config['visualization'].get('default_clusters')),
-        'default_min_pages': int(config['visualization'].get('default_min_pages'))
+        'default_min_pages': int(config['visualization'].get('default_min_pages')),
+        'remote_full_pickle_dir': config['visualization'].get('remote_full_pickle_dir') if config['visualization'].get('remote_full_pickle_dir') else None
     }
