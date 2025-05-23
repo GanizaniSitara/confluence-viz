@@ -214,7 +214,7 @@ def page_explorer(pickle_data, confluence_base_url):
             display_page_content(page, confluence_base_url, view_mode)
         
         print(f"\nPage {current_page_index + 1} of {num_pages}")
-        prompt = f"Options: (n)ext, (p)revious, (j)ump, (f)toggle raw, (c)toggle cleaned, (q)uit [View: {view_mode.replace('_', ' ')}]: "
+        prompt = f"Options: (n)ext, (p)revious, (j)ump, (r)aw, (c)leaned, (f)ull/snippet, (q)uit [View: {view_mode.replace('_', ' ')}]: "
         action = input(prompt).strip().lower()
 
         if action == 'n':
@@ -237,26 +237,35 @@ def page_explorer(pickle_data, confluence_base_url):
                     print("Invalid page number.")
             except ValueError:
                 print("Invalid input. Please enter a number.")
-        elif action == 'f': # Toggle raw view
-            if view_mode == 'raw_snippet':
-                view_mode = 'raw_full'
-            elif view_mode == 'raw_full':
-                view_mode = 'raw_snippet'
-            else: # Was in a cleaned view, switch to raw_snippet
-                view_mode = 'raw_snippet'
-            print(f"Displaying {view_mode.replace('_', ' ')}.")
-        elif action == 'c': # Toggle cleaned view
+        elif action == 'r': # View Raw Content
             if view_mode == 'cleaned_snippet':
-                view_mode = 'cleaned_full'
+                view_mode = 'raw_snippet'
             elif view_mode == 'cleaned_full':
+                view_mode = 'raw_full'
+            # If already raw, no change to view_mode, but print status
+            print(f"Displaying {view_mode.replace('_', ' ')}.")
+        elif action == 'c': # View Cleaned Content
+            if view_mode == 'raw_snippet':
                 view_mode = 'cleaned_snippet'
-            else: # Was in a raw view, switch to cleaned_snippet
-                view_mode = 'cleaned_snippet'
-            # Ensure cleaned text is generated if switching to a cleaned view
+            elif view_mode == 'raw_full':
+                view_mode = 'cleaned_full'
+            # If already cleaned, no change to view_mode, but print status
+            
+            # Ensure cleaned text is generated if switching to or already in a cleaned view
             if current_cleaned_text is None and page.get('body', ''):
                 current_cleaned_text = clean_confluence_html(page.get('body', ''))
             elif not page.get('body', ''):
                  current_cleaned_text = "" # Handle case where there's no body to clean
+            print(f"Displaying {view_mode.replace('_', ' ')}.")
+        elif action == 'f': # Toggle Full/Snippet
+            if view_mode == 'raw_snippet':
+                view_mode = 'raw_full'
+            elif view_mode == 'raw_full':
+                view_mode = 'raw_snippet'
+            elif view_mode == 'cleaned_snippet':
+                view_mode = 'cleaned_full'
+            elif view_mode == 'cleaned_full':
+                view_mode = 'cleaned_snippet'
             print(f"Displaying {view_mode.replace('_', ' ')}.")
         elif action == 'q':
             break
@@ -387,7 +396,7 @@ def list_and_select_pickled_space():
     # For display, we'll use the sorted order and their new index + 1 for numbering in the list.
 
     terminal_width = shutil.get_terminal_size().columns
-    item_width = 20  # Approximate width for "123. SPACEXYZ      "
+    item_width = 35  # Approximate width for "123. SPACEXYZ      "
     num_columns = max(1, terminal_width // item_width)
 
     for i in range(0, len(spaces), num_columns):
