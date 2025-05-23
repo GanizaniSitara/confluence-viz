@@ -27,6 +27,36 @@ REMOTE_FULL_PICKLE_DIR = visualization_settings.get('remote_full_pickle_dir')
 if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+def print_spaces_nicely(spaces_data):
+    """Prints a list of space data in a readable format."""
+    if not spaces_data:
+        print("No spaces to display.")
+        return
+    print("\n--- Confluence Spaces (Non-User) ---")
+    for i, space in enumerate(spaces_data):
+        key = space.get('key', 'N/A')
+        name = space.get('name', 'N/A')
+        desc_plain = space.get('description', {}).get('plain', {}).get('value', 'No description')
+        # Truncate long descriptions for display
+        max_desc_len = 100
+        display_desc = (desc_plain[:max_desc_len-3] + '...') if len(desc_plain) > max_desc_len else desc_plain
+        print(f"{i+1}. Key: {key:<15} Name: {name:<40} Description: {display_desc}")
+    print("--- End of Spaces List ---")
+
+
+def print_space_keys_only(spaces_data):
+    """Prints only the keys of the space data, one per line."""
+    if not spaces_data:
+        print("No space keys to display.")
+        return
+    print("\n--- Confluence Space Keys (Non-User) ---")
+    for space in spaces_data:
+        key = space.get('key')
+        if key:
+            print(key)
+    print("--- End of Space Keys List ---")
+
+
 def get_with_retry(url, params=None, auth=None, headers=None, verify=False, stream=False, timeout=30):
     while True:
         resp = requests.get(url, params=params, auth=auth, headers=headers, verify=verify, stream=stream, timeout=timeout)
@@ -300,7 +330,23 @@ def main():
                                help=f'Pickle all pages for a single space. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}. Bypasses sampling, checkpointing, and interactive menu.') # Updated help
     mode_group.add_argument('--pickle-all-spaces-full', action='store_true',
                                help=f'Pickle all pages for ALL non-user spaces. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}. Uses checkpoint file \'{FULL_PICKLE_CHECKPOINT_FILENAME}\' in that directory. Bypasses sampling and interactive menu.') # New argument, updated help
+    parser.add_argument('--list-spaces', action='store_true', help='List all non-user spaces (key, name, description) to the console and exit.') # MODIFIED HELP
+    parser.add_argument('--list-space-keys', action='store_true', help='List only the keys of all non-user spaces to the console and exit.') # NEW ARGUMENT
     args = parser.parse_args()
+
+    # Handle --list-spaces mode first as it's a simple informational command
+    if args.list_spaces:
+        print("Mode: Listing all non-user spaces from Confluence...")
+        all_spaces = fetch_all_spaces_with_details(auth_details=(USERNAME, PASSWORD), verify_ssl_cert=VERIFY_SSL)
+        print_spaces_nicely(all_spaces)
+        sys.exit(0)
+
+    # Handle --list-space-keys mode
+    if args.list_space_keys:
+        print("Mode: Listing all non-user space keys from Confluence...")
+        all_spaces = fetch_all_spaces_with_details(auth_details=(USERNAME, PASSWORD), verify_ssl_cert=VERIFY_SSL)
+        print_space_keys_only(all_spaces)
+        sys.exit(0)
 
     # Handle --pickle-all-spaces-full mode
     if args.pickle_all_spaces_full:
@@ -485,6 +531,8 @@ def main():
         print(f"  --pickle-space-full SPACE_KEY : Pickles all pages for a single space. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}.") # Updated help
         print(f"  --pickle-all-spaces-full      : Pickles all pages for ALL non-user spaces. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}.") # New help line
         print(f"                                  Uses its own checkpoint ({FULL_PICKLE_CHECKPOINT_FILENAME}) and bypasses sampling and this interactive menu.") # Updated help
+        print("  --list-spaces                 : Lists all non-user spaces (key, name, description) to the console and exits.") # MODIFIED HELP
+        print("  --list-space-keys             : Lists only the keys of all non-user spaces to the console and exits.") # NEW HELP LINE
         print("------------------------------------\n") # Corrected to \n
         while True:
             choice = input("Choose an action:\n" # Updated prompt
@@ -492,8 +540,10 @@ def main():
                            "  2: Reset and start from beginning (standard sampling mode, deletes checkpoint)\n"
                            "  3: Pickle all pages for a single space (e.g., DOC). Saves to configured full pickle directory.\n"
                            "  4: Pickle all pages for ALL non-user spaces. Saves to configured full pickle directory (uses its own checkpoint).\n"
+                           "  5: List all non-user spaces to console (Key, Name, Description)\n"  # MODIFIED MENU OPTION
+                           "  6: List all non-user space KKEYS only to console\n"  # NEW MENU OPTION
                            "  q: Quit\n"
-                           "Enter choice (1, 2, 3, 4, or q): ").strip().lower()
+                           "Enter choice (1, 2, 3, 4, 5, 6, or q): ").strip().lower() # UPDATED PROMPT
             if choice == '1':
                 perform_reset = False
                 print("Mode: Continuing with existing progress (standard sampling).")
@@ -656,11 +706,23 @@ def main():
                 if failed_this_run > 0:
                     print("Rerun the script to attempt processing failed spaces.")
                 sys.exit(0) # Exit after this action
+            elif choice == '5': # MODIFIED MENU HANDLING
+                print("Action: Listing all non-user spaces from Confluence...")
+                all_spaces_interactive = fetch_all_spaces_with_details(auth_details=(USERNAME, PASSWORD), verify_ssl_cert=VERIFY_SSL)
+                print_spaces_nicely(all_spaces_interactive)
+                print("\nReturning to menu...")
+                continue # Go back to the interactive menu
+            elif choice == '6': # NEW MENU HANDLING
+                print("Action: Listing all non-user space KKEYS only from Confluence...")
+                all_spaces_interactive_keys = fetch_all_spaces_with_details(auth_details=(USERNAME, PASSWORD), verify_ssl_cert=VERIFY_SSL)
+                print_space_keys_only(all_spaces_interactive_keys)
+                print("\nReturning to menu...")
+                continue # Go back to the interactive menu
             elif choice == 'q':
                 print("Exiting script.")
                 sys.exit(0) # Exit gracefully
             else:
-                print("Invalid choice. Please enter 1, 2, 3, 4, or q.")
+                print("Invalid choice. Please enter 1, 2, 3, 4, 5, 6, or q.") # UPDATED ERROR MESSAGE
     
     # --- Checkpoint handling ---
     if perform_reset and os.path.exists(CHECKPOINT_FILE):
