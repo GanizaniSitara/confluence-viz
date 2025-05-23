@@ -1,17 +1,26 @@
-import argparse
-import pickle
 import os
-import sys
-import numpy as np # For calculating mean, ignoring NaNs
-import shutil # Added for getting terminal size
-from config_loader import load_visualization_settings, load_confluence_settings # Added load_confluence_settings
-from datetime import datetime # Added for parsing dates if needed, though string comparison works for ISO
-from utils.html_cleaner import clean_confluence_html # Added import
+import pickle
+import argparse
+from datetime import datetime
+import textwrap
+import shutil
+import platform
+if platform.system() == "Windows":
+    import msvcrt
+import numpy as np # Added import for numpy
+import sys # Added import for sys
+from bs4 import BeautifulSoup # Ensured bs4 is imported
+from config_loader import load_confluence_settings, load_visualization_settings
+from utils.html_cleaner import clean_confluence_html
 
 OUTPUT_DIR = 'temp'
 FULL_PICKLE_SUBDIR = 'full_pickles' # New line
 SNIPPET_LINES = 10 # Number of lines for snippets
 
+def clear_console():
+    """Clears the terminal screen."""
+    command = 'cls' if platform.system().lower() == 'windows' else 'clear'
+    os.system(command)
 
 def link(uri, label=None):
     if label is None: 
@@ -20,7 +29,6 @@ def link(uri, label=None):
     # OSC 8 ; params ; URI ST <name> OSC 8 ;; ST 
     escape_mask = '\\033]8;{};{}\\033\\\\{}\033]8;;\\033\\\\'
     return escape_mask.format(parameters, uri, label)
-
 
 def analyze_pickle(pickle_data, confluence_base_url): # Modified arguments
     print(f"--- Statistics for Space: {pickle_data.get('space_key', 'N/A')} ---")
@@ -130,7 +138,6 @@ def analyze_pickle(pickle_data, confluence_base_url): # Modified arguments
         else:
             print("\nNo pages with update count information found.")
 
-
 def display_page_content(page, confluence_base_url, view_mode, cleaned_text_content=None):
     """Displays the content of a single page based on the view_mode."""
     page_id = page.get('id', 'N/A')
@@ -185,37 +192,53 @@ def display_page_content(page, confluence_base_url, view_mode, cleaned_text_cont
     
     print("--- End of Page ---")
 
-
 def page_explorer(pickle_data, confluence_base_url):
     """Allows interactive exploration of pages within the pickle."""
     sampled_pages = pickle_data.get('sampled_pages', [])
     if not sampled_pages:
         print("No pages to explore in this pickle.")
+        input("Press Enter to return...")
         return
 
     num_pages = len(sampled_pages)
     current_page_index = 0
-    # view_mode can be: 'raw_snippet', 'raw_full', 'cleaned_snippet', 'cleaned_full'
     view_mode = 'raw_snippet' 
-    current_cleaned_text = None # Cache for cleaned text of the current page
+    current_cleaned_text = None
 
     while True:
+        clear_console() # Clear console at the start of each page display
         page = sampled_pages[current_page_index]
         
         if view_mode in ['cleaned_snippet', 'cleaned_full']:
-            if current_cleaned_text is None: # Clean only if not already cleaned for this page
+            if current_cleaned_text is None: 
                 raw_html_body = page.get('body', '')
-                if raw_html_body: # Only clean if there is body content
+                if raw_html_body: 
                     current_cleaned_text = clean_confluence_html(raw_html_body)
                 else:
-                    current_cleaned_text = "" # Set to empty if no raw body to clean
+                    current_cleaned_text = "" 
             display_page_content(page, confluence_base_url, view_mode, cleaned_text_content=current_cleaned_text)
-        else: # raw_snippet or raw_full
+        else: 
             display_page_content(page, confluence_base_url, view_mode)
         
         print(f"\nPage {current_page_index + 1} of {num_pages}")
-        prompt = f"Options: (n)ext, (p)revious, (j)ump, (r)aw, (c)leaned, (f)ull/snippet, (q)uit [View: {view_mode.replace('_', ' ')}]: "
-        action = input(prompt).strip().lower()
+        current_view_display = view_mode.replace('_', ' ')
+        prompt_text = f"Options: (n)ext, (p)revious, (j)ump, (r)aw, (c)leaned, (f)ull/snippet, (q)uit [View: {current_view_display}]: "
+        print(prompt_text, end='', flush=True)
+
+        action = ''
+        if platform.system() == "Windows":
+            key_pressed_bytes = msvcrt.getch()
+            try:
+                action = key_pressed_bytes.decode().lower()
+                print(action) # Echo the character pressed
+            except UnicodeDecodeError:
+                action = '' # Non-unicode key (e.g. arrow keys), ignore for simple commands
+                print(" (key ignored)") # Optional: inform user
+        else:
+            # Fallback for non-Windows: still requires Enter
+            # The prompt_text is already printed, so just get input.
+            action = input("").strip().lower()
+
 
         if action == 'n':
             current_page_index = min(current_page_index + 1, num_pages - 1)
@@ -223,17 +246,18 @@ def page_explorer(pickle_data, confluence_base_url):
                 view_mode = 'cleaned_snippet'
             else:
                 view_mode = 'raw_snippet'
-            current_cleaned_text = None # Reset cleaned text cache
+            current_cleaned_text = None 
         elif action == 'p':
             current_page_index = max(current_page_index - 1, 0)
             if view_mode.startswith('cleaned'):
                 view_mode = 'cleaned_snippet'
             else:
                 view_mode = 'raw_snippet'
-            current_cleaned_text = None # Reset cleaned text cache
+            current_cleaned_text = None 
         elif action == 'j':
+            clear_console() # Clear before asking for jump input
             try:
-                page_num_str = input(f"Enter page number (1-{num_pages}): ")
+                page_num_str = input(f"Current Page: {current_page_index + 1}/{num_pages}. Enter page number to jump to (1-{num_pages}): ")
                 page_num = int(page_num_str)
                 if 1 <= page_num <= num_pages:
                     current_page_index = page_num - 1
@@ -241,32 +265,40 @@ def page_explorer(pickle_data, confluence_base_url):
                         view_mode = 'cleaned_snippet'
                     else:
                         view_mode = 'raw_snippet'
-                    current_cleaned_text = None # Reset cleaned text cache
+                    current_cleaned_text = None 
                 else:
                     print("Invalid page number.")
+                    if platform.system() == "Windows":
+                        print("Press any key to continue...")
+                        msvcrt.getch()
+                    else:
+                        input("Press Enter to continue...")
             except ValueError:
                 print("Invalid input. Please enter a number.")
-        elif action == 'r': # View Raw Content
+                if platform.system() == "Windows":
+                    print("Press any key to continue...")
+                    msvcrt.getch()
+                else:
+                    input("Press Enter to continue...")
+            # Loop will continue, clear console, and redraw the new page or current page if jump failed
+        elif action == 'r': 
             if view_mode == 'cleaned_snippet':
                 view_mode = 'raw_snippet'
             elif view_mode == 'cleaned_full':
                 view_mode = 'raw_full'
-            # If already raw, no change to view_mode, but print status
-            print(f"Displaying {view_mode.replace('_', ' ')}.")
-        elif action == 'c': # View Cleaned Content
+            # print(f"Displaying {view_mode.replace('_', ' ')}.") # Message will be overwritten by clear_console
+        elif action == 'c': 
             if view_mode == 'raw_snippet':
                 view_mode = 'cleaned_snippet'
             elif view_mode == 'raw_full':
                 view_mode = 'cleaned_full'
-            # If already cleaned, no change to view_mode, but print status
             
-            # Ensure cleaned text is generated if switching to or already in a cleaned view
             if current_cleaned_text is None and page.get('body', ''):
                 current_cleaned_text = clean_confluence_html(page.get('body', ''))
             elif not page.get('body', ''):
-                 current_cleaned_text = "" # Handle case where there's no body to clean
-            print(f"Displaying {view_mode.replace('_', ' ')}.")
-        elif action == 'f': # Toggle Full/Snippet
+                 current_cleaned_text = ""
+            # print(f"Displaying {view_mode.replace('_', ' ')}.")
+        elif action == 'f': 
             if view_mode == 'raw_snippet':
                 view_mode = 'raw_full'
             elif view_mode == 'raw_full':
@@ -275,12 +307,12 @@ def page_explorer(pickle_data, confluence_base_url):
                 view_mode = 'cleaned_full'
             elif view_mode == 'cleaned_full':
                 view_mode = 'cleaned_snippet'
-            print(f"Displaying {view_mode.replace('_', ' ')}.")
+            # print(f"Displaying {view_mode.replace('_', ' ')}.")
         elif action == 'q':
+            clear_console()
             break
-        else:
-            print("Invalid option.")
-
+        # else: # No explicit "invalid option" needed for single key, or it flashes too fast
+            # if platform.system() != "Windows": print("Invalid option.") # Only show for Enter-based input
 
 def print_content_size_bar_chart(pickle_data):
     """Prints a text-based bar chart of page content sizes in KB."""
@@ -324,7 +356,6 @@ def print_content_size_bar_chart(pickle_data):
 
     print("\nNote: Bar length is proportional to content size.")
 
-
 def print_content_size_list_sorted(pickle_data, smallest_first=True):
     """Prints a list of pages sorted by their content size in KB."""
     sampled_pages = pickle_data.get('sampled_pages', [])
@@ -360,7 +391,6 @@ def print_content_size_list_sorted(pickle_data, smallest_first=True):
         display_title = (title[:max_title_len-3] + '...') if len(title) > max_title_len else title
         
         print(f"{display_title:<{max_title_len}} (ID: {page_id}) - {size_kb:.2f} KB")
-
 
 def list_and_select_pickled_space():
     """Lists available _full.pkl files and allows user to select one by number or space key."""
@@ -444,7 +474,6 @@ def list_and_select_pickled_space():
         except ValueError:
             print("Invalid input. Please enter a number (from the list), a valid space key, or 'q'.")
 
-
 def run_explorer_for_space(pickle_data, confluence_base_url):
     """Runs the main explorer menu loop for the loaded pickle data."""
     while True:
@@ -479,7 +508,6 @@ def run_explorer_for_space(pickle_data, confluence_base_url):
             break
         else:
             print("Invalid choice. Please try again.")
-
 
 def main():
     """Main function to handle argument parsing and initiate the space exploration."""
