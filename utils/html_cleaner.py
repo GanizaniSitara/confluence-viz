@@ -99,11 +99,20 @@ def clean_confluence_html(html_content: str) -> str:
     """
     Cleans Confluence HTML content by removing/replacing specific macros 
     and then extracting text with improved readability.
+    Headings (h1-h6) are converted to Markdown-style headings.
     """
     if not html_content:
         return ""
 
     soup = BeautifulSoup(html_content, 'html.parser')
+
+    # Handle headings first: convert h1-h6 to Markdown style
+    for i in range(1, 7):
+        for header in soup.find_all(f'h{i}'):
+            header_text = header.get_text(strip=True)
+            # Ensure newlines before and after, and hashes at both ends
+            markdown_header = f"\\n{'#' * i} {header_text} {'#' * i}\\n"
+            header.replace_with(soup.new_string(markdown_header))
 
     # Find all structured macros
     macros = soup.find_all(lambda tag: tag.has_attr('ac:name'))
