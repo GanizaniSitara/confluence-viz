@@ -110,9 +110,30 @@ def clean_confluence_html(html_content: str) -> str:
     for i in range(1, 7):
         for header in soup.find_all(f'h{i}'):
             header_text = header.get_text(strip=True)
+            # Remove excessive backslashes, leaving only one if present
+            header_text = re.sub(r'\\\\+', r'\\\\', header_text)
             # Ensure newlines before and after, and hashes at both ends
             markdown_header = f"\\n{'#' * i} {header_text} {'#' * i}\\n"
             header.replace_with(soup.new_string(markdown_header))
+
+    # Handle lists (ul/li)
+    for ul in soup.find_all('ul'):
+        list_items_text = []
+        for li in ul.find_all('li', recursive=False): # Process only direct children li
+            # Recursively clean inner HTML of li, then get text
+            # This allows nested lists or other elements within li to be processed
+            # by subsequent rules if necessary, or their text extracted.
+            # For simple lists, direct get_text might be enough.
+            # However, to handle potential nested structures or macros inside li,
+            # we can clean its content first.
+            # For now, let's keep it simple and improve if needed.
+            item_text = li.get_text(separator=' ', strip=True)
+            if item_text: # Add only if there's text
+                list_items_text.append(f"  - {item_text}")
+        if list_items_text:
+            ul.replace_with(soup.new_string("\n" + "\n".join(list_items_text) + "\n"))
+        else:
+            ul.decompose() # Remove empty lists
 
     # Find all structured macros
     macros = soup.find_all(lambda tag: tag.has_attr('ac:name'))
