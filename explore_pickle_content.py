@@ -178,8 +178,6 @@ def display_page_content(page, confluence_base_url, view_mode, cleaned_text_cont
             pretty_html = soup.prettify()
             # Attempt to make output less verbose by removing newlines around simple text content
             pretty_html = re.sub(r'>\s*\n\s*([^<>\n]+?)\s*\n\s*<', r'>\1<', pretty_html)
-            # Further collapse newlines between tags if there's no intermediate text
-            pretty_html = re.sub(r'>\s*\n\s*<', '><', pretty_html)
             lines = pretty_html.splitlines()
             snippet = "\n".join(lines[:SNIPPET_LINES])
             print(snippet)
@@ -195,8 +193,6 @@ def display_page_content(page, confluence_base_url, view_mode, cleaned_text_cont
             pretty_html = soup.prettify()
             # Attempt to make output less verbose by removing newlines around simple text content
             pretty_html = re.sub(r'>\s*\n\s*([^<>\n]+?)\s*\n\s*<', r'>\1<', pretty_html)
-            # Further collapse newlines between tags if there's no intermediate text
-            pretty_html = re.sub(r'>\s*\n\s*<', '><', pretty_html)
             print(pretty_html)
         else:
             print("[NO RAW CONTENT]")
