@@ -358,6 +358,11 @@ def export_marked_pages_to_txt(pickle_data, current_pickle_file_path): # MODIFIE
 
     if count_marked == 0:
         print("\nNo pages were marked for export.")
+        print("\nPress any key to return to the menu...")
+        if platform.system() == "Windows":
+            msvcrt.getch()
+        else:
+            input()
     elif exported_files_count > 0:
         print(f"\nSuccessfully exported {exported_files_count} marked page(s) to directory: {export_target_dir}")
         print("\nPress any key to return to the menu...")
@@ -367,6 +372,11 @@ def export_marked_pages_to_txt(pickle_data, current_pickle_file_path): # MODIFIE
             input()
     else:
         print("\nPages were marked, but no files were successfully exported. Check for errors above.")
+        print("\nPress any key to return to the menu...")
+        if platform.system() == "Windows":
+            msvcrt.getch()
+        else:
+            input()
 
 def print_content_size_bar_chart(pickle_data):
     """Prints a text-based bar chart of page content sizes in KB."""
@@ -509,43 +519,12 @@ def list_and_select_pickled_space():
     print("q. Quit to main menu")
 
     while True:
-        # MODIFIED: Switched to msvcrt.getch() for immediate 'q' and custom input handling
-        print("Select a space by number (from the list above) or space key (or 'q' to quit to main menu): ", end='', flush=True)
-        choice_str_chars = []
-        while True:
-            if platform.system() == "Windows":
-                char_byte = msvcrt.getch()
-                try:
-                    char = char_byte.decode().lower()
-                    
-                    if char == 'q':
-                        print(char) # Echo 'q'
-                        clear_console()
-                        return None # Quit immediately
-                    elif char == '\\r': # Enter key
-                        print() # Move to next line
-                        break
-                    elif char == '\\x08': # Backspace
-                        if choice_str_chars:
-                            choice_str_chars.pop()
-                            print('\\b \\b', end='', flush=True) # Erase char from console
-                    elif char.isprintable(): # Regular character
-                        choice_str_chars.append(char)
-                        print(char, end='', flush=True) # Echo character
-                    # Ignore other non-printable characters for simplicity
-                except UnicodeDecodeError:
-                    # Could be an arrow key or other special key, ignore for this input
-                    pass # Or print a small indicator if desired
-            else: # Fallback for non-Windows (should not be hit based on user's constraint)
-                # This part will behave as before, requiring Enter for 'q'
-                temp_choice = input("").strip() # Get full input line
-                if temp_choice.lower() == 'q':
-                    clear_console()
-                    return None
-                choice_str_chars = list(temp_choice) # Use this input
-                break 
+        # REVERTED: Use standard input() for all choices in this menu
+        choice_str = input("Select a space by number (from the list above) or space key (or 'q' to quit to main menu): ").strip()
         
-        choice_str = "".join(choice_str_chars).strip()
+        if choice_str.lower() == 'q':
+            clear_console()
+            return None # Quit
 
         if not choice_str: # If only Enter was pressed or input was all spaces
             print("Invalid input. Please enter a number, a valid space key, or 'q'.")
