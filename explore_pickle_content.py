@@ -173,7 +173,9 @@ def display_page_content(page, confluence_base_url, view_mode, cleaned_text_cont
         print(f"\n--- {title} ---") # MODIFIED: Title formatted as --- title --- before content type
         print("--- Raw HTML (Snippet) ---") # MODIFIED: Header on new line
         if body:
-            lines = body.splitlines()
+            soup = BeautifulSoup(body, 'html.parser')
+            pretty_html = soup.prettify()
+            lines = pretty_html.splitlines()
             snippet = "\n".join(lines[:SNIPPET_LINES])
             print(snippet)
             if len(lines) > SNIPPET_LINES:
@@ -183,7 +185,11 @@ def display_page_content(page, confluence_base_url, view_mode, cleaned_text_cont
     elif view_mode == 'raw_full':
         print(f"\n--- {title} ---") # MODIFIED: Title formatted as --- title --- before content type
         print("--- Raw HTML (Full) ---") # MODIFIED: Header on new line
-        print(body if body else "[NO RAW CONTENT]")
+        if body:
+            soup = BeautifulSoup(body, 'html.parser')
+            print(soup.prettify())
+        else:
+            print("[NO RAW CONTENT]")
     elif view_mode == 'cleaned_snippet':
         print(f"\n--- {title} ---") # MODIFIED: Title formatted as --- title --- before content type
         print("--- CLEAN (Snippet) ---") # MODIFIED: Header on new line
