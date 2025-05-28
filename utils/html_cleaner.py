@@ -113,7 +113,7 @@ def clean_confluence_html(html_content: str) -> str:
             # Remove excessive backslashes, leaving only one if present
             header_text = re.sub(r'\\\\+', r'\\\\', header_text)
             # Ensure newlines before and after, and hashes at both ends
-            markdown_header = f"\\n{'#' * i} {header_text} {'#' * i}\\n"
+            markdown_header = f"\n{'#' * i} {header_text} {'#' * i}"
             header.replace_with(soup.new_string(markdown_header))
 
     # Handle lists (ul/li)
