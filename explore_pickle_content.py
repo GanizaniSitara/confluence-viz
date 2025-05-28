@@ -160,6 +160,7 @@ def display_page_content(page, confluence_base_url, view_mode, cleaned_text_cont
     print(f"Version (Update Count): {update_count}")
     print(f"Hierarchy Level: {level}")
     print(f"Parent ID: {parent_id}")
+    print(f"Marked for LLM: {page.get('marked_for_llm', False)}") # ADDED: Display mark status
     
     if confluence_base_url and page_id != 'N/A':
         page_url = f"{confluence_base_url}/pages/viewpage.action?pageId={page_id}"
@@ -226,7 +227,7 @@ def page_explorer(pickle_data, confluence_base_url):
         
         print(f"\nPage {current_page_index + 1} of {num_pages}")
         current_view_display = view_mode.replace('_', ' ')
-        prompt_text = f"Options: (n)ext, (p)revious, (j)ump, (r)aw, (c)leaned, (f)ull/snippet, (q)uit [View: {current_view_display}]: "
+        prompt_text = f"Options: (n)ext, (p)revious, (j)ump, (m)ark/unmark, (r)aw, (c)leaned, (f)ull/snippet, (q)uit [View: {current_view_display}]: " # MODIFIED: Added (m)ark
         print(prompt_text, end='', flush=True)
 
         action = ''
@@ -246,17 +247,9 @@ def page_explorer(pickle_data, confluence_base_url):
 
         if action == 'n':
             current_page_index = min(current_page_index + 1, num_pages - 1)
-            if view_mode.startswith('cleaned'):
-                view_mode = 'cleaned_snippet'
-            else:
-                view_mode = 'raw_snippet'
             current_cleaned_text = None 
         elif action == 'p':
             current_page_index = max(current_page_index - 1, 0)
-            if view_mode.startswith('cleaned'):
-                view_mode = 'cleaned_snippet'
-            else:
-                view_mode = 'raw_snippet'
             current_cleaned_text = None 
         elif action == 'j':
             clear_console() # Clear before asking for jump input
@@ -265,10 +258,6 @@ def page_explorer(pickle_data, confluence_base_url):
                 page_num = int(page_num_str)
                 if 1 <= page_num <= num_pages:
                     current_page_index = page_num - 1
-                    if view_mode.startswith('cleaned'):
-                        view_mode = 'cleaned_snippet'
-                    else:
-                        view_mode = 'raw_snippet'
                     current_cleaned_text = None 
                 else:
                     print("Invalid page number.")
@@ -285,6 +274,15 @@ def page_explorer(pickle_data, confluence_base_url):
                 else:
                     input("Press Enter to continue...")
             # Loop will continue, clear console, and redraw the new page or current page if jump failed
+        elif action == 'm': # ADDED: Toggle mark status
+            page = sampled_pages[current_page_index]
+            page['marked_for_llm'] = not page.get('marked_for_llm', False)
+            print(f"Page '{page.get('title')}' marked_for_llm: {page['marked_for_llm']}")
+            # Short pause to see the confirmation
+            if platform.system() == "Windows":
+                msvcrt.getch() # Consumes the key press for the confirmation
+            else:
+                input("Press Enter to continue...") # Requires enter on other systems
         elif action == 'r': 
             if view_mode == 'cleaned_snippet':
                 view_mode = 'raw_snippet'
@@ -312,11 +310,58 @@ def page_explorer(pickle_data, confluence_base_url):
             elif view_mode == 'cleaned_full':
                 view_mode = 'cleaned_snippet'
             # print(f"Displaying {view_mode.replace('_', ' ')}.")
+        elif action == '6': # ADDED: Export marked pages
+            export_marked_pages_to_txt(pickle_data, pickle_file_path) # pickle_file_path is from run_explorer_for_space scope
+            print("Press any key to return to the explorer menu...")
+            if platform.system() == "Windows":
+                msvcrt.getch()
+            else:
+                input()
+            clear_console()
         elif action == 'q':
             clear_console()
             break
         # else: # No explicit "invalid option" needed for single key, or it flashes too fast
             # if platform.system() != "Windows": print("Invalid option.") # Only show for Enter-based input
+
+def export_marked_pages_to_txt(pickle_data, current_pickle_file_path): # MODIFIED: Renamed parameter for clarity
+    """Exports marked pages (title, ID, cleaned content) to a .txt file in the same directory as the pickle file."""
+    space_key = pickle_data.get('space_key', 'UNKNOWN_SPACE')
+    # Ensure output_dir is derived from the pickle_file_path passed to run_explorer_for_space
+    output_dir = os.path.dirname(current_pickle_file_path) 
+    output_txt_filename = f"{space_key}.txt"
+    output_txt_filepath = os.path.join(output_dir, output_txt_filename)
+
+    marked_pages_data = []
+    count_marked = 0
+
+    for page in pickle_data.get('sampled_pages', []):
+        if page.get('marked_for_llm', False):
+            count_marked += 1
+            title = page.get('title', 'No Title')
+            page_id = page.get('id', 'N/A')
+            raw_html_body = page.get('body', '')
+            # Ensure clean_confluence_html is available or imported if not already
+            cleaned_text = clean_confluence_html(raw_html_body) if raw_html_body else "[NO CONTENT]"
+            
+            page_export_string = (
+                f"Page Title: {title}\n"
+                f"Page ID: {page_id}\n\n"
+                f"{cleaned_text}\n\n"
+                f"{'='*80}\n\n"
+            )
+            marked_pages_data.append(page_export_string)
+
+    if count_marked > 0:
+        full_export_text = "".join(marked_pages_data)
+        try:
+            with open(output_txt_filepath, 'w', encoding='utf-8') as f:
+                f.write(full_export_text)
+            print(f"\nSuccessfully exported {count_marked} marked page(s) to: {output_txt_filepath}")
+        except Exception as e:
+            print(f"\nError exporting marked pages to {output_txt_filepath}: {e}")
+    else:
+        print("\nNo pages were marked for export.")
 
 def print_content_size_bar_chart(pickle_data):
     """Prints a text-based bar chart of page content sizes in KB."""
@@ -478,7 +523,7 @@ def list_and_select_pickled_space():
         except ValueError:
             print("Invalid input. Please enter a number (from the list), a valid space key, or 'q'.")
 
-def run_explorer_for_space(pickle_data, confluence_base_url):
+def run_explorer_for_space(pickle_data, confluence_base_url, pickle_file_path):
     """Runs the main explorer menu loop for the loaded pickle data."""
     while True:
         print("\n--- Pickle Explorer Menu ---")
@@ -493,8 +538,9 @@ def run_explorer_for_space(pickle_data, confluence_base_url):
         print("2. Display Content Size Bar Chart (KB)")
         print("3. List Pages by Size (Smallest to Largest)")
         print("4. List Pages by Size (Largest to Smallest)")
-        print("5. Explore Pages (Paginator)")
-        print("q. Quit to main menu / Select another space") # Changed from 'b.'
+        print("5. Explore Pages (Paginator & Mark Pages)") # MODIFIED for clarity
+        print("6. Export Marked Pages to TXT") # ADDED
+        print("q. Quit to main menu / Select another space")
         choice = input("Enter your choice: ").strip().lower()
 
         if choice == '1':
@@ -506,7 +552,31 @@ def run_explorer_for_space(pickle_data, confluence_base_url):
         elif choice == '4':
             print_content_size_list_sorted(pickle_data, smallest_first=False)
         elif choice == '5':
-            page_explorer(pickle_data, confluence_base_url)
+            page_explorer(pickle_data, confluence_base_url) # pickle_data is modified in-place
+            # Save changes after page_explorer returns
+            try:
+                with open(pickle_file_path, 'wb') as f:
+                    pickle.dump(pickle_data, f)
+                print(f"\nPage markings saved to {pickle_file_path}.")
+            except Exception as e:
+                print(f"\nError saving page markings to {pickle_file_path}: {e}")
+            
+            # Pause to allow user to see the save message before clearing for menu
+            print("Press any key to return to the explorer menu...")
+            if platform.system() == "Windows":
+                msvcrt.getch()
+            else:
+                input() 
+            clear_console() # Clear console before showing menu again
+
+        elif choice == '6': # ADDED: Export marked pages
+            export_marked_pages_to_txt(pickle_data, pickle_file_path) # pickle_file_path is from run_explorer_for_space scope
+            print("Press any key to return to the explorer menu...")
+            if platform.system() == "Windows":
+                msvcrt.getch()
+            else:
+                input()
+            clear_console()
         elif choice == 'q': # Changed from 'b'
             print("Returning to main menu...")
             break
@@ -567,44 +637,43 @@ def main():
                 space_display_name = pickle_data.get('name', pickle_data.get('space_key', 'Unknown Space'))
                 space_key_display = pickle_data.get('space_key', 'N/A')
                 print(f"Loaded data for space: {space_display_name} ({space_key_display})")
-                run_explorer_for_space(pickle_data, confluence_base_url) # <--- MODIFIED HERE
+                # MODIFIED: Pass actual_pickle_file_path for saving
+                run_explorer_for_space(pickle_data, confluence_base_url, actual_pickle_file_path)
             except Exception as e:
                 print(f"Error loading pickle file {actual_pickle_file_path}: {e}")
                 sys.exit(1)
         else:
             print(f"Pickle file for space key '{space_key_upper}' not found in specified local ('{cli_load_pickle_dir}') or remote ('{remote_full_pickle_dir or 'Not configured'}') directories.")
-            # Fall through to listing available spaces
-            selected_pickle_file = list_and_select_pickled_space() # This handles remote dir logic internally
-            if selected_pickle_file:
-                try:
-                    with open(selected_pickle_file, 'rb') as f:
-                        pickle_data = pickle.load(f)
-                    space_display_name = pickle_data.get('name', pickle_data.get('space_key', 'Unknown Space'))
-                    space_key_display = pickle_data.get('space_key', 'N/A')
-                    print(f"Loaded data for space: {space_display_name} ({space_key_display})")
-                    run_explorer_for_space(pickle_data, confluence_base_url) # <--- MODIFIED HERE
-                except Exception as e:
-                    print(f"Error loading selected pickle file {selected_pickle_file}: {e}")
-                    sys.exit(1)
-            else:
-                print("No space selected. Exiting.")
-                sys.exit(0)
-    else:
-        selected_pickle_file = list_and_select_pickled_space() # This handles remote dir logic internally
-        if selected_pickle_file:
+            # Fall through to listing available spaces - this part of the logic might need review
+            # if we want to exit or force selection. For now, it will proceed to list.
+
+    # This block will now run if args.space_key was not provided OR if the specified space_key was not found.
+    if not args.space_key or not actual_pickle_file_path: 
+        while True: # Loop for selecting spaces if no valid CLI arg or if CLI arg file not found
+            selected_pickle_file = list_and_select_pickled_space()
+            if not selected_pickle_file:
+                print("Exiting explorer.")
+                break # Exit the loop, and thus main()
+
             try:
                 with open(selected_pickle_file, 'rb') as f:
                     pickle_data = pickle.load(f)
                 space_display_name = pickle_data.get('name', pickle_data.get('space_key', 'Unknown Space'))
                 space_key_display = pickle_data.get('space_key', 'N/A')
-                print(f"Loaded data for space: {space_display_name} ({space_key_display})")
-                run_explorer_for_space(pickle_data, confluence_base_url) # <--- MODIFIED HERE
+                print(f"\nLoaded data for space: {space_display_name} ({space_key_display})")
+                # MODIFIED: Pass selected_pickle_file for saving
+                run_explorer_for_space(pickle_data, confluence_base_url, selected_pickle_file)
+            except FileNotFoundError:
+                print(f"Error: Pickle file not found at {selected_pickle_file}")
             except Exception as e:
-                print(f"Error loading selected pickle file {selected_pickle_file}: {e}")
-                sys.exit(1)
-        else:
-            print("No space selected. Exiting.")
-            sys.exit(0)
+                print(f"Error loading or processing pickle file {selected_pickle_file}: {e}")
+            
+            print("\nPress any key to return to space selection, or 'q' at selection to quit...")
+            if platform.system() == "Windows":
+                msvcrt.getch()
+            else:
+                input()
+            clear_console()
 
 if __name__ == "__main__":
     main()
