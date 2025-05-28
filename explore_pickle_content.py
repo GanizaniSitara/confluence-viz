@@ -390,6 +390,73 @@ def export_marked_pages_to_txt(pickle_data, current_pickle_file_path): # MODIFIE
         else:
             input()
 
+def export_all_pages_to_txt(pickle_data, current_pickle_file_path):
+    """Exports all pages (title, ID, cleaned content) to individual .txt files
+    in a subdirectory named <SPACEKEY>_all_exported.
+    """
+    space_key = pickle_data.get('space_key', 'UNKNOWN_SPACE')
+    base_export_dir = os.path.dirname(current_pickle_file_path)
+    export_target_dir = os.path.join(base_export_dir, f"{space_key}_all_exported")
+
+    try:
+        os.makedirs(export_target_dir, exist_ok=True)
+    except Exception as e:
+        print(f"\nError creating directory {export_target_dir}: {e}")
+        return
+
+    exported_files_count = 0
+    total_pages_to_export = len(pickle_data.get('sampled_pages', []))
+
+    if total_pages_to_export == 0:
+        print("\nNo pages found in the pickle to export.")
+        print("\nPress any key to return to the menu...")
+        if platform.system() == "Windows":
+            msvcrt.getch()
+        else:
+            input()
+        return
+
+    for page in pickle_data.get('sampled_pages', []):
+        title = page.get('title', 'No Title')
+        page_id = page.get('id', None)
+
+        if not page_id:
+            print(f"Skipping page '{title}' due to missing page ID.")
+            continue
+
+        raw_html_body = page.get('body', '')
+        cleaned_text_from_function = clean_confluence_html(raw_html_body)
+        
+        final_body_for_export = cleaned_text_from_function if cleaned_text_from_function else "[NO CONTENT AFTER CLEANING or NO RAW CONTENT]"
+        
+        file_content = (
+            f"Page Title: {title}\n"
+            f"Page ID: {page_id}\n\n"
+            f"{final_body_for_export}\n"
+        )
+        
+        output_txt_filename = f"{page_id}.txt"
+        output_txt_filepath = os.path.join(export_target_dir, output_txt_filename)
+
+        try:
+            with open(output_txt_filepath, 'w', encoding='utf-8') as f:
+                f.write(file_content)
+            exported_files_count += 1
+        except Exception as e:
+            print(f"\nError writing file {output_txt_filepath}: {e}")
+
+    if exported_files_count > 0:
+        print(f"\nSuccessfully exported {exported_files_count} page(s) to directory: {export_target_dir}")
+    elif total_pages_to_export > 0 : # Some pages existed but none were exported
+        print(f"\nAttempted to export {total_pages_to_export} pages, but no files were successfully exported. Check for errors above.")
+    # No "no pages marked" message needed here as we are exporting all.
+
+    print("\nPress any key to return to the menu...")
+    if platform.system() == "Windows":
+        msvcrt.getch()
+    else:
+        input()
+
 def print_content_size_bar_chart(pickle_data):
     """Prints a text-based bar chart of page content sizes in KB."""
     sampled_pages = pickle_data.get('sampled_pages', [])
@@ -577,6 +644,7 @@ def run_explorer_for_space(pickle_data, confluence_base_url, pickle_file_path):
         print("4. List Pages by Size (Largest to Smallest)")
         print("5. Explore Pages (Paginator & Mark Pages)") # MODIFIED for clarity
         print("6. Export Marked Pages to TXT") # ADDED: Export option
+        print("7. Export All Pages to TXT") # NEW: Export all option
         print("q. Quit to main menu / Select another space")
         print("Enter your choice: ", end='', flush=True) # MODIFIED: print without newline, flush
 
@@ -631,6 +699,10 @@ def run_explorer_for_space(pickle_data, confluence_base_url, pickle_file_path):
             clear_console()
             export_marked_pages_to_txt(pickle_data, pickle_file_path)
             # The export function already has a "press any key" prompt
+        elif choice == '7': # NEW: Handler for export all option
+            clear_console()
+            export_all_pages_to_txt(pickle_data, pickle_file_path)
+            # This new export function will also have a "press any key" prompt
         elif choice == 'q':
             clear_console()
             break
