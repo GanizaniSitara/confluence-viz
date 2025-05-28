@@ -9,6 +9,7 @@ if platform.system() == "Windows":
     import msvcrt
 import numpy as np # Added import for numpy
 import sys # Added import for sys
+import re # ADDED
 from bs4 import BeautifulSoup # Ensured bs4 is imported
 from config_loader import load_confluence_settings, load_visualization_settings
 from utils.html_cleaner import clean_confluence_html
@@ -175,6 +176,8 @@ def display_page_content(page, confluence_base_url, view_mode, cleaned_text_cont
         if body:
             soup = BeautifulSoup(body, 'html.parser')
             pretty_html = soup.prettify()
+            # Attempt to make output less verbose by removing newlines around simple text content
+            pretty_html = re.sub(r'>\\s*\\n\\s*([^<>\\n]+?)\\s*\\n\\s*<', r'>\\1<', pretty_html)
             lines = pretty_html.splitlines()
             snippet = "\n".join(lines[:SNIPPET_LINES])
             print(snippet)
@@ -187,7 +190,10 @@ def display_page_content(page, confluence_base_url, view_mode, cleaned_text_cont
         print("--- Raw HTML (Full) ---") # MODIFIED: Header on new line
         if body:
             soup = BeautifulSoup(body, 'html.parser')
-            print(soup.prettify())
+            pretty_html = soup.prettify()
+            # Attempt to make output less verbose by removing newlines around simple text content
+            pretty_html = re.sub(r'>\\s*\\n\\s*([^<>\\n]+?)\\s*\\n\\s*<', r'>\\1<', pretty_html)
+            print(pretty_html)
         else:
             print("[NO RAW CONTENT]")
     elif view_mode == 'cleaned_snippet':
