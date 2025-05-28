@@ -325,43 +325,61 @@ def page_explorer(pickle_data, confluence_base_url):
             # if platform.system() != "Windows": print("Invalid option.") # Only show for Enter-based input
 
 def export_marked_pages_to_txt(pickle_data, current_pickle_file_path): # MODIFIED: Renamed parameter for clarity
-    """Exports marked pages (title, ID, cleaned content) to a .txt file in the same directory as the pickle file."""
+    """Exports marked pages (title, ID, cleaned content) to individual .txt files
+    in a subdirectory named <SPACEKEY>_marked_exported.
+    """
     space_key = pickle_data.get('space_key', 'UNKNOWN_SPACE')
-    # Ensure output_dir is derived from the pickle_file_path passed to run_explorer_for_space
-    output_dir = os.path.dirname(current_pickle_file_path) 
-    output_txt_filename = f"{space_key}.txt"
-    output_txt_filepath = os.path.join(output_dir, output_txt_filename)
+    base_export_dir = os.path.dirname(current_pickle_file_path)
+    export_target_dir = os.path.join(base_export_dir, f"{space_key}_marked_exported")
 
-    marked_pages_data = []
+    try:
+        os.makedirs(export_target_dir, exist_ok=True)
+    except Exception as e:
+        print(f"\nError creating directory {export_target_dir}: {e}")
+        return
+
     count_marked = 0
+    exported_files_count = 0
 
     for page in pickle_data.get('sampled_pages', []):
         if page.get('marked_for_llm', False):
             count_marked += 1
             title = page.get('title', 'No Title')
-            page_id = page.get('id', 'N/A')
+            page_id = page.get('id', None)
+
+            if not page_id:
+                print(f"Skipping page '{title}' due to missing page ID.")
+                continue
+
             raw_html_body = page.get('body', '')
-            # Ensure clean_confluence_html is available or imported if not already
-            cleaned_text = clean_confluence_html(raw_html_body) if raw_html_body else "[NO CONTENT]"
+            # Consistently use clean_confluence_html for all bodies
+            cleaned_text_from_function = clean_confluence_html(raw_html_body)
             
-            page_export_string = (
+            # Use the same placeholder as the console for empty cleaned content
+            final_body_for_export = cleaned_text_from_function if cleaned_text_from_function else "[NO CONTENT AFTER CLEANING or NO RAW CONTENT]"
+            
+            file_content = (
                 f"Page Title: {title}\n"
                 f"Page ID: {page_id}\n\n"
-                f"{cleaned_text}\n\n"
-                f"{'='*80}\n\n"
+                f"{final_body_for_export}\n"
             )
-            marked_pages_data.append(page_export_string)
+            
+            output_txt_filename = f"{page_id}.txt"
+            output_txt_filepath = os.path.join(export_target_dir, output_txt_filename)
 
-    if count_marked > 0:
-        full_export_text = "".join(marked_pages_data)
-        try:
-            with open(output_txt_filepath, 'w', encoding='utf-8') as f:
-                f.write(full_export_text)
-            print(f"\nSuccessfully exported {count_marked} marked page(s) to: {output_txt_filepath}")
-        except Exception as e:
-            print(f"\nError exporting marked pages to {output_txt_filepath}: {e}")
-    else:
+            try:
+                with open(output_txt_filepath, 'w', encoding='utf-8') as f:
+                    f.write(file_content)
+                exported_files_count += 1
+            except Exception as e:
+                print(f"\nError writing file {output_txt_filepath}: {e}")
+
+    if count_marked == 0:
         print("\nNo pages were marked for export.")
+    elif exported_files_count > 0:
+        print(f"\nSuccessfully exported {exported_files_count} marked page(s) to directory: {export_target_dir}")
+    else:
+        print("\nPages were marked, but no files were successfully exported. Check for errors above.")
 
 def print_content_size_bar_chart(pickle_data):
     """Prints a text-based bar chart of page content sizes in KB."""
@@ -443,6 +461,8 @@ def print_content_size_list_sorted(pickle_data, smallest_first=True):
 
 def list_and_select_pickled_space():
     """Lists available _full.pkl files and allows user to select one by number or space key."""
+    clear_console() # ADDED: Clear console before displaying menu
+    clear_console()
     # Determine the directory to scan for pickles
     pickle_dir_to_scan = os.path.join(OUTPUT_DIR, FULL_PICKLE_SUBDIR) # Default local path
     remote_pickle_dir = None
@@ -526,6 +546,7 @@ def list_and_select_pickled_space():
 def run_explorer_for_space(pickle_data, confluence_base_url, pickle_file_path):
     """Runs the main explorer menu loop for the loaded pickle data."""
     while True:
+        clear_console() # ADDED: Clear console before displaying menu
         print("\n--- Pickle Explorer Menu ---")
         space_key_display = pickle_data.get('space_key', 'N/A')
         space_name_display = pickle_data.get('name', 'N/A')
