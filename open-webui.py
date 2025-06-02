@@ -17,7 +17,7 @@ from requests.auth import HTTPBasicAuth
 import logging
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Try to import python-docx and python-pptx for conversion
@@ -44,15 +44,21 @@ class OpenWebUIClient:
     def authenticate(self) -> bool:
         """Authenticate with Open-WebUI"""
         try:
-            # Try to get auth token
             auth_url = f"{self.base_url}/api/v1/auths/signin"
+            logger.debug(f"Authenticating at {auth_url} with user {self.username}")
             response = self.session.post(auth_url, json={
                 "email": self.username,
                 "password": self.password
             })
+            logger.debug(f"Auth response status: {response.status_code}")
+            logger.debug(f"Auth response content: {response.text}")
             
             if response.status_code == 200:
-                data = response.json()
+                try:
+                    data = response.json()
+                except ValueError as e:
+                    logger.error(f"Error decoding auth JSON: {e}")
+                    return False
                 self.auth_token = data.get("token")
                 if self.auth_token:
                     self.session.headers.update({
@@ -72,10 +78,17 @@ class OpenWebUIClient:
         """Get all files from Open-WebUI"""
         try:
             files_url = f"{self.base_url}/api/v1/files"
+            logger.debug(f"Requesting file list from {files_url}")
             response = self.session.get(files_url)
+            logger.debug(f"Get files response status: {response.status_code}")
+            logger.debug(f"Get files response content: {response.text}")
             
             if response.status_code == 200:
-                return response.json()
+                try:
+                    return response.json()
+                except ValueError as e:
+                    logger.error(f"Error decoding files JSON: {e}")
+                    return []
             else:
                 logger.error(f"Failed to get files: {response.status_code}")
                 return []
@@ -88,12 +101,16 @@ class OpenWebUIClient:
         """Download a file by ID"""
         try:
             download_url = f"{self.base_url}/api/v1/files/{file_id}/content"
+            logger.debug(f"Downloading {file_name} from {download_url}")
             response = self.session.get(download_url)
+            logger.debug(f"Download response status for {file_name}: {response.status_code}")
+            logger.debug(f"Download response headers for {file_name}: {response.headers}")
             
             if response.status_code == 200:
                 return response.content
             else:
                 logger.error(f"Failed to download {file_name}: {response.status_code}")
+                logger.debug(f"Download response content for {file_name}: {response.text}")
                 return None
                 
         except Exception as e:
@@ -103,26 +120,40 @@ class OpenWebUIClient:
     def create_collection(self, collection_name: str) -> Optional[str]:
         """Create a collection if it doesn't exist"""
         try:
-            # First, check if collection exists
             collections_url = f"{self.base_url}/api/v1/documents/collections"
+            logger.debug(f"Checking existing collections at {collections_url}")
             response = self.session.get(collections_url)
+            logger.debug(f"Get collections response status: {response.status_code}")
+            logger.debug(f"Get collections response content: {response.text}")
             
             if response.status_code == 200:
-                collections = response.json()
+                try:
+                    collections = response.json()
+                except ValueError as e:
+                    logger.error(f"Error decoding collections JSON: {e}")
+                    logger.debug(f"Raw collections response: {response.text}")
+                    return None
                 for collection in collections:
                     if collection.get("name") == collection_name:
                         logger.info(f"Collection '{collection_name}' already exists")
                         return collection.get("id")
             
-            # Create new collection
             create_url = f"{self.base_url}/api/v1/documents/collections/create"
+            logger.debug(f"Creating collection '{collection_name}' at {create_url}")
             response = self.session.post(create_url, json={
                 "name": collection_name,
                 "description": "Office documents collection"
             })
+            logger.debug(f"Create collection response status: {response.status_code}")
+            logger.debug(f"Create collection response content: {response.text}")
             
             if response.status_code == 200:
-                data = response.json()
+                try:
+                    data = response.json()
+                except ValueError as e:
+                    logger.error(f"Error decoding create collection JSON: {e}")
+                    logger.debug(f"Raw create collection response: {response.text}")
+                    return None
                 logger.info(f"Created collection '{collection_name}'")
                 return data.get("id")
             else:
@@ -137,12 +168,15 @@ class OpenWebUIClient:
         """Upload a file to a collection"""
         try:
             upload_url = f"{self.base_url}/api/v1/documents/upload"
+            logger.debug(f"Uploading {file_path.name} to collection {collection_id} at {upload_url}")
             
             with open(file_path, 'rb') as f:
                 files = {'file': (file_path.name, f, 'application/octet-stream')}
                 data = {'collection_id': collection_id}
                 
                 response = self.session.post(upload_url, files=files, data=data)
+                logger.debug(f"Upload response status for {file_path.name}: {response.status_code}")
+                logger.debug(f"Upload response content for {file_path.name}: {response.text}")
                 
                 if response.status_code == 200:
                     logger.info(f"Uploaded {file_path.name} to collection")
@@ -181,6 +215,7 @@ def convert_macro_file(input_path: Path, output_path: Path) -> bool:
         
         # PowerPoint conversions
         if file_ext in ['.pptm', '.ppsm', '.potm']:
+            logger.debug(f"Converting PowerPoint macro file {input_path.name}")
             prs = Presentation(input_path)
             new_path = output_path.with_suffix('.pptx')
             prs.save(new_path)
@@ -189,6 +224,7 @@ def convert_macro_file(input_path: Path, output_path: Path) -> bool:
             
         # Word conversions
         elif file_ext in ['.docm', '.dotm']:
+            logger.debug(f"Converting Word macro file {input_path.name}")
             doc = Document(input_path)
             new_path = output_path.with_suffix('.docx')
             doc.save(new_path)
