@@ -1,10 +1,11 @@
 """
-Open-WebUI Document Extractor (Quiet Mode)
-Extracts Office documents from Open-WebUI and pushes them into a "DOCS" knowledge base.
-Converts macro-enabled files to standard formats when needed.
+Open-WebUI Local Document Uploader
+Scans a local directory for Office documents, converts macro-enabled files if needed,
+uploads them to Open-WebUI, and adds them to the "DOCS" knowledge base.
 """
 
 import sys
+import os
 import tempfile
 import configparser
 from pathlib import Path
@@ -70,44 +71,6 @@ class OpenWebUIClient:
         logger.info("Authentication successful")
         return True
 
-    def get_files(self) -> List[Dict]:
-        """Get all files from Open-WebUI (GET /api/v1/files/)"""
-        files_url = f"{self.base_url}/api/v1/files/"
-        logger.debug(f"GET {files_url}")
-        try:
-            response = self.session.get(files_url)
-            logger.debug(f"GET FILES [{response.status_code}]: {response.text}")
-        except Exception as e:
-            logger.error(f"Exception while listing files: {e}")
-            return []
-
-        if response.status_code != 200:
-            logger.error(f"Failed to list files: HTTP {response.status_code}")
-            return []
-
-        try:
-            return response.json()
-        except ValueError as e:
-            logger.error(f"Error parsing files JSON: {e}")
-            return []
-
-    def download_file(self, file_id: str, file_name: str) -> Optional[bytes]:
-        """Download a file by ID (GET /api/v1/files/{file_id}/content)"""
-        download_url = f"{self.base_url}/api/v1/files/{file_id}/content"
-        logger.debug(f"Downloading '{file_name}' (ID={file_id}) from {download_url}")
-        try:
-            response = self.session.get(download_url)
-            logger.debug(f"DOWNLOAD [{response.status_code}] headers={response.headers}")
-        except Exception as e:
-            logger.error(f"Exception downloading '{file_name}': {e}")
-            return None
-
-        if response.status_code != 200:
-            logger.error(f"Failed to download '{file_name}': HTTP {response.status_code}")
-            return None
-
-        return response.content
-
     def upload_new_file(self, file_path: Path) -> Optional[str]:
         """
         Upload a new file to Open-WebUI (POST /api/v1/files/).
@@ -139,7 +102,7 @@ class OpenWebUIClient:
             logger.error(f"No file ID returned after uploading '{file_path.name}'")
             return None
 
-        logger.info(f"Uploaded '{file_path.name}', new file_id={new_file_id}")
+        logger.info(f"Uploaded '{file_path.name}', file_id={new_file_id}")
         return new_file_id
 
     def list_knowledge_bases(self) -> List[Dict]:
@@ -279,12 +242,28 @@ def convert_macro_file(input_path: Path, output_path: Path) -> bool:
 
     return False
 
+def find_local_office_files(root_dir: str) -> List[Path]:
+    """
+    Recursively walk `root_dir` to find all Office documents.
+    Returns a list of Path objects for matching files.
+    """
+    matches: List[Path] = []
+    for dirpath, _, filenames in os.walk(root_dir):
+        for filename in filenames:
+            if is_office_file(filename):
+                matches.append(Path(dirpath) / filename)
+    return matches
+
 def load_settings(settings_file: str = "settings.ini") -> Dict[str, str]:
     """
     Load settings from INI file. If missing, create an example and exit.
+    Expects:
+      [OpenWebUI]
+      base_url = http://localhost:8080
+      username = your_username
+      password = your_password
+      upload_dir = /path/to/local/documents
     """
-    import configparser
-
     config = configparser.ConfigParser()
     settings_path = Path(settings_file)
 
@@ -294,7 +273,8 @@ def load_settings(settings_file: str = "settings.ini") -> Dict[str, str]:
         example['OpenWebUI'] = {
             'base_url': 'http://localhost:8080',
             'username': 'your_username',
-            'password': 'your_password'
+            'password': 'your_password',
+            'upload_dir': '/path/to/local/documents'
         }
         with open(settings_file, 'w') as f:
             example.write(f)
@@ -306,8 +286,8 @@ def load_settings(settings_file: str = "settings.ini") -> Dict[str, str]:
         logger.error("Missing [OpenWebUI] section in settings.ini")
         sys.exit(1)
 
-    required = ['base_url', 'username', 'password']
-    settings = {}
+    required = ['base_url', 'username', 'password', 'upload_dir']
+    settings: Dict[str, str] = {}
     for key in required:
         if key not in config['OpenWebUI']:
             logger.error(f"Missing '{key}' in [OpenWebUI] section")
@@ -319,18 +299,23 @@ def load_settings(settings_file: str = "settings.ini") -> Dict[str, str]:
 def main() -> int:
     """
     Main process:
-     1. Authenticate
-     2. Create/get 'DOCS' knowledge base
-     3. List all files, filter Office docs
-     4. For each Office file:
-         - If macro-enabled → download → convert → upload → add to KB
-         - If not macro-enabled → add existing file_id to KB
+      1. Authenticate
+      2. Create/get 'DOCS' knowledge base
+      3. Scan local upload_dir for Office documents
+      4. For each local Office file:
+           - If macro-enabled → convert → upload converted → add to KB
+           - If not macro-enabled → upload original → add to KB
     """
     settings = load_settings()
     BASE_URL = settings['base_url']
     USERNAME = settings['username']
     PASSWORD = settings['password']
+    UPLOAD_DIR = settings['upload_dir']
     KB_NAME = "DOCS"
+
+    if not Path(UPLOAD_DIR).exists():
+        logger.error(f"Upload directory '{UPLOAD_DIR}' does not exist. Exiting.")
+        return 1
 
     logger.info(f"Connecting to Open-WebUI at {BASE_URL}")
     client = OpenWebUIClient(BASE_URL, USERNAME, PASSWORD)
@@ -347,15 +332,13 @@ def main() -> int:
         logger.error("Failed to get/create knowledge base. Exiting.")
         return 1
 
-    # 3. List all files in Open-WebUI
-    files = client.get_files()
-    if not files:
-        logger.warning("No files found in Open-WebUI.")
-        return 0
+    # 3. Scan local directory for Office files
+    local_files = find_local_office_files(UPLOAD_DIR)
+    logger.info(f"Found {len(local_files)} Office files in '{UPLOAD_DIR}' to upload.")
 
-    # 4. Filter for Office documents
-    office_files = [f for f in files if is_office_file(f.get('name', ''))]
-    logger.info(f"Found {len(office_files)} Office files.")
+    if not local_files:
+        logger.info("No Office files found locally. Exiting.")
+        return 0
 
     processed = 0
     skipped = 0
@@ -363,31 +346,17 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_dir = Path(tmpdir)
 
-        for file_info in office_files:
-            file_id = file_info.get('id')
-            file_name = file_info.get('name')
+        for local_path in local_files:
+            file_name = local_path.name
+            logger.debug(f"Processing local file '{file_name}'")
 
-            if not file_id or not file_name:
-                continue
-
-            logger.debug(f"Starting '{file_name}' (ID={file_id})")
-
-            # If macro-enabled: download → convert → upload → add to KB
+            # If macro-enabled: convert → upload converted → add to KB
             if needs_conversion(file_name):
                 if OFFICE_LIBS_AVAILABLE:
-                    content = client.download_file(file_id, file_name)
-                    if not content:
-                        skipped += 1
-                        logger.warning(f"Skipped '{file_name}' (download failed).")
-                        continue
-
-                    local_input = temp_dir / file_name
-                    local_input.write_bytes(content)
-
                     converted_filename = f"converted_{file_name}"
                     local_converted = temp_dir / converted_filename
 
-                    if not convert_macro_file(local_input, local_converted):
+                    if not convert_macro_file(local_path, local_converted):
                         skipped += 1
                         logger.warning(f"Skipped '{file_name}' (conversion failed).")
                         continue
@@ -408,14 +377,20 @@ def main() -> int:
                     logger.warning(f"Skipped '{file_name}' (no conversion libs).")
                     continue
 
-            # If not macro-enabled: directly add existing file_id to KB
+            # If not macro-enabled: upload original → add to KB
             else:
-                if client.add_file_to_knowledge(kb_id, file_id):
+                new_file_id = client.upload_new_file(local_path)
+                if not new_file_id:
+                    skipped += 1
+                    logger.warning(f"Skipped '{file_name}' (upload failed).")
+                    continue
+
+                if client.add_file_to_knowledge(kb_id, new_file_id):
                     processed += 1
                 else:
                     skipped += 1
 
-    logger.info(f"Done: {processed} files added, {skipped} files skipped.")
+    logger.info(f"Done: {processed} files uploaded and added, {skipped} files skipped.")
     return 0
 
 if __name__ == "__main__":
