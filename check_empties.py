@@ -15,7 +15,7 @@ from getpass import getpass # Use getpass if not using env vars for password
 import csv
 
 # Import the config loader
-from config_loader import load_confluence_settings, load_visualization_settings
+from config_loader import load_confluence_settings, load_data_settings
 
 # Suppress only the single InsecureRequestWarning from urllib3 needed
 import urllib3
@@ -43,8 +43,8 @@ except FileNotFoundError:
 
 # --- Settings ---
 # Load configurable pickle directory from settings
-visualization_settings = load_visualization_settings()
-TEMP_DIR = visualization_settings.get('pickle_dir', 'temp')  # Directory where pickled space data is stored
+data_settings = load_data_settings()
+TEMP_DIR = data_settings.get('pickle_dir', 'temp')  # Directory where pickled space data is stored
 DEFAULT_MIN_PAGES = 0
 DEFAULT_MAX_PAGES = None
 

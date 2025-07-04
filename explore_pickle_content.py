@@ -11,12 +11,12 @@ import numpy as np # Added import for numpy
 import sys # Added import for sys
 import re # ADDED
 from bs4 import BeautifulSoup # Ensured bs4 is imported
-from config_loader import load_confluence_settings, load_visualization_settings
+from config_loader import load_confluence_settings, load_data_settings
 from utils.html_cleaner import clean_confluence_html
 
 # Load configurable pickle directory from settings
-visualization_settings = load_visualization_settings()
-OUTPUT_DIR = visualization_settings.get('pickle_dir', 'temp')
+data_settings = load_data_settings()
+OUTPUT_DIR = data_settings.get('pickle_dir', 'temp')
 FULL_PICKLE_SUBDIR = 'full_pickles' # New line
 SNIPPET_LINES = 10 # Number of lines for snippets
 

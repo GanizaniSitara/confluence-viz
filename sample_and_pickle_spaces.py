@@ -10,7 +10,7 @@ import time
 import urllib3
 import argparse
 import sys # Added import
-from config_loader import load_confluence_settings, load_visualization_settings # MODIFIED IMPORT
+from config_loader import load_confluence_settings, load_data_settings # MODIFIED IMPORT
 
 # Load settings
 confluence_settings = load_confluence_settings()
@@ -20,9 +20,9 @@ BASE_URL = confluence_settings['base_url'] # Ensure this is base_url
 API_ENDPOINT = "/rest/api" # Define the API endpoint suffix
 VERIFY_SSL = confluence_settings['verify_ssl']
 
-# Load visualization settings to get remote_full_pickle_dir
-visualization_settings = load_visualization_settings()
-REMOTE_FULL_PICKLE_DIR = visualization_settings.get('remote_full_pickle_dir')
+# Load data settings to get pickle directories
+data_settings = load_data_settings()
+REMOTE_FULL_PICKLE_DIR = data_settings.get('remote_full_pickle_dir')
 
 if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -92,7 +92,7 @@ TOP_N_RECENT = 30
 TOP_N_FREQUENT = 30
 
 # Load configurable pickle directory from settings
-OUTPUT_DIR = visualization_settings.get('pickle_dir', 'temp')
+OUTPUT_DIR = data_settings.get('pickle_dir', 'temp')
 
 # Determine the effective directory for full pickles
 DEFAULT_FULL_PICKLE_SUBDIR = 'full_pickles' # Subdirectory within the local OUTPUT_DIR

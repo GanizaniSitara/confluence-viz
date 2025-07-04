@@ -13,15 +13,15 @@ from collections import Counter
 import json
 from datetime import datetime
 import shutil
-from config_loader import load_visualization_settings
+from config_loader import load_data_settings
 import operator
 from html import escape  # Added for HTML escaping
 from scatter_plot_visualizer import generate_2d_scatter_plot_agglomerative # Added for Option 20
 from proximity_visualizer import generate_proximity_scatter_plot # Added for Option 21
 
 # Load configurable pickle directory from settings
-visualization_settings = load_visualization_settings()
-TEMP_DIR = visualization_settings.get('pickle_dir', 'temp')
+data_settings = load_data_settings()
+TEMP_DIR = data_settings.get('pickle_dir', 'temp')
 
 # Try to import Whoosh (will be used for options 14 and 15)
 try:
