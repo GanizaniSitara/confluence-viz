@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+"""
+Main entry point for Confluence Visualization CLI.
+Calls the refactored main function.
+"""
+
+import sys
+import os
+
+# Add the current directory to Python path so we can import confluence_viz
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from confluence_viz.cli.main import cli_main
+
+if __name__ == '__main__':
+    cli_main()

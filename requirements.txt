@@ -1,3 +1,12 @@
-requests
-numpy
-beautifulsoup4
+# Core dependencies for Confluence API and data processing
+requests>=2.28.0
+numpy>=1.21.0
+beautifulsoup4>=4.11.0
+
+# Machine learning and analysis
+scikit-learn>=1.2.0
+matplotlib>=3.5.0
+scipy>=1.9.0
+
+# Configuration management (built-in, but explicit for clarity)
+# configparser - built-in to Python 3.x

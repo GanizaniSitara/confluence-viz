@@ -1,0 +1,105 @@
+Below is a compact “toolbox” of reusable UX patterns that teams often combine to make large-scale review-and-delete flows feel safe, quick and (critically) trust-building for users. Mix-and-match as needed for wikis, Confluence, mail, photos, music libraries, etc.
+
+---
+
+### 1 — “Spring-Cleaning” Dashboard
+
+* **What it is:** A single landing surface that aggregates potentially stale items across sources (e-mails > 2 yrs, wiki pages w/ zero views in 12 mos, photos flagged low-quality, etc.).
+* **Why it helps:** Users start with a bird’s-eye view and can decide where to drill down instead of hunting in many places.
+* **Key UI hints:**
+
+  * Prominent filters for **age**, **owner**, **space/project**, **file type**.
+  * Sort by “deletion confidence” (see #4) as default, but allow switching to last-modified or size to tackle low-hanging fruit first.
+
+---
+
+### 2 — Batch Review Queue
+
+* **Chunk items** into digestible sets (10–25).
+* Use a **card stack** or **list-table** with keyboard shortcuts (← keep, → delete, space = preview).
+* Keep quick stats in the header—“2.1 GB reclaimed so far” and “18 kept / 7 deleted”.
+
+---
+
+### 3 — High-Fidelity Preview & Context
+
+Before a user presses Delete:
+
+* Show an **inline preview** (render wiki diff, thumbnail photo, 20-line e-mail snippet).
+* Show **metadata chips**: last editor, last viewer, inbound links, sharing status, file size.
+* If something is referenced elsewhere, surface a small **“Used in X places”** warning.
+
+---
+
+### 4 — Machine-Learning Assist with Transparency
+
+* Train on past deletions, inactivity, low engagement, duplicates, low-quality signals.
+* Surface a **confidence badge** (“High”, “Medium”, “Low”) + a short rationale, e.g. “No views since Nov 2022”.
+* Provide a **thumbs-up / thumbs-down** so the model learns and users feel in control.
+
+---
+
+### 5 — Soft Delete & Grace Period (“Undo-Window”)
+
+* Items go to a **Recycle Bin / Trash** for 30–90 days.
+* Show a “Just deleted? Undo” snackbar for a few seconds to reduce friction toward bulk actions.
+* Allow self-service restore; send a weekly “Trash summary” e-mail so nothing silently vanishes.
+
+---
+
+### 6 — Progressive Disclosure of Destructive Actions
+
+* Default action is **“Archive”**; “Delete permanently” is hidden behind a chevron or separate tab.
+* Use calm language (“Remove”, “Regain space”) rather than alarming red danger text until final confirmation.
+
+---
+
+### 7 — Similarity Clustering (“Review All Like This”)
+
+* Group by:
+
+  * **File hash / near-duplicate** photos,
+  * **Topic classification** for docs/e-mails,
+  * **Unused attachments**.
+* Let the user accept a whole cluster in one click, accelerating clean-up.
+
+---
+
+### 8 — Momentum & Gamification
+
+* **Progress ring / bar** showing percentage of suggested items reviewed.
+* Micro-copy like “You’re 80 % of the way to inbox zero—keep going!”
+* Optional **streaks** or “space freed” milestones.
+
+---
+
+### 9 — Scheduled Nudges (“Time-boxed Audits”)
+
+* After big imports or project closures, pop a **just-in-time card**: “Lots of content created 6 months ago—review now?”
+* Offer an opt-in **automated monthly digest**: top candidates + quick action links.
+
+---
+
+### 10 — Safety Valve for Enterprise Roles
+
+* Respect **data-retention policies**—show a lock icon and tooltip when deletion isn’t permitted.
+* Route “request deletion” to the right data-owner if user lacks permission.
+
+---
+
+## Putting It Together
+
+1. **Entry point:** Spring-Cleaning Dashboard (#1).
+2. **Triage loop:** Batch Review Queue (#2) + transparent ML suggestions (#4).
+3. **Decision aid:** High-Fidelity Preview (#3) with Similarity Clustering (#7).
+4. **Commit phase:** Soft Delete w/ Undo (#5) plus Progress Gamification (#8).
+5. **Learning cycle:** Feedback clicks feed the model; scheduled nudges (#9) keep the space tidy.
+
+### Tiny Implementation Tips
+
+* Indexing: store **last-accessed timestamps** and **inbound-link counts** for each object upfront to avoid costly queries.
+* Accessibility: ensure keyboard-only review flow; announce success/undo via ARIA live regions.
+* Performance: lazy-load thumbnails; prefetch next batch while the user reviews the current one.
+* Trust: log every deletion in an **Activity Feed** with self-serve restore to eliminate fear.
+
+Use these patterns as Lego bricks—adapt terminology and visual style to your product, but keep the core principles: *surface with context, decide in batches, undo is easy, and the system learns from every choice.*

@@ -1,0 +1,13 @@
+# Optional dependencies for extended functionality
+
+# Full-text search capabilities (used in explore_clusters.py)
+whoosh>=2.7.4
+
+# Browser automation (used in proof_of_concept_playwright_admins.py)
+playwright>=1.30.0
+
+# Enhanced data manipulation (may be used in some analysis scripts)
+pandas>=1.5.0
+
+# Additional scientific computing (extended analysis)
+seaborn>=0.12.0
