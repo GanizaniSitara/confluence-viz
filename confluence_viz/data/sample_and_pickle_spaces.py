@@ -10,7 +10,7 @@ import time
 import urllib3
 import argparse
 import sys # Added import
-from config_loader import load_confluence_settings, load_visualization_settings # MODIFIED IMPORT
+from ..config.loader import load_confluence_settings, load_visualization_settings # MODIFIED IMPORT
 
 # Load settings
 confluence_settings = load_confluence_settings()
@@ -209,6 +209,46 @@ def sample_and_fetch_bodies(space_key, pages, fetch_all=False):
             print(f"    Fetching body for page {i+1}/{len(deduped)} (ID: {p.get('id')})...")
         p['body'] = fetch_page_body(p.get('id'))
     return deduped, len(pages)
+
+def scan_existing_pickles(directory, mode='standard'):
+    """
+    Scan a directory for existing pickle files and return list of processed space keys.
+    
+    Args:
+        directory: Directory to scan for pickle files
+        mode: 'standard' for temp/*.pkl or 'full' for *_full.pkl files
+    
+    Returns:
+        Set of space keys that have existing pickle files
+    """
+    existing_space_keys = set()
+    
+    if not os.path.exists(directory):
+        print(f"Warning: Directory {directory} does not exist for pickle scanning.")
+        return existing_space_keys
+    
+    try:
+        files = os.listdir(directory)
+        for file in files:
+            if file.endswith('.pkl'):
+                if mode == 'full' and file.endswith('_full.pkl'):
+                    # Extract space key from filename like SPACENAME_full.pkl
+                    space_key = file[:-9]  # Remove '_full.pkl'
+                    existing_space_keys.add(space_key)
+                elif mode == 'standard' and not file.endswith('_full.pkl'):
+                    # Extract space key from filename like SPACENAME.pkl
+                    space_key = file[:-4]  # Remove '.pkl'
+                    existing_space_keys.add(space_key)
+        
+        print(f"Found {len(existing_space_keys)} existing {mode} pickle files in {directory}")
+        if existing_space_keys:
+            sorted_keys = sorted(list(existing_space_keys))
+            print(f"Existing space keys: {', '.join(sorted_keys[:10])}{'...' if len(sorted_keys) > 10 else ''}")
+    
+    except Exception as e:
+        print(f"Error scanning directory {directory}: {e}")
+    
+    return existing_space_keys
 
 def load_checkpoint(filename=CHECKPOINT_FILE): # Added filename parameter with default
     """Load the checkpoint file if it exists."""
@@ -412,6 +452,7 @@ def main():
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument('--reset', action='store_true', help='Reset checkpoint and start from beginning (non-interactive).')
     mode_group.add_argument('--batch-continue', action='store_true', help='Run in continue mode using checkpoint without interactive menu (non-interactive).')
+    mode_group.add_argument('--resume-from-pickles', action='store_true', help='Resume by scanning existing pickle files instead of using checkpoint file (non-interactive).')
     mode_group.add_argument('--pickle-space-full', type=str, metavar='SPACE_KEY',
                                help=f'Pickle all pages for a single space. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}. Bypasses sampling, checkpointing, and interactive menu.') # Updated help
     mode_group.add_argument('--pickle-all-spaces-full', action='store_true',
@@ -615,6 +656,7 @@ def main():
         sys.exit(0)
 
     perform_reset = False
+    resume_from_pickles = False
     # run_script = True # This variable was not used
 
     if args.reset:
@@ -623,6 +665,10 @@ def main():
     elif args.batch_continue:
         print("Mode: Running with --batch-continue (using checkpoint)")
         perform_reset = False # Default for continue is not to reset
+    elif args.resume_from_pickles:
+        print("Mode: Running with --resume-from-pickles (scanning existing pickle files)")
+        perform_reset = False
+        resume_from_pickles = True
     else: # Interactive mode
         print("\nConfluence Space Sampler and Pickler") # Corrected to \n
         print("------------------------------------")
@@ -633,6 +679,7 @@ def main():
         print("\nAvailable command-line options for non-interactive use:") # Corrected to \n
         print("  --reset                       : Clears all previous progress and starts fresh (standard sampling mode).") # Updated help
         print("  --batch-continue              : Skips this menu and continues from the last checkpoint (standard sampling mode).") # Updated help
+        print("  --resume-from-pickles         : Continues by scanning existing pickle files instead of using checkpoint.") # New help
         print(f"  --pickle-space-full SPACE_KEY : Pickles all pages for a single space. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}.") # Updated help
         print(f"  --pickle-all-spaces-full      : Pickles all pages for ALL non-user spaces. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}.") # New help line
         print(f"                                  Uses its own checkpoint ({FULL_PICKLE_CHECKPOINT_FILENAME}) and bypasses sampling and this interactive menu.") # Updated help
@@ -644,12 +691,13 @@ def main():
             choice = input("Choose an action:\n" # Updated prompt
                            "  1: Continue with existing progress (standard sampling mode, uses checkpoint)\n"
                            "  2: Reset and start from beginning (standard sampling mode, deletes checkpoint)\n"
-                           "  3: Pickle all pages for a single space (e.g., DOC). Saves to configured full pickle directory.\n"
-                           "  4: Pickle all pages for ALL non-user spaces. Saves to configured full pickle directory (uses its own checkpoint).\n"
-                           "  5: List all non-user spaces to console (Key, Name, Description)\n"  # MODIFIED MENU OPTION
-                           "  6: List all non-user space KKEYS only to console\n"  # NEW MENU OPTION
+                           "  3: Resume from existing pickle files (ignore checkpoint, scan temp/ directory)\n"
+                           "  4: Pickle all pages for a single space (e.g., DOC). Saves to configured full pickle directory.\n"
+                           "  5: Pickle all pages for ALL non-user spaces. Saves to configured full pickle directory (uses its own checkpoint).\n"
+                           "  6: List all non-user spaces to console (Key, Name, Description)\n"  # MODIFIED MENU OPTION
+                           "  7: List all non-user space KKEYS only to console\n"  # NEW MENU OPTION
                            "  q: Quit\n"
-                           "Enter choice (1, 2, 3, 4, 5, 6, or q): ").strip().lower() # UPDATED PROMPT
+                           "Enter choice (1, 2, 3, 4, 5, 6, 7, or q): ").strip().lower() # UPDATED PROMPT
             if choice == '1':
                 perform_reset = False
                 print("Mode: Continuing with existing progress (standard sampling).")
@@ -659,6 +707,11 @@ def main():
                 print("Mode: Resetting and starting from beginning (standard sampling).")
                 break
             elif choice == '3':
+                perform_reset = False
+                resume_from_pickles = True
+                print("Mode: Resuming from existing pickle files (ignoring checkpoint).")
+                break
+            elif choice == '4':
                 target_space_key_interactive = input("Enter the SPACE_KEY to pickle in full: ").strip().upper()
                 if not target_space_key_interactive:
                     print("No space key provided. Please try again.")
@@ -848,14 +901,14 @@ def main():
                 if failed_this_run > 0:
                     print("Rerun the script to attempt processing failed spaces.")
                 sys.exit(0) # Exit after this action
-            elif choice == '5': # MODIFIED MENU HANDLING
+            elif choice == '6': # MODIFIED MENU HANDLING
                 print("Action: Listing all non-user spaces from Confluence...")
                 all_spaces_interactive = fetch_all_spaces_with_details(auth_details=(USERNAME, PASSWORD), verify_ssl_cert=VERIFY_SSL)
                 print_spaces_nicely(all_spaces_interactive)
                 print("\nReturning to menu...")
                 continue # Go back to the interactive menu
-            elif choice == '6': # NEW MENU HANDLING
-                print("Action: Listing all non-user space KKEYS only from Confluence...")
+            elif choice == '7': # NEW MENU HANDLING
+                print("Action: Listing all non-user space KEYS only from Confluence...")
                 all_spaces_interactive_keys = fetch_all_spaces_with_details(auth_details=(USERNAME, PASSWORD), verify_ssl_cert=VERIFY_SSL)
                 print_space_keys_only(all_spaces_interactive_keys)
                 print("\nReturning to menu...")
@@ -864,7 +917,7 @@ def main():
                 print("Exiting script.")
                 sys.exit(0) # Exit gracefully
             else:
-                print("Invalid choice. Please enter 1, 2, 3, 4, 5, 6, or q.") # UPDATED ERROR MESSAGE
+                print("Invalid choice. Please enter 1, 2, 3, 4, 5, 6, 7, or q.") # UPDATED ERROR MESSAGE
     
     # --- Checkpoint handling ---
     if perform_reset and os.path.exists(CHECKPOINT_FILE):
@@ -889,6 +942,15 @@ def main():
         # last_updated will be set by load_checkpoint or save_checkpoint.
         print("Checkpoint data has been reset for this run.")
 
+    # Handle resume from pickle files mode
+    if resume_from_pickles:
+        print("Scanning existing pickle files in temp directory...")
+        existing_pickles = scan_existing_pickles(OUTPUT_DIR, mode='standard')
+        # Override checkpoint data with pickle file scan results
+        checkpoint["processed_spaces"] = list(existing_pickles)
+        checkpoint["last_position"] = len(existing_pickles)
+        print(f"Found {len(existing_pickles)} existing pickle files. Resuming from that point.")
+    
     processed_space_keys = set(checkpoint.get("processed_spaces", []))
     # effective_start_idx_for_slicing is the 0-based index from which to start processing in all_spaces list.
     # It's the number of spaces already processed.
@@ -897,6 +959,8 @@ def main():
     print(f"\nStarting Confluence sampling and pickling process...") # Corrected to \n
     if perform_reset:
         print("- Run type: Fresh run (checkpoint was reset or is new)")
+    elif resume_from_pickles:
+        print(f"- Run type: Resuming from existing pickle files. {len(processed_space_keys)} spaces already processed.")
     elif effective_start_idx_for_slicing > 0:
         print(f"- Run type: Continuing. {effective_start_idx_for_slicing} spaces recorded as processed in checkpoint.")
     else:
