@@ -403,7 +403,7 @@ def download_attachments_for_space(space_key, pages_metadata_list, base_output_d
         print(f"  Finished: No attachments found or processed for space {space_key}.")
 
 def scan_existing_pickles(target_dir):
-    """Scan a directory for existing pickle files and return the space keys they represent."""
+    """Scan a directory for existing pickle files and return the space keys they represent, excluding personal spaces."""
     if not os.path.exists(target_dir):
         print(f"Target directory {target_dir} does not exist.")
         return []
@@ -417,21 +417,175 @@ def scan_existing_pickles(target_dir):
         # Remove _full suffix if present (for full pickle files)
         if space_key.endswith('_full'):
             space_key = space_key[:-5]
-        space_keys.append(space_key)
+        
+        # Exclude personal spaces (those starting with ~)
+        if not space_key.startswith('~'):
+            space_keys.append(space_key)
     
     return sorted(list(set(space_keys)))  # Remove duplicates and sort
+
+def fetch_page_metadata_bulk(page_ids, batch_size=100):
+    """Fetch page metadata for multiple page IDs using CQL search with batching."""
+    all_metadata = []
+    
+    # Process page IDs in batches to avoid URL length limits
+    for i in range(0, len(page_ids), batch_size):
+        batch = page_ids[i:i + batch_size]
+        
+        # Build CQL query for this batch
+        id_list = ','.join(batch)
+        cql_query = f"id in ({id_list})"
+        
+        # Construct URL and parameters
+        url = f"{BASE_URL}{API_ENDPOINT}/content/search"
+        params = {
+            "cql": cql_query,
+            "expand": "version",
+            "limit": batch_size
+        }
+        
+        print(f"  Fetching metadata for {len(batch)} pages (batch {i//batch_size + 1})")
+        r = get_with_retry(url, params=params, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
+        
+        if r.status_code == 200:
+            results = r.json().get("results", [])
+            all_metadata.extend(results)
+        else:
+            print(f"  Error fetching metadata batch: {r.status_code}")
+    
+    return all_metadata
+
+def update_existing_pickles(target_dir):
+    """Update existing pickle files with latest page versions based on timestamp comparison."""
+    if not os.path.exists(target_dir):
+        print(f"Target directory {target_dir} does not exist.")
+        return
+    
+    pickle_files = [f for f in os.listdir(target_dir) if f.endswith('.pkl')]
+    if not pickle_files:
+        print(f"No pickle files found in {target_dir}")
+        return
+    
+    print(f"Found {len(pickle_files)} pickle files to potentially update")
+    total_updated_pages = 0
+    total_checked_files = 0
+    
+    for pickle_file in pickle_files:
+        # Extract space key from filename
+        space_key = os.path.splitext(pickle_file)[0]
+        if space_key.endswith('_full'):
+            space_key = space_key[:-5]
+        
+        # Skip personal spaces
+        if space_key.startswith('~'):
+            continue
+        
+        pickle_path = os.path.join(target_dir, pickle_file)
+        print(f"\nChecking {pickle_file} (space: {space_key})")
+        
+        try:
+            # Load existing pickle data
+            with open(pickle_path, 'rb') as f:
+                existing_data = pickle.load(f)
+            
+            existing_pages = existing_data.get('sampled_pages', [])
+            if not existing_pages:
+                print(f"  No pages in pickle file, skipping")
+                continue
+            
+            # Build lookup of existing pages by ID -> timestamp
+            existing_page_lookup = {}
+            page_ids = []
+            for page in existing_pages:
+                page_id = page.get('id')
+                if page_id:
+                    existing_page_lookup[page_id] = page.get('updated', '')
+                    page_ids.append(page_id)
+            
+            if not page_ids:
+                print(f"  No valid page IDs found in pickle, skipping")
+                continue
+            
+            print(f"  Checking {len(page_ids)} pages for updates...")
+            
+            # Bulk fetch current page metadata from API
+            current_page_metadata = fetch_page_metadata_bulk(page_ids)
+            
+            # Compare timestamps and identify changed pages
+            pages_to_update = []
+            for current_page in current_page_metadata:
+                page_id = current_page.get('id')
+                current_timestamp = current_page.get('version', {}).get('when', '')
+                existing_timestamp = existing_page_lookup.get(page_id, '')
+                
+                if current_timestamp and current_timestamp > existing_timestamp:
+                    pages_to_update.append(page_id)
+            
+            if pages_to_update:
+                print(f"  Found {len(pages_to_update)} pages that need updating")
+                
+                # Fetch full content for changed pages
+                updated_pages_data = []
+                for page_id in pages_to_update:
+                    print(f"    Fetching updated content for page {page_id}")
+                    page_body = fetch_page_body(page_id)
+                    
+                    # Find the corresponding metadata
+                    page_metadata = next((p for p in current_page_metadata if p.get('id') == page_id), None)
+                    if page_metadata:
+                        updated_page = {
+                            'id': page_id,
+                            'title': page_metadata.get('title', ''),
+                            'updated': page_metadata.get('version', {}).get('when', ''),
+                            'update_count': page_metadata.get('version', {}).get('number', 0),
+                            'space_key': space_key,
+                            'body': page_body
+                        }
+                        updated_pages_data.append(updated_page)
+                
+                # Update the pickle data in-place
+                if updated_pages_data:
+                    # Create a lookup for updated pages
+                    updated_lookup = {page['id']: page for page in updated_pages_data}
+                    
+                    # Replace pages in existing data
+                    for i, page in enumerate(existing_pages):
+                        page_id = page.get('id')
+                        if page_id in updated_lookup:
+                            existing_pages[i] = updated_lookup[page_id]
+                    
+                    # Save updated pickle
+                    with open(pickle_path, 'wb') as f:
+                        pickle.dump(existing_data, f)
+                    
+                    print(f"  Successfully updated {len(updated_pages_data)} pages in {pickle_file}")
+                    total_updated_pages += len(updated_pages_data)
+            else:
+                print(f"  No updates needed for {pickle_file}")
+            
+            total_checked_files += 1
+            
+        except Exception as e:
+            print(f"  Error processing {pickle_file}: {e}")
+            continue
+    
+    print(f"\nUpdate summary:")
+    print(f"  Files checked: {total_checked_files}")
+    print(f"  Total pages updated: {total_updated_pages}")
+    print(f"  Update process completed")
 
 def main():
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
         description="Sample and pickle Confluence spaces. Handles checkpointing for resumable execution.",
-        epilog="If no run mode argument (--reset, --batch-continue, --resume-from-pickles, --pickle-space-full SPACE_KEY) is provided, an interactive menu is shown." # Updated epilog
+        epilog="If no run mode argument (--reset, --batch-continue, --resume-from-pickles, --update-pickles, --pickle-space-full SPACE_KEY) is provided, an interactive menu is shown." # Updated epilog
     )
     # Group for mutually exclusive run modes
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument('--reset', action='store_true', help='Reset checkpoint and start from beginning (non-interactive).')
     mode_group.add_argument('--batch-continue', action='store_true', help='Run in continue mode using checkpoint without interactive menu (non-interactive).')
     mode_group.add_argument('--resume-from-pickles', action='store_true', help='Resume work based on scanning existing pickle files in output directory (non-interactive).')
+    mode_group.add_argument('--update-pickles', action='store_true', help='Update existing pickle files with latest page versions based on timestamp comparison (non-interactive).')
     mode_group.add_argument('--pickle-space-full', type=str, metavar='SPACE_KEY',
                                help=f'Pickle all pages for a single space. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}. Bypasses sampling, checkpointing, and interactive menu.') # Updated help
     mode_group.add_argument('--pickle-all-spaces-full', action='store_true',
@@ -454,6 +608,13 @@ def main():
         print("Mode: Listing all non-user space keys from Confluence...")
         all_spaces = fetch_all_spaces_with_details(auth_details=(USERNAME, PASSWORD), verify_ssl_cert=VERIFY_SSL)
         print_space_keys_only(all_spaces)
+        sys.exit(0)
+
+    # Handle --update-pickles mode
+    if args.update_pickles:
+        print(f"Mode: Updating existing pickle files with latest page versions")
+        print(f"Target directory: {OUTPUT_DIR}")
+        update_existing_pickles(OUTPUT_DIR)
         sys.exit(0)
 
     # Handle --pickle-all-spaces-full mode
@@ -674,6 +835,7 @@ def main():
         print("  --reset                       : Clears all previous progress and starts fresh (standard sampling mode).") # Updated help
         print("  --batch-continue              : Skips this menu and continues from the last checkpoint (standard sampling mode).") # Updated help
         print("  --resume-from-pickles         : Resume work based on scanning existing pickle files in output directory.") # NEW help line
+        print("  --update-pickles              : Update existing pickle files with latest page versions based on timestamp comparison.") # NEW help line
         print(f"  --pickle-space-full SPACE_KEY : Pickles all pages for a single space. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}.") # Updated help
         print(f"  --pickle-all-spaces-full      : Pickles all pages for ALL non-user spaces. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}.") # New help line
         print(f"                                  Uses its own checkpoint ({FULL_PICKLE_CHECKPOINT_FILENAME}) and bypasses sampling and this interactive menu.") # Updated help
@@ -686,12 +848,13 @@ def main():
                            "  1: Continue with existing progress (standard sampling mode, uses checkpoint)\n"
                            "  2: Reset and start from beginning (standard sampling mode, deletes checkpoint)\n"
                            "  3: Resume from existing pickle files (scans output directory for existing pickles)\n"
-                           "  4: Pickle all pages for a single space (e.g., DOC). Saves to configured full pickle directory.\n"
-                           "  5: Pickle all pages for ALL non-user spaces. Saves to configured full pickle directory (uses its own checkpoint).\n"
-                           "  6: List all non-user spaces to console (Key, Name, Description)\n"  # MODIFIED MENU OPTION
-                           "  7: List all non-user space KEYS only to console\n"  # NEW MENU OPTION
+                           "  4: Update existing pickle files with latest page versions (compares timestamps)\n"
+                           "  5: Pickle all pages for a single space (e.g., DOC). Saves to configured full pickle directory.\n"
+                           "  6: Pickle all pages for ALL non-user spaces. Saves to configured full pickle directory (uses its own checkpoint).\n"
+                           "  7: List all non-user spaces to console (Key, Name, Description)\n"  # MODIFIED MENU OPTION
+                           "  8: List all non-user space KEYS only to console\n"  # NEW MENU OPTION
                            "  q: Quit\n"
-                           "Enter choice (1, 2, 3, 4, 5, 6, 7, or q): ").strip().lower() # UPDATED PROMPT
+                           "Enter choice (1, 2, 3, 4, 5, 6, 7, 8, or q): ").strip().lower() # UPDATED PROMPT
             if choice == '1':
                 perform_reset = False
                 print("Mode: Continuing with existing progress (standard sampling).")
@@ -721,6 +884,12 @@ def main():
                 perform_reset = False
                 break
             elif choice == '4':
+                print(f"Mode: Update existing pickle files with latest page versions")
+                print(f"Target directory: {OUTPUT_DIR}")
+                update_existing_pickles(OUTPUT_DIR)
+                print("\nReturning to menu...")
+                continue # Go back to the interactive menu
+            elif choice == '5':
                 target_space_key_interactive = input("Enter the SPACE_KEY to pickle in full: ").strip().upper()
                 if not target_space_key_interactive:
                     print("No space key provided. Please try again.")
@@ -795,7 +964,7 @@ def main():
                     download_attachments_for_space(args.pickle_space_full, pages_metadata, EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, (USERNAME, PASSWORD), VERIFY_SSL, BASE_URL)
 
                 sys.exit(0) # Exit after this action
-            elif choice == '5':
+            elif choice == '6':
                 # Simulate args for --pickle-all-spaces-full
                 # args.pickle_all_spaces_full = True # This is implicitly handled by falling into the shared logic
                 
@@ -910,13 +1079,13 @@ def main():
                 if failed_this_run > 0:
                     print("Rerun the script to attempt processing failed spaces.")
                 sys.exit(0) # Exit after this action
-            elif choice == '6': # MODIFIED MENU HANDLING
+            elif choice == '7': # MODIFIED MENU HANDLING
                 print("Action: Listing all non-user spaces from Confluence...")
                 all_spaces_interactive = fetch_all_spaces_with_details(auth_details=(USERNAME, PASSWORD), verify_ssl_cert=VERIFY_SSL)
                 print_spaces_nicely(all_spaces_interactive)
                 print("\nReturning to menu...")
                 continue # Go back to the interactive menu
-            elif choice == '7': # NEW MENU HANDLING
+            elif choice == '8': # NEW MENU HANDLING
                 print("Action: Listing all non-user space KKEYS only from Confluence...")
                 all_spaces_interactive_keys = fetch_all_spaces_with_details(auth_details=(USERNAME, PASSWORD), verify_ssl_cert=VERIFY_SSL)
                 print_space_keys_only(all_spaces_interactive_keys)
@@ -926,7 +1095,7 @@ def main():
                 print("Exiting script.")
                 sys.exit(0) # Exit gracefully
             else:
-                print("Invalid choice. Please enter 1, 2, 3, 4, 5, 6, 7, or q.") # UPDATED ERROR MESSAGE
+                print("Invalid choice. Please enter 1, 2, 3, 4, 5, 6, 7, 8, or q.") # UPDATED ERROR MESSAGE
     
     # --- Checkpoint handling ---
     if perform_reset and os.path.exists(CHECKPOINT_FILE):
@@ -972,8 +1141,8 @@ def main():
     while True:
         # Construct URL using BASE_URL and API_ENDPOINT
         url = f"{BASE_URL}{API_ENDPOINT}/space"
-        params = {"start": start_fetch_api, "limit": 100}
-        print(f"  Fetching next batch of spaces from Confluence: {url}?start={start_fetch_api}&limit=100")
+        params = {"start": start_fetch_api, "limit": 100, "type": "global"}
+        print(f"  Fetching next batch of spaces from Confluence: {url}?start={start_fetch_api}&limit=100&type=global")
         r = get_with_retry(url, params=params, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
         if r.status_code != 200:
             print(f"Failed to fetch spaces. Status code: {r.status_code}. Response: {r.text}")
