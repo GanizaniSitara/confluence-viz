@@ -90,7 +90,9 @@ def get_with_retry(url, params=None, auth=None, headers=None, verify=False, stre
 TOP_N_ROOT = 10
 TOP_N_RECENT = 30
 TOP_N_FREQUENT = 30
-OUTPUT_DIR = 'temp'
+
+# Load configurable pickle directory from settings
+OUTPUT_DIR = visualization_settings.get('pickle_dir', 'temp')
 
 # Determine the effective directory for full pickles
 DEFAULT_FULL_PICKLE_SUBDIR = 'full_pickles' # Subdirectory within the local OUTPUT_DIR

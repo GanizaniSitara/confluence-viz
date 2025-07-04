@@ -25,7 +25,8 @@ def load_visualization_settings(config_path='settings.ini'):
     config['visualization'] = {
         'default_clusters': '20',
         'default_min_pages': '5',
-        'remote_full_pickle_dir': ''  # Default to empty string, meaning not set
+        'remote_full_pickle_dir': '',  # Default to empty string, meaning not set
+        'pickle_dir': 'temp'  # Default pickle directory
     }
     
     # Override with values from config file if it exists
@@ -44,5 +45,6 @@ def load_visualization_settings(config_path='settings.ini'):
     return {
         'default_clusters': int(config['visualization'].get('default_clusters')),
         'default_min_pages': int(config['visualization'].get('default_min_pages')),
-        'remote_full_pickle_dir': config['visualization'].get('remote_full_pickle_dir') if config['visualization'].get('remote_full_pickle_dir') else None
+        'remote_full_pickle_dir': config['visualization'].get('remote_full_pickle_dir') if config['visualization'].get('remote_full_pickle_dir') else None,
+        'pickle_dir': config['visualization'].get('pickle_dir')
     }

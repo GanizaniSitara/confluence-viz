@@ -19,6 +19,10 @@ from html import escape  # Added for HTML escaping
 from scatter_plot_visualizer import generate_2d_scatter_plot_agglomerative # Added for Option 20
 from proximity_visualizer import generate_proximity_scatter_plot # Added for Option 21
 
+# Load configurable pickle directory from settings
+visualization_settings = load_visualization_settings()
+TEMP_DIR = visualization_settings.get('pickle_dir', 'temp')
+
 # Try to import Whoosh (will be used for options 14 and 15)
 try:
     import whoosh
@@ -31,8 +35,6 @@ except ImportError:
     WHOOSH_AVAILABLE = False
     print("Whoosh library not found. Options 14 and 15 will not be available.")
     print("Install Whoosh with: pip install whoosh")
-
-TEMP_DIR = 'temp'
 WHOOSH_INDEX_DIR = 'whoosh_index'  # Directory to store Whoosh index
 DEFAULT_MIN_PAGES = 0
 VERSION = '1.4'  # Updated version
