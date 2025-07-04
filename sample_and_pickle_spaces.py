@@ -459,6 +459,8 @@ def fetch_page_metadata_bulk(page_ids, batch_size=100):
 
 def update_existing_pickles(target_dir):
     """Update existing pickle files with latest page versions based on timestamp comparison."""
+    print(f"Pickle directory: {os.path.abspath(target_dir)}")
+    
     if not os.path.exists(target_dir):
         print(f"Target directory {target_dir} does not exist.")
         return
