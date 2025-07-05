@@ -36,6 +36,11 @@ def setup_logging(log_dir, log_level='INFO'):
     
     # Create log filename with timestamp
     log_filename = os.path.join(log_dir, f"confluence_processing_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    error_log_filename = os.path.join(log_dir, f"confluence_errors_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    
+    # Clear any existing handlers to start fresh
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
     
     # Setup logging configuration
     logging.basicConfig(
@@ -44,11 +49,11 @@ def setup_logging(log_dir, log_level='INFO'):
         handlers=[
             logging.FileHandler(log_filename),
             logging.StreamHandler(sys.stdout)
-        ]
+        ],
+        force=True  # Force reconfiguration
     )
     
     # Also create a separate error log
-    error_log_filename = os.path.join(log_dir, f"confluence_errors_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
     error_handler = logging.FileHandler(error_log_filename)
     error_handler.setLevel(logging.ERROR)
     error_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
@@ -56,8 +61,24 @@ def setup_logging(log_dir, log_level='INFO'):
     # Add error handler to root logger
     logging.getLogger().addHandler(error_handler)
     
-    logging.info(f"Logging initialized. Main log: {log_filename}")
-    logging.info(f"Error log: {error_log_filename}")
+    # Test that logging is working by creating the files
+    try:
+        logging.info(f"Logging initialized. Main log: {log_filename}")
+        logging.info(f"Error log: {error_log_filename}")
+        
+        # Verify files exist
+        if os.path.exists(log_filename):
+            print(f"✓ Main log file created successfully")
+        else:
+            print(f"✗ Failed to create main log file: {log_filename}")
+        
+        if os.path.exists(error_log_filename):
+            print(f"✓ Error log file created successfully")
+        else:
+            print(f"✗ Failed to create error log file: {error_log_filename}")
+            
+    except Exception as e:
+        print(f"Error setting up logging: {e}")
     
     return log_filename, error_log_filename
 
