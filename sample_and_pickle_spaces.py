@@ -29,58 +29,38 @@ if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Setup logging
-def setup_logging(log_dir, log_level='INFO'):
-    """Setup logging with both file and console handlers."""
+def setup_simple_logging(log_dir):
+    """Setup simple file logging without the logging module."""
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
     
     # Create log filename with timestamp
-    log_filename = os.path.join(log_dir, f"confluence_processing_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
-    error_log_filename = os.path.join(log_dir, f"confluence_errors_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_filename = os.path.join(log_dir, f"confluence_processing_{timestamp}.log")
     
-    # Clear any existing handlers to start fresh
-    for handler in logging.root.handlers[:]:
-        logging.root.removeHandler(handler)
-    
-    # Setup logging configuration
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper()),
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_filename),
-            logging.StreamHandler(sys.stdout)
-        ],
-        force=True  # Force reconfiguration
-    )
-    
-    # Also create a separate error log
-    error_handler = logging.FileHandler(error_log_filename)
-    error_handler.setLevel(logging.ERROR)
-    error_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-    
-    # Add error handler to root logger
-    logging.getLogger().addHandler(error_handler)
-    
-    # Test that logging is working by creating the files
     try:
-        logging.info(f"Logging initialized. Main log: {log_filename}")
-        logging.info(f"Error log: {error_log_filename}")
+        # Test we can write to the file
+        with open(log_filename, 'w') as f:
+            f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - INFO - Logging initialized\n")
+            f.flush()
         
-        # Verify files exist
-        if os.path.exists(log_filename):
-            print(f"✓ Main log file created successfully")
-        else:
-            print(f"✗ Failed to create main log file: {log_filename}")
+        print(f"✓ Log file created: {log_filename}")
+        return log_filename
         
-        if os.path.exists(error_log_filename):
-            print(f"✓ Error log file created successfully")
-        else:
-            print(f"✗ Failed to create error log file: {error_log_filename}")
-            
     except Exception as e:
-        print(f"Error setting up logging: {e}")
-    
-    return log_filename, error_log_filename
+        print(f"✗ Failed to create log file: {e}")
+        return None
+
+def write_log(log_filename, level, message):
+    """Simple log writing function."""
+    if log_filename:
+        try:
+            with open(log_filename, 'a') as f:
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                f.write(f"{timestamp} - {level} - {message}\n")
+                f.flush()
+        except Exception as e:
+            print(f"Error writing to log: {e}")
 
 def print_spaces_nicely(spaces_data):
     """Prints a list of space data in a readable format."""
@@ -554,11 +534,11 @@ def fetch_page_metadata_bulk(page_ids, batch_size=100):
     logging.info(f"Completed bulk metadata fetch. Total results: {len(all_metadata)}")
     return all_metadata
 
-def update_existing_pickles(target_dir):
+def update_existing_pickles(target_dir, log_file=None):
     """Update existing pickle files with latest page versions based on timestamp comparison."""
     abs_target_dir = os.path.abspath(target_dir)
     print(f"Pickle directory: {abs_target_dir}")
-    logging.info(f"Starting pickle update process in directory: {abs_target_dir}")
+    write_log(log_file, "INFO", f"Starting pickle update process in directory: {abs_target_dir}")
     
     if not os.path.exists(target_dir):
         error_msg = f"Target directory {target_dir} does not exist."
@@ -595,7 +575,7 @@ def update_existing_pickles(target_dir):
         
         pickle_path = os.path.join(target_dir, pickle_file)
         print(f"\n[{file_index}/{len(pickle_files)}] Checking {pickle_file} (space: {space_key})")
-        logging.info(f"Processing pickle file {file_index}/{len(pickle_files)}: {pickle_file} (space: {space_key})")
+        write_log(log_file, "INFO", f"Processing pickle file {file_index}/{len(pickle_files)}: {pickle_file} (space: {space_key})")
         
         try:
             # Load existing pickle data
@@ -625,10 +605,12 @@ def update_existing_pickles(target_dir):
                 continue
             
             print(f"  Checking {len(page_ids)} pages for updates...")
-            logging.info(f"Checking {len(page_ids)} pages for updates in space: {space_key}")
+            write_log(log_file, "INFO", f"Checking {len(page_ids)} pages for updates in space: {space_key}")
             
             # Bulk fetch current page metadata from API
+            write_log(log_file, "INFO", f"About to call fetch_page_metadata_bulk for {len(page_ids)} pages in space: {space_key}")
             current_page_metadata = fetch_page_metadata_bulk(page_ids)
+            write_log(log_file, "INFO", f"fetch_page_metadata_bulk returned {len(current_page_metadata) if current_page_metadata else 0} results")
             
             if not current_page_metadata:
                 logging.error(f"Failed to fetch metadata for any pages in space: {space_key}")
@@ -785,11 +767,11 @@ def main():
         print(f"Target directory: {OUTPUT_DIR}")
         
         # Setup logging for update process
-        log_file, error_log_file = setup_logging('.', 'INFO')
-        print(f"Logging to: {log_file}")
-        print(f"Error logging to: {error_log_file}")
+        log_file = setup_simple_logging('.')
+        if log_file:
+            print(f"Logging to: {log_file}")
         
-        update_existing_pickles(OUTPUT_DIR)
+        update_existing_pickles(OUTPUT_DIR, log_file)
         sys.exit(0)
 
     # Handle --pickle-all-spaces-full mode
@@ -1063,11 +1045,11 @@ def main():
                 print(f"Target directory: {OUTPUT_DIR}")
                 
                 # Setup logging for update process
-                log_file, error_log_file = setup_logging('.', 'INFO')
-                print(f"Logging to: {log_file}")
-                print(f"Error logging to: {error_log_file}")
+                log_file = setup_simple_logging('.')
+                if log_file:
+                    print(f"Logging to: {log_file}")
                 
-                update_existing_pickles(OUTPUT_DIR)
+                update_existing_pickles(OUTPUT_DIR, log_file)
                 print("\nReturning to menu...")
                 continue # Go back to the interactive menu
             elif choice == '5':
