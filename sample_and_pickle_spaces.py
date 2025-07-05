@@ -1355,14 +1355,24 @@ def main():
     write_log(log_file, "INFO", f"Total non-user spaces fetched: {len(all_spaces)}")
     
     # Determine spaces to process based on checkpoint
-    if effective_start_idx_for_slicing >= len(all_spaces) and not perform_reset and len(all_spaces) > 0:
-        print(f"All {len(all_spaces)} spaces already processed according to checkpoint. Nothing to do.")
-        print("Run with --reset to process all spaces again.")
-        write_log(log_file, "INFO", f"All {len(all_spaces)} spaces already processed according to checkpoint. Nothing to do.")
-        sys.exit(0)
-        
-    spaces_to_process = all_spaces[effective_start_idx_for_slicing:]
-    write_log(log_file, "INFO", f"Spaces to process in this run: {len(spaces_to_process)} (starting from index {effective_start_idx_for_slicing})")
+    # For resume from pickles, we need to check individual space keys rather than using positional indexing
+    if checkpoint.get("created_from") == "resume_from_pickles_scan":
+        # Filter out spaces that already have pickles (based on space key, not position)
+        spaces_to_process = [space for space in all_spaces if space.get('key') not in processed_space_keys]
+        write_log(log_file, "INFO", f"Resume from pickles mode: filtering {len(all_spaces)} total spaces against {len(processed_space_keys)} existing pickle keys")
+        write_log(log_file, "INFO", f"Spaces to process in this run: {len(spaces_to_process)} (filtered by space key)")
+        print(f"Resume from pickles: {len(spaces_to_process)} spaces need processing out of {len(all_spaces)} total")
+    else:
+        # Standard checkpoint mode - use positional indexing
+        if effective_start_idx_for_slicing >= len(all_spaces) and not perform_reset and len(all_spaces) > 0:
+            print(f"All {len(all_spaces)} spaces already processed according to checkpoint. Nothing to do.")
+            print("Run with --reset to process all spaces again.")
+            write_log(log_file, "INFO", f"All {len(all_spaces)} spaces already processed according to checkpoint. Nothing to do.")
+            sys.exit(0)
+            
+        spaces_to_process = all_spaces[effective_start_idx_for_slicing:]
+        write_log(log_file, "INFO", f"Standard checkpoint mode: {len(spaces_to_process)} spaces to process (starting from index {effective_start_idx_for_slicing})")
+    
     write_log(log_file, "INFO", f"Processed spaces from checkpoint: {len(processed_space_keys)} unique keys")
     
     if not spaces_to_process and len(all_spaces) > 0 :
@@ -1380,27 +1390,31 @@ def main():
     save_checkpoint(checkpoint) # Save potentially updated total_spaces or reset checkpoint
     
     # Process each space
-    # idx will be the 1-based global index of the space in all_spaces
     for loop_counter, space_data in enumerate(spaces_to_process):
-        # Calculate global 1-based index for checkpointing and logging
-        current_global_idx = effective_start_idx_for_slicing + loop_counter + 1
+        # Calculate global index for logging - different logic for resume vs standard mode
+        if checkpoint.get("created_from") == "resume_from_pickles_scan":
+            # For resume mode, find the actual position in all_spaces
+            space_key = space_data.get('key')
+            current_global_idx = next((i + 1 for i, sp in enumerate(all_spaces) if sp.get('key') == space_key), loop_counter + 1)
+        else:
+            # Standard mode - use positional indexing
+            current_global_idx = effective_start_idx_for_slicing + loop_counter + 1
         
         space_key = space_data.get('key') # Ensure we use the correct variable name 'space_data'
         if not space_key:
-            print(f"Warning: Space data at global index {current_global_idx-1} missing key. Skipping: {space_data}")
-            write_log(log_file, "WARNING", f"Space data at global index {current_global_idx-1} missing key. Skipping: {space_data}")
+            print(f"Warning: Space data at position {loop_counter} missing key. Skipping: {space_data}")
+            write_log(log_file, "WARNING", f"Space data at position {loop_counter} missing key. Skipping: {space_data}")
             continue
             
-        # This check is mostly redundant if effective_start_idx_for_slicing is correct,
-        # but good for safety if processed_space_keys was loaded from an out-of-sync checkpoint.
+        # This check is mostly redundant when resuming from pickles since we already filtered,
+        # but good for safety in standard checkpoint mode.
         if space_key in processed_space_keys and not perform_reset:
-            print(f"Skipping already processed space (as per processed_keys set) {current_global_idx}/{len(all_spaces)}: {space_key}")
+            print(f"Skipping already processed space {current_global_idx}/{len(all_spaces)}: {space_key}")
             write_log(log_file, "INFO", f"Skipping already processed space {current_global_idx}/{len(all_spaces)}: {space_key}")
-            # If we skip here, we should ensure the checkpoint's last_position is updated if it was somehow behind.
-            # However, the main loop structure should prevent this if effective_start_idx_for_slicing is honored.
-            if checkpoint.get("last_position", 0) < current_global_idx:
-                 checkpoint["last_position"] = current_global_idx
-                 # save_checkpoint(checkpoint) # Potentially save if we want to mark skipped ones this way
+            # Update last_position only in standard checkpoint mode
+            if checkpoint.get("created_from") != "resume_from_pickles_scan":
+                if checkpoint.get("last_position", 0) < current_global_idx:
+                     checkpoint["last_position"] = current_global_idx
             continue
             
         try:
@@ -1418,7 +1432,9 @@ def main():
             # Update checkpoint after each successful space processing
             if space_key not in checkpoint["processed_spaces"]: # Add only if not already there (e.g. due to a partial run)
                  checkpoint["processed_spaces"].append(space_key)
-            checkpoint["last_position"] = current_global_idx # Record 1-based index of last successfully processed space
+            # Only update last_position in standard checkpoint mode
+            if checkpoint.get("created_from") != "resume_from_pickles_scan":
+                checkpoint["last_position"] = current_global_idx # Record 1-based index of last successfully processed space
             save_checkpoint(checkpoint)
             
         except Exception as e:
