@@ -29,9 +29,8 @@ if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Setup logging
-def setup_logging(log_level='INFO'):
+def setup_logging(log_dir, log_level='INFO'):
     """Setup logging with both file and console handlers."""
-    log_dir = OUTPUT_DIR
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
     
@@ -723,7 +722,7 @@ def main():
         print(f"Target directory: {OUTPUT_DIR}")
         
         # Setup logging for update process
-        log_file, error_log_file = setup_logging('INFO')
+        log_file, error_log_file = setup_logging('.', 'INFO')
         print(f"Logging to: {log_file}")
         print(f"Error logging to: {error_log_file}")
         
@@ -1001,7 +1000,7 @@ def main():
                 print(f"Target directory: {OUTPUT_DIR}")
                 
                 # Setup logging for update process
-                log_file, error_log_file = setup_logging('INFO')
+                log_file, error_log_file = setup_logging('.', 'INFO')
                 print(f"Logging to: {log_file}")
                 print(f"Error logging to: {error_log_file}")
                 
