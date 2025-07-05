@@ -113,34 +113,59 @@ def print_space_keys_only(spaces_data):
 
 
 def get_with_retry(url, params=None, auth=None, headers=None, verify=False, stream=False, timeout=30):
+    logging.info(f"Making HTTP request to: {url}")
+    logging.info(f"Request params: {params}")
+    
     while True:
-        resp = requests.get(url, params=params, auth=auth, headers=headers, verify=verify, stream=stream, timeout=timeout)
-        if resp.status_code == 429:
-            # Extract the Retry-After header value
-            retry_after = resp.headers.get('Retry-After')
+        try:
+            logging.info("About to make requests.get call")
+            resp = requests.get(url, params=params, auth=auth, headers=headers, verify=verify, stream=stream, timeout=timeout)
+            logging.info(f"requests.get completed with status: {resp.status_code}")
             
-            if retry_after:
-                # Retry-After can be either a number of seconds or a date
-                if retry_after.isdigit():
-                    wait_time = int(retry_after)
-                else:
-                    # Parse HTTP date format
-                    try:
-                        retry_date = datetime.strptime(retry_after, '%a, %d %b %Y %H:%M:%S %Z')
-                        wait_time = max(1, (retry_date - datetime.now()).total_seconds())
-                    except (ValueError, TypeError):
-                        # Fallback to 2 seconds if parsing fails
-                        wait_time = 2
-            else:
-                # Default to 2 seconds if no Retry-After header
-                wait_time = 2
+            if resp.status_code == 429:
+                # Extract the Retry-After header value
+                retry_after = resp.headers.get('Retry-After')
                 
-            print(f"Warning: Rate limited (429). Retrying {url} in {wait_time}s as specified by server...")
-            time.sleep(wait_time)
-            continue
-        if resp.status_code >= 400:
-            print(f"Error {resp.status_code} fetching {url}. Response: {resp.text}")
-        return resp
+                if retry_after:
+                    # Retry-After can be either a number of seconds or a date
+                    if retry_after.isdigit():
+                        wait_time = int(retry_after)
+                    else:
+                        # Parse HTTP date format
+                        try:
+                            retry_date = datetime.strptime(retry_after, '%a, %d %b %Y %H:%M:%S %Z')
+                            wait_time = max(1, (retry_date - datetime.now()).total_seconds())
+                        except (ValueError, TypeError):
+                            # Fallback to 2 seconds if parsing fails
+                            wait_time = 2
+                else:
+                    # Default to 2 seconds if no Retry-After header
+                    wait_time = 2
+                    
+                print(f"Warning: Rate limited (429). Retrying {url} in {wait_time}s as specified by server...")
+                logging.warning(f"Rate limited (429). Retrying in {wait_time}s")
+                time.sleep(wait_time)
+                continue
+                
+            if resp.status_code >= 400:
+                error_msg = f"Error {resp.status_code} fetching {url}. Response: {resp.text}"
+                print(error_msg)
+                logging.error(error_msg)
+                
+            logging.info(f"Request successful, returning response")
+            return resp
+            
+        except requests.exceptions.Timeout as e:
+            error_msg = f"Request timeout after {timeout}s for {url}: {e}"
+            logging.error(error_msg)
+            print(error_msg)
+            return None
+            
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Request exception for {url}: {e}"
+            logging.error(error_msg, exc_info=True)
+            print(error_msg)
+            return None
 
 TOP_N_ROOT = 10
 TOP_N_RECENT = 30
@@ -483,6 +508,7 @@ def scan_existing_pickles(target_dir):
 
 def fetch_page_metadata_bulk(page_ids, batch_size=100):
     """Fetch page metadata for multiple page IDs using CQL search with batching."""
+    logging.info(f"Starting bulk metadata fetch for {len(page_ids)} page IDs")
     all_metadata = []
     
     # Process page IDs in batches to avoid URL length limits
@@ -502,14 +528,30 @@ def fetch_page_metadata_bulk(page_ids, batch_size=100):
         }
         
         print(f"  Fetching metadata for {len(batch)} pages (batch {i//batch_size + 1})")
-        r = get_with_retry(url, params=params, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
+        logging.info(f"Making API call to: {url}")
+        logging.info(f"CQL query: {cql_query}")
+        logging.info(f"Batch {i//batch_size + 1}: Processing page IDs: {batch}")
         
-        if r.status_code == 200:
-            results = r.json().get("results", [])
-            all_metadata.extend(results)
-        else:
-            print(f"  Error fetching metadata batch: {r.status_code}")
+        try:
+            logging.info(f"About to call get_with_retry for batch {i//batch_size + 1}")
+            r = get_with_retry(url, params=params, auth=(USERNAME, PASSWORD), verify=VERIFY_SSL)
+            logging.info(f"get_with_retry returned with status code: {r.status_code}")
+            
+            if r.status_code == 200:
+                results = r.json().get("results", [])
+                logging.info(f"Successfully retrieved {len(results)} results from API")
+                all_metadata.extend(results)
+            else:
+                error_msg = f"Error fetching metadata batch: {r.status_code} - {r.text}"
+                print(f"  {error_msg}")
+                logging.error(error_msg)
+                
+        except Exception as e:
+            error_msg = f"Exception during API call for batch {i//batch_size + 1}: {e}"
+            logging.error(error_msg, exc_info=True)
+            print(f"  {error_msg}")
     
+    logging.info(f"Completed bulk metadata fetch. Total results: {len(all_metadata)}")
     return all_metadata
 
 def update_existing_pickles(target_dir):
