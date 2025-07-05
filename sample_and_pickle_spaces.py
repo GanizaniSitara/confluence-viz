@@ -1421,13 +1421,22 @@ def main():
             print(f"Processing space {current_global_idx}/{len(all_spaces)}: {space_key} (Name: {space_data.get('name', 'N/A')})")
             write_log(log_file, "INFO", f"Processing space {current_global_idx}/{len(all_spaces)}: {space_key} (Name: {space_data.get('name', 'N/A')})")
             pages_metadata = fetch_page_metadata(space_key) # Changed 'pages' to 'pages_metadata'
-            sampled_pages, total_pages_in_space = sample_and_fetch_bodies(space_key, pages_metadata) # Changed 'pages' to 'pages_metadata'
+            
+            # For resume from pickles, process ALL pages (not just sampled)
+            if checkpoint.get("created_from") == "resume_from_pickles_scan":
+                pages_with_bodies, total_pages_in_space = sample_and_fetch_bodies(space_key, pages_metadata, fetch_all=True)
+                print(f'  Fetching ALL pages for space {space_key} (resume from pickles mode)')
+                write_log(log_file, "INFO", f"Fetching ALL pages for space {space_key} (resume from pickles mode)")
+            else:
+                pages_with_bodies, total_pages_in_space = sample_and_fetch_bodies(space_key, pages_metadata)
+                print(f'  Sampling pages for space {space_key} (standard mode)')
+                write_log(log_file, "INFO", f"Sampling pages for space {space_key} (standard mode)")
             
             out_path = os.path.join(OUTPUT_DIR, f'{space_key}.pkl')
             with open(out_path, 'wb') as f:
-                pickle.dump({'space_key': space_key, 'name': space_data.get('name'), 'sampled_pages': sampled_pages, 'total_pages_in_space': total_pages_in_space}, f)
-            print(f'  Successfully wrote {len(sampled_pages)} sampled pages for space {space_key} to {out_path} (total pages in space: {total_pages_in_space})')
-            write_log(log_file, "INFO", f"Successfully wrote {len(sampled_pages)} sampled pages for space {space_key} to {out_path} (total pages in space: {total_pages_in_space})")
+                pickle.dump({'space_key': space_key, 'name': space_data.get('name'), 'sampled_pages': pages_with_bodies, 'total_pages_in_space': total_pages_in_space}, f)
+            print(f'  Successfully wrote {len(pages_with_bodies)} pages for space {space_key} to {out_path} (total pages in space: {total_pages_in_space})')
+            write_log(log_file, "INFO", f"Successfully wrote {len(pages_with_bodies)} pages for space {space_key} to {out_path} (total pages in space: {total_pages_in_space})")
             
             # Update checkpoint after each successful space processing
             if space_key not in checkpoint["processed_spaces"]: # Add only if not already there (e.g. due to a partial run)
