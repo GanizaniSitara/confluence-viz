@@ -10,6 +10,7 @@ import time
 import urllib3
 import argparse
 import sys # Added import
+import logging
 from config_loader import load_confluence_settings, load_data_settings # MODIFIED IMPORT
 
 # Load settings
@@ -26,6 +27,40 @@ REMOTE_FULL_PICKLE_DIR = data_settings.get('remote_full_pickle_dir')
 
 if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Setup logging
+def setup_logging(log_level='INFO'):
+    """Setup logging with both file and console handlers."""
+    log_dir = OUTPUT_DIR
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    
+    # Create log filename with timestamp
+    log_filename = os.path.join(log_dir, f"confluence_processing_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    
+    # Setup logging configuration
+    logging.basicConfig(
+        level=getattr(logging, log_level.upper()),
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_filename),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+    
+    # Also create a separate error log
+    error_log_filename = os.path.join(log_dir, f"confluence_errors_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    error_handler = logging.FileHandler(error_log_filename)
+    error_handler.setLevel(logging.ERROR)
+    error_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    
+    # Add error handler to root logger
+    logging.getLogger().addHandler(error_handler)
+    
+    logging.info(f"Logging initialized. Main log: {log_filename}")
+    logging.info(f"Error log: {error_log_filename}")
+    
+    return log_filename, error_log_filename
 
 def print_spaces_nicely(spaces_data):
     """Prints a list of space data in a readable format."""
@@ -459,22 +494,32 @@ def fetch_page_metadata_bulk(page_ids, batch_size=100):
 
 def update_existing_pickles(target_dir):
     """Update existing pickle files with latest page versions based on timestamp comparison."""
-    print(f"Pickle directory: {os.path.abspath(target_dir)}")
+    abs_target_dir = os.path.abspath(target_dir)
+    print(f"Pickle directory: {abs_target_dir}")
+    logging.info(f"Starting pickle update process in directory: {abs_target_dir}")
     
     if not os.path.exists(target_dir):
-        print(f"Target directory {target_dir} does not exist.")
+        error_msg = f"Target directory {target_dir} does not exist."
+        print(error_msg)
+        logging.error(error_msg)
         return
     
     pickle_files = [f for f in os.listdir(target_dir) if f.endswith('.pkl')]
     if not pickle_files:
-        print(f"No pickle files found in {target_dir}")
+        warning_msg = f"No pickle files found in {target_dir}"
+        print(warning_msg)
+        logging.warning(warning_msg)
         return
     
     print(f"Found {len(pickle_files)} pickle files to potentially update")
+    logging.info(f"Found {len(pickle_files)} pickle files to potentially update")
+    
     total_updated_pages = 0
     total_checked_files = 0
+    failed_files = []
+    skipped_files = []
     
-    for pickle_file in pickle_files:
+    for file_index, pickle_file in enumerate(pickle_files, 1):
         # Extract space key from filename
         space_key = os.path.splitext(pickle_file)[0]
         if space_key.endswith('_full'):
@@ -482,10 +527,13 @@ def update_existing_pickles(target_dir):
         
         # Skip personal spaces
         if space_key.startswith('~'):
+            skipped_files.append((pickle_file, "Personal space"))
+            logging.debug(f"Skipping personal space: {space_key}")
             continue
         
         pickle_path = os.path.join(target_dir, pickle_file)
-        print(f"\nChecking {pickle_file} (space: {space_key})")
+        print(f"\n[{file_index}/{len(pickle_files)}] Checking {pickle_file} (space: {space_key})")
+        logging.info(f"Processing pickle file {file_index}/{len(pickle_files)}: {pickle_file} (space: {space_key})")
         
         try:
             # Load existing pickle data
@@ -495,6 +543,8 @@ def update_existing_pickles(target_dir):
             existing_pages = existing_data.get('sampled_pages', [])
             if not existing_pages:
                 print(f"  No pages in pickle file, skipping")
+                skipped_files.append((pickle_file, "No pages in pickle"))
+                logging.warning(f"No pages found in pickle file: {pickle_file}")
                 continue
             
             # Build lookup of existing pages by ID -> timestamp
@@ -508,12 +558,22 @@ def update_existing_pickles(target_dir):
             
             if not page_ids:
                 print(f"  No valid page IDs found in pickle, skipping")
+                skipped_files.append((pickle_file, "No valid page IDs"))
+                logging.warning(f"No valid page IDs found in pickle file: {pickle_file}")
                 continue
             
             print(f"  Checking {len(page_ids)} pages for updates...")
+            logging.info(f"Checking {len(page_ids)} pages for updates in space: {space_key}")
             
             # Bulk fetch current page metadata from API
             current_page_metadata = fetch_page_metadata_bulk(page_ids)
+            
+            if not current_page_metadata:
+                logging.error(f"Failed to fetch metadata for any pages in space: {space_key}")
+                failed_files.append((pickle_file, "Failed to fetch metadata from API"))
+                continue
+            
+            logging.info(f"Retrieved metadata for {len(current_page_metadata)} pages from API for space: {space_key}")
             
             # Compare timestamps and identify changed pages
             pages_to_update = []
@@ -524,15 +584,26 @@ def update_existing_pickles(target_dir):
                 
                 if current_timestamp and current_timestamp > existing_timestamp:
                     pages_to_update.append(page_id)
+                    logging.debug(f"Page {page_id} needs update: {existing_timestamp} -> {current_timestamp}")
             
             if pages_to_update:
                 print(f"  Found {len(pages_to_update)} pages that need updating")
+                logging.info(f"Found {len(pages_to_update)} pages that need updating in space: {space_key}")
                 
                 # Fetch full content for changed pages
                 updated_pages_data = []
-                for page_id in pages_to_update:
-                    print(f"    Fetching updated content for page {page_id}")
-                    page_body = fetch_page_body(page_id)
+                for i, page_id in enumerate(pages_to_update, 1):
+                    # Progress indicator every 20 pages or at the end
+                    if i % 20 == 0 or i == len(pages_to_update):
+                        print(f"    Progress: {i}/{len(pages_to_update)} pages fetched in space {space_key}")
+                    
+                    logging.info(f"Fetching updated content for page {page_id} ({i}/{len(pages_to_update)}) in space: {space_key}")
+                    
+                    try:
+                        page_body = fetch_page_body(page_id)
+                    except Exception as e:
+                        logging.error(f"Failed to fetch body for page {page_id} in space {space_key}: {e}")
+                        continue
                     
                     # Find the corresponding metadata
                     page_metadata = next((p for p in current_page_metadata if p.get('id') == page_id), None)
@@ -563,20 +634,52 @@ def update_existing_pickles(target_dir):
                         pickle.dump(existing_data, f)
                     
                     print(f"  Successfully updated {len(updated_pages_data)} pages in {pickle_file}")
+                    logging.info(f"Successfully updated {len(updated_pages_data)} pages in {pickle_file}")
                     total_updated_pages += len(updated_pages_data)
             else:
                 print(f"  No updates needed for {pickle_file}")
+                logging.info(f"No updates needed for {pickle_file}")
             
             total_checked_files += 1
             
+            # Progress summary for this space
+            print(f"  Completed space {space_key} - Total progress: {total_checked_files}/{len(pickle_files)} files processed, {total_updated_pages} pages updated so far")
+            
         except Exception as e:
-            print(f"  Error processing {pickle_file}: {e}")
+            error_msg = f"Error processing {pickle_file}: {e}"
+            print(f"  {error_msg}")
+            logging.error(error_msg, exc_info=True)
+            failed_files.append((pickle_file, str(e)))
             continue
     
+    # Summary logging
     print(f"\nUpdate summary:")
     print(f"  Files checked: {total_checked_files}")
     print(f"  Total pages updated: {total_updated_pages}")
+    print(f"  Failed files: {len(failed_files)}")
+    print(f"  Skipped files: {len(skipped_files)}")
     print(f"  Update process completed")
+    
+    # Detailed logging
+    logging.info(f"Update process completed")
+    logging.info(f"Files checked: {total_checked_files}")
+    logging.info(f"Total pages updated: {total_updated_pages}")
+    logging.info(f"Failed files: {len(failed_files)}")
+    logging.info(f"Skipped files: {len(skipped_files)}")
+    
+    # Log details of failed files
+    if failed_files:
+        logging.warning(f"Failed to process {len(failed_files)} files:")
+        for filename, reason in failed_files:
+            logging.warning(f"  {filename}: {reason}")
+    
+    # Log details of skipped files  
+    if skipped_files:
+        logging.info(f"Skipped {len(skipped_files)} files:")
+        for filename, reason in skipped_files:
+            logging.info(f"  {filename}: {reason}")
+    
+    logging.info("Update process log completed")
 
 def main():
     # Parse command-line arguments
@@ -618,6 +721,12 @@ def main():
     if args.update_pickles:
         print(f"Mode: Updating existing pickle files with latest page versions")
         print(f"Target directory: {OUTPUT_DIR}")
+        
+        # Setup logging for update process
+        log_file, error_log_file = setup_logging('INFO')
+        print(f"Logging to: {log_file}")
+        print(f"Error logging to: {error_log_file}")
+        
         update_existing_pickles(OUTPUT_DIR)
         sys.exit(0)
 
@@ -890,6 +999,12 @@ def main():
             elif choice == '4':
                 print(f"Mode: Update existing pickle files with latest page versions")
                 print(f"Target directory: {OUTPUT_DIR}")
+                
+                # Setup logging for update process
+                log_file, error_log_file = setup_logging('INFO')
+                print(f"Logging to: {log_file}")
+                print(f"Error logging to: {error_log_file}")
+                
                 update_existing_pickles(OUTPUT_DIR)
                 print("\nReturning to menu...")
                 continue # Go back to the interactive menu
