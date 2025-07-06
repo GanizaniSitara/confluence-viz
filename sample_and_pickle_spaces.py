@@ -604,35 +604,57 @@ def update_existing_pickles(target_dir, log_file=None):
                 logging.warning(f"No valid page IDs found in pickle file: {pickle_file}")
                 continue
             
-            print(f"  Checking {len(page_ids)} pages for updates...")
-            write_log(log_file, "INFO", f"Checking {len(page_ids)} pages for updates in space: {space_key}")
+            print(f"  Checking {len(page_ids)} existing pages for updates...")
+            write_log(log_file, "INFO", f"Checking {len(page_ids)} existing pages for updates in space: {space_key}")
             
-            # Bulk fetch current page metadata from API
-            write_log(log_file, "INFO", f"About to call fetch_page_metadata_bulk for {len(page_ids)} pages in space: {space_key}")
-            current_page_metadata = fetch_page_metadata_bulk(page_ids)
-            write_log(log_file, "INFO", f"fetch_page_metadata_bulk returned {len(current_page_metadata) if current_page_metadata else 0} results")
-            
-            if not current_page_metadata:
-                logging.error(f"Failed to fetch metadata for any pages in space: {space_key}")
-                failed_files.append((pickle_file, "Failed to fetch metadata from API"))
+            # First, get ALL current pages in the space to find new pages
+            print(f"  Fetching ALL current pages in space {space_key}...")
+            write_log(log_file, "INFO", f"Fetching ALL current pages in space: {space_key}")
+            all_current_pages = fetch_page_metadata(space_key)
+            if not all_current_pages:
+                logging.error(f"Failed to fetch current page list for space: {space_key}")
+                failed_files.append((pickle_file, "Failed to fetch current page list from API"))
                 continue
             
-            logging.info(f"Retrieved metadata for {len(current_page_metadata)} pages from API for space: {space_key}")
+            print(f"  Found {len(all_current_pages)} total pages currently in space {space_key}")
+            write_log(log_file, "INFO", f"Found {len(all_current_pages)} total pages currently in space: {space_key}")
             
-            # Compare timestamps and identify changed pages
+            # Identify new pages (pages in space but not in pickle)
+            all_current_page_ids = {page.get('id') for page in all_current_pages}
+            existing_page_ids = set(page_ids)
+            new_page_ids = all_current_page_ids - existing_page_ids
+            
+            if new_page_ids:
+                print(f"  Found {len(new_page_ids)} NEW pages in space {space_key}")
+                write_log(log_file, "INFO", f"Found {len(new_page_ids)} NEW pages in space: {space_key}")
+            
+            # Get metadata for existing pages to check for updates
+            write_log(log_file, "INFO", f"About to call fetch_page_metadata_bulk for {len(page_ids)} existing pages in space: {space_key}")
+            existing_pages_metadata = fetch_page_metadata_bulk(page_ids) if page_ids else []
+            write_log(log_file, "INFO", f"fetch_page_metadata_bulk returned {len(existing_pages_metadata) if existing_pages_metadata else 0} results for existing pages")
+            
+            # Compare timestamps and identify changed existing pages
             pages_to_update = []
-            for current_page in current_page_metadata:
+            for current_page in existing_pages_metadata:
                 page_id = current_page.get('id')
                 current_timestamp = current_page.get('version', {}).get('when', '')
                 existing_timestamp = existing_page_lookup.get(page_id, '')
                 
                 if current_timestamp and current_timestamp > existing_timestamp:
                     pages_to_update.append(page_id)
-                    logging.debug(f"Page {page_id} needs update: {existing_timestamp} -> {current_timestamp}")
+                    logging.debug(f"Existing page {page_id} needs update: {existing_timestamp} -> {current_timestamp}")
+            
+            # Add all new pages to the update list
+            pages_to_update.extend(new_page_ids)
+            
+            # Create combined metadata lookup for both existing and new pages
+            current_page_metadata = existing_pages_metadata + [p for p in all_current_pages if p.get('id') in new_page_ids]
             
             if pages_to_update:
-                print(f"  Found {len(pages_to_update)} pages that need updating")
-                logging.info(f"Found {len(pages_to_update)} pages that need updating in space: {space_key}")
+                updated_count = len([p for p in pages_to_update if p not in new_page_ids])
+                new_count = len(new_page_ids)
+                print(f"  Found {len(pages_to_update)} pages that need processing ({updated_count} updates, {new_count} new)")
+                logging.info(f"Found {len(pages_to_update)} pages that need processing in space: {space_key} ({updated_count} updates, {new_count} new)")
                 
                 # Fetch full content for changed pages
                 updated_pages_data = []
@@ -641,7 +663,9 @@ def update_existing_pickles(target_dir, log_file=None):
                     if i % 20 == 0 or i == len(pages_to_update):
                         print(f"    Progress: {i}/{len(pages_to_update)} pages fetched in space {space_key}")
                     
-                    logging.info(f"Fetching updated content for page {page_id} ({i}/{len(pages_to_update)}) in space: {space_key}")
+                    is_new_page = page_id in new_page_ids
+                    action_type = "NEW" if is_new_page else "UPDATE"
+                    logging.info(f"Fetching {action_type} content for page {page_id} ({i}/{len(pages_to_update)}) in space: {space_key}")
                     
                     try:
                         page_body = fetch_page_body(page_id)
@@ -667,18 +691,25 @@ def update_existing_pickles(target_dir, log_file=None):
                     # Create a lookup for updated pages
                     updated_lookup = {page['id']: page for page in updated_pages_data}
                     
-                    # Replace pages in existing data
+                    # Replace existing pages that were updated
                     for i, page in enumerate(existing_pages):
                         page_id = page.get('id')
-                        if page_id in updated_lookup:
+                        if page_id in updated_lookup and page_id not in new_page_ids:
                             existing_pages[i] = updated_lookup[page_id]
+                    
+                    # Add new pages to the list
+                    new_pages_to_add = [updated_lookup[page_id] for page_id in new_page_ids if page_id in updated_lookup]
+                    existing_pages.extend(new_pages_to_add)
+                    
+                    # Update the total count in the pickle data
+                    existing_data['total_pages_in_space'] = len(existing_pages)
                     
                     # Save updated pickle
                     with open(pickle_path, 'wb') as f:
                         pickle.dump(existing_data, f)
                     
-                    print(f"  Successfully updated {len(updated_pages_data)} pages in {pickle_file}")
-                    logging.info(f"Successfully updated {len(updated_pages_data)} pages in {pickle_file}")
+                    print(f"  Successfully updated {updated_count} pages and added {len(new_pages_to_add)} new pages in {pickle_file}")
+                    logging.info(f"Successfully updated {updated_count} pages and added {len(new_pages_to_add)} new pages in {pickle_file}")
                     total_updated_pages += len(updated_pages_data)
             else:
                 print(f"  No updates needed for {pickle_file}")
