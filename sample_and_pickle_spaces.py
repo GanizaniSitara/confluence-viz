@@ -871,6 +871,23 @@ def main():
 
             print(f"\nProcessing space: {target_space_key} (Name: {space_name_for_pickle})")
             
+            # Create placeholder pickle immediately to claim this space and prevent race conditions
+            out_filename = f'{target_space_key}_full.pkl'
+            out_path = os.path.join(EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, out_filename)
+            try:
+                with open(out_path, 'wb') as f:
+                    pickle.dump({
+                        'space_key': target_space_key,
+                        'name': space_name_for_pickle,
+                        'status': 'processing',
+                        'started_at': datetime.now().isoformat()
+                    }, f)
+                print(f"  Created placeholder pickle for {target_space_key}")
+            except Exception as e:
+                print(f"  Could not create placeholder pickle: {e}. Skipping to avoid race condition.")
+                failed_this_run += 1
+                continue
+            
             try:
                 pages_metadata = fetch_page_metadata(target_space_key)
 
@@ -951,6 +968,23 @@ def main():
             print(f"  Warning: Could not fetch space name for {target_space_key}. Status: {sd_r.status_code}")
 
         print(f"  Processing space: {target_space_key} (Name: {space_name_for_pickle})")
+        
+        # Create placeholder pickle immediately to claim this space and prevent race conditions
+        out_filename = f'{target_space_key}_full.pkl'
+        out_path = os.path.join(EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, out_filename)
+        try:
+            with open(out_path, 'wb') as f:
+                pickle.dump({
+                    'space_key': target_space_key,
+                    'name': space_name_for_pickle,
+                    'status': 'processing',
+                    'started_at': datetime.now().isoformat()
+                }, f)
+            print(f"  Created placeholder pickle for {target_space_key}")
+        except Exception as e:
+            print(f"  Could not create placeholder pickle: {e}. Exiting to avoid race condition.")
+            sys.exit(1)
+        
         pages_metadata = fetch_page_metadata(target_space_key)
 
         if not pages_metadata:
@@ -1149,6 +1183,23 @@ def main():
                     print(f"  Warning: Could not fetch space name for {args.pickle_space_full}. Status: {sd_r.status_code}")
 
                 print(f"  Processing space: {args.pickle_space_full} (Name: {space_name_for_pickle})")
+                
+                # Create placeholder pickle immediately to claim this space and prevent race conditions
+                out_filename = f'{args.pickle_space_full}_full.pkl'
+                out_path = os.path.join(EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, out_filename)
+                try:
+                    with open(out_path, 'wb') as f:
+                        pickle.dump({
+                            'space_key': args.pickle_space_full,
+                            'name': space_name_for_pickle,
+                            'status': 'processing',
+                            'started_at': datetime.now().isoformat()
+                        }, f)
+                    print(f"  Created placeholder pickle for {args.pickle_space_full}")
+                except Exception as e:
+                    print(f"  Could not create placeholder pickle: {e}. Returning to menu to avoid race condition.")
+                    continue
+                
                 pages_metadata = fetch_page_metadata(args.pickle_space_full)
 
                 if not pages_metadata:
@@ -1254,6 +1305,23 @@ def main():
                         continue
 
                     print(f"  Processing space: {target_space_key} (Name: {space_name_for_pickle})")
+                    
+                    # Create placeholder pickle immediately to claim this space and prevent race conditions
+                    out_filename = f'{target_space_key}_full.pkl'
+                    out_path = os.path.join(EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, out_filename)
+                    try:
+                        with open(out_path, 'wb') as f:
+                            pickle.dump({
+                                'space_key': target_space_key,
+                                'name': space_name_for_pickle,
+                                'status': 'processing',
+                                'started_at': datetime.now().isoformat()
+                            }, f)
+                        print(f"  Created placeholder pickle for {target_space_key}")
+                    except Exception as e:
+                        print(f"  Could not create placeholder pickle: {e}. Skipping to avoid race condition.")
+                        failed_this_run += 1
+                        continue
                     
                     try:
                         pages_metadata = fetch_page_metadata(target_space_key)
