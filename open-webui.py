@@ -18,8 +18,52 @@ import logging
 from utils.html_cleaner import clean_confluence_html
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+def setup_logging(log_file='openwebui_upload.log'):
+    """Setup logging to both console and file"""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler()
+        ]
+    )
+    return logging.getLogger(__name__)
+
+logger = setup_logging()
+
+def save_checkpoint(space_key: str, checkpoint_file: str = 'openwebui_checkpoint.txt'):
+    """Save the last successfully uploaded space to checkpoint file"""
+    try:
+        with open(checkpoint_file, 'w') as f:
+            f.write(space_key)
+        logger.info(f"Checkpoint saved: {space_key}")
+    except Exception as e:
+        logger.error(f"Failed to save checkpoint: {e}")
+
+def load_checkpoint(checkpoint_file: str = 'openwebui_checkpoint.txt') -> Optional[str]:
+    """Load the last successfully uploaded space from checkpoint file"""
+    try:
+        if os.path.exists(checkpoint_file):
+            with open(checkpoint_file, 'r') as f:
+                space_key = f.read().strip()
+            logger.info(f"Checkpoint loaded: resuming after {space_key}")
+            return space_key
+        else:
+            logger.info("No checkpoint file found, starting from beginning")
+            return None
+    except Exception as e:
+        logger.error(f"Failed to load checkpoint: {e}")
+        return None
+
+def clear_checkpoint(checkpoint_file: str = 'openwebui_checkpoint.txt'):
+    """Clear the checkpoint file after successful completion"""
+    try:
+        if os.path.exists(checkpoint_file):
+            os.remove(checkpoint_file)
+            logger.info("Checkpoint cleared - upload completed successfully")
+    except Exception as e:
+        logger.error(f"Failed to clear checkpoint: {e}")
 
 class OpenWebUIClient:
     """Client for interacting with Open-WebUI API"""
@@ -375,11 +419,21 @@ def main():
         action="store_true",
         help="Enable verbose logging"
     )
+    parser.add_argument(
+        "--clear-checkpoint",
+        action="store_true",
+        help="Clear the checkpoint file and start from beginning"
+    )
     
     args = parser.parse_args()
     
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
+    
+    # Clear checkpoint if requested
+    if args.clear_checkpoint:
+        clear_checkpoint()
+        logger.info("Checkpoint cleared - starting from beginning")
     
     # Validate pickle directory
     if not os.path.exists(args.pickle_dir):
@@ -413,13 +467,15 @@ def main():
         logger.error("Required knowledge collections not found!")
         return 1
     
+    # Load checkpoint to resume from last successful upload
+    last_uploaded_space = load_checkpoint()
+    resume_mode = last_uploaded_space is not None
+    
     # Process each pickle file
     total_success = 0
     total_pages = 0
     
     for pickle_file in pickle_files:
-        logger.info(f"Processing pickle file: {pickle_file.name}")
-        
         pickle_data = load_confluence_pickle(pickle_file)
         if not pickle_data:
             logger.warning(f"Skipping invalid pickle file: {pickle_file.name}")
@@ -429,7 +485,17 @@ def main():
         space_name = pickle_data.get('name', 'Unknown Space')
         page_count = len(pickle_data.get('sampled_pages', []))
         
-        logger.info(f"Found space '{space_name}' ({space_key}) with {page_count} pages")
+        # Skip spaces until we reach the checkpoint
+        if resume_mode:
+            if space_key == last_uploaded_space:
+                logger.info(f"Reached checkpoint space '{space_name}' ({space_key}) - resuming from next space")
+                resume_mode = False
+                continue
+            else:
+                logger.info(f"Skipping already processed space '{space_name}' ({space_key})")
+                continue
+        
+        logger.info(f"Processing space '{space_name}' ({space_key}) with {page_count} pages")
         
         success_count = upload_confluence_space(
             client, pickle_data, html_collection_id, text_collection_id
@@ -437,11 +503,21 @@ def main():
         
         total_success += success_count
         total_pages += page_count
+        
+        # Save checkpoint after successful upload
+        if success_count > 0:
+            save_checkpoint(space_key)
+            logger.info(f"Completed space '{space_name}' ({space_key}): {success_count}/{page_count} pages uploaded")
     
     logger.info(f"Upload complete: {total_success}/{total_pages} pages uploaded successfully")
     
+    # Clear checkpoint on successful completion
+    if total_success == total_pages:
+        clear_checkpoint()
+    
     if total_success < total_pages:
         logger.warning(f"{total_pages - total_success} pages failed to upload")
+        logger.info("Checkpoint saved - run again to resume from last successful upload")
         return 1
     
     return 0
