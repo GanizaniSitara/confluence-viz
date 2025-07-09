@@ -36,6 +36,7 @@ logger = setup_logging()
 
 # Thread-safe checkpoint handling
 checkpoint_lock = threading.Lock()
+progress_lock = threading.Lock()
 
 def save_checkpoint(space_key: str, checkpoint_file: str = 'openwebui_checkpoint.txt'):
     """Save the last successfully uploaded space to checkpoint file (thread-safe)"""
@@ -340,6 +341,13 @@ def upload_confluence_space(client: OpenWebUIClient, pickle_data: Dict,
     logger.info(f"Successfully uploaded {success_count}/{len(sampled_pages)} pages from space {space_key}")
     return success_count
 
+def log_progress(message: str, force_console: bool = False):
+    """Thread-safe progress logging that ensures console output"""
+    with progress_lock:
+        if force_console:
+            print(f"[{threading.current_thread().name}] {message}")
+        logger.info(f"[{threading.current_thread().name}] {message}")
+
 def process_single_space(args_tuple):
     """Process a single space for multithreading"""
     pickle_file, html_collection_id, text_collection_id, base_url, username, password = args_tuple
@@ -347,26 +355,26 @@ def process_single_space(args_tuple):
     # Create a new client for this thread
     client = OpenWebUIClient(base_url, username, password)
     if not client.authenticate():
-        logger.error(f"Authentication failed for thread processing {pickle_file.name}")
+        log_progress(f"❌ Authentication failed for {pickle_file.name}", force_console=True)
         return 0, 0, None
     
     # Load and process the pickle file
     pickle_data = load_confluence_pickle(pickle_file)
     if not pickle_data:
-        logger.warning(f"Skipping invalid pickle file: {pickle_file.name}")
+        log_progress(f"⚠️ Skipping invalid pickle file: {pickle_file.name}", force_console=True)
         return 0, 0, None
     
     space_key = pickle_data.get('space_key', 'UNKNOWN')
     space_name = pickle_data.get('name', 'Unknown Space')
     page_count = len(pickle_data.get('sampled_pages', []))
     
-    logger.info(f"Processing space '{space_name}' ({space_key}) with {page_count} pages")
+    log_progress(f"🔄 Processing space '{space_name}' ({space_key}) with {page_count} pages", force_console=True)
     
     success_count = upload_confluence_space(
         client, pickle_data, html_collection_id, text_collection_id
     )
     
-    logger.info(f"Completed space '{space_name}' ({space_key}): {success_count}/{page_count} pages uploaded")
+    log_progress(f"✅ Completed space '{space_name}' ({space_key}): {success_count}/{page_count} pages uploaded", force_console=True)
     
     return success_count, page_count, space_key
 
@@ -541,7 +549,7 @@ def main():
         logger.info("No files to process")
         return 0
     
-    logger.info(f"Processing {len(files_to_process)} spaces using {args.threads} threads")
+    log_progress(f"🚀 Starting upload: {len(files_to_process)} spaces using {args.threads} threads", force_console=True)
     
     # Process files using multithreading
     total_success = 0
@@ -559,21 +567,27 @@ def main():
         future_to_file = {executor.submit(process_single_space, args): args[0] for args in thread_args}
         
         # Process completed tasks
+        completed_spaces = 0
         for future in as_completed(future_to_file):
             pickle_file = future_to_file[future]
             try:
                 success_count, page_count, space_key = future.result()
                 total_success += success_count
                 total_pages += page_count
+                completed_spaces += 1
                 
                 # Save checkpoint after successful upload (thread-safe)
                 if success_count > 0 and space_key:
                     save_checkpoint(space_key)
+                
+                # Show overall progress
+                log_progress(f"📊 Overall progress: {completed_spaces}/{len(files_to_process)} spaces, {total_success}/{total_pages} pages uploaded", force_console=True)
                     
             except Exception as e:
-                logger.error(f"Thread processing {pickle_file.name} failed: {e}")
+                completed_spaces += 1
+                log_progress(f"❌ Thread processing {pickle_file.name} failed: {e}", force_console=True)
     
-    logger.info(f"Upload complete: {total_success}/{total_pages} pages uploaded successfully")
+    log_progress(f"🎉 Upload complete: {total_success}/{total_pages} pages uploaded successfully", force_console=True)
     
     # Clear checkpoint on successful completion
     if total_success == total_pages:
