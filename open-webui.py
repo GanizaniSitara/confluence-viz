@@ -9,6 +9,7 @@ import os
 import argparse
 import pickle
 import json
+import configparser
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 import requests
@@ -71,45 +72,101 @@ class OpenWebUIClient:
 
     def upload_document(self, title: str, content: str, collection_name: str = "default") -> bool:
         """
-        Upload a document to Open-WebUI knowledge base
+        Upload a document to Open-WebUI knowledge base using the correct two-step process
         """
-        upload_url = f"{self.base_url}/api/v1/documents/"
+        import tempfile
+        import os
         
-        payload = {
-            "name": title,
-            "title": title,
-            "content": content,
-            "collection_name": collection_name
-        }
+        # Step 1: Upload file to /api/v1/files/
+        upload_url = f"{self.base_url}/api/v1/files/"
         
-        logger.debug(f"Uploading document '{title}' to collection '{collection_name}'")
+        logger.debug(f"Uploading content as '{title}' to {upload_url}")
+        
         try:
-            response = self.session.post(upload_url, json=payload)
-            logger.debug(f"UPLOAD [{response.status_code}]: {response.text}")
+            # Create a temporary file with the content
+            with tempfile.NamedTemporaryFile(mode='w', suffix=f".{title.split('.')[-1]}", delete=False) as tmp:
+                tmp.write(content)
+                tmp_path = tmp.name
+            
+            # Upload the file
+            with open(tmp_path, 'rb') as f:
+                files = {'file': (f"{title}.txt", f, 'text/plain')}
+                response = self.session.post(upload_url, files=files)
+                logger.debug(f"UPLOAD [{response.status_code}]: {response.text}")
+            
+            # Remove the temporary file
+            os.unlink(tmp_path)
+            
         except Exception as e:
-            logger.error(f"Exception uploading document '{title}': {e}")
+            logger.error(f"Exception uploading '{title}': {e}")
+            return False
+
+        if response.status_code != 200:
+            logger.error(f"Failed to upload '{title}': HTTP {response.status_code}")
+            return False
+
+        try:
+            data = response.json()
+        except ValueError as e:
+            logger.error(f"Error parsing upload JSON for '{title}': {e}")
+            return False
+
+        new_file_id = data.get("id")
+        if not new_file_id:
+            logger.error(f"No file ID returned after uploading '{title}'")
+            return False
+
+        # Step 2: Add file to knowledge collection
+        knowledge_url = f"{self.base_url}/api/v1/knowledge/{collection_name}/file/add"
+        knowledge_payload = {"file_id": new_file_id}
+        
+        logger.debug(f"Adding file '{title}' (ID: {new_file_id}) to collection '{collection_name}'")
+        try:
+            response = self.session.post(knowledge_url, json=knowledge_payload)
+            logger.debug(f"KNOWLEDGE ADD [{response.status_code}]: {response.text}")
+        except Exception as e:
+            logger.error(f"Exception adding file '{title}' to knowledge collection: {e}")
             return False
 
         if response.status_code not in [200, 201]:
-            logger.error(f"Failed to upload document '{title}': HTTP {response.status_code}")
+            logger.error(f"Failed to add file '{title}' to collection '{collection_name}': HTTP {response.status_code}")
             return False
 
-        logger.info(f"Successfully uploaded document '{title}' to collection '{collection_name}'")
+        logger.info(f"Successfully uploaded document '{title}' to collection '{collection_name}' (file_id={new_file_id})")
         return True
 
-    def list_collections(self) -> List[str]:
-        """List available collections"""
-        collections_url = f"{self.base_url}/api/v1/documents/collections"
+    def list_knowledge_collections(self) -> Dict[str, str]:
+        """List all knowledge collections and return as dict {name: id}"""
+        collections_url = f"{self.base_url}/api/v1/knowledge/"
         try:
             response = self.session.get(collections_url)
             if response.status_code == 200:
-                return response.json()
+                collections = response.json()
+                collection_dict = {}
+                for collection in collections:
+                    name = collection.get('name', 'Unnamed')
+                    collection_id = collection.get('id', None)
+                    if collection_id:
+                        collection_dict[name] = collection_id
+                logger.info(f"Found {len(collection_dict)} existing collections: {list(collection_dict.keys())}")
+                return collection_dict
             else:
                 logger.warning(f"Failed to list collections: HTTP {response.status_code}")
-                return []
+                return {}
         except Exception as e:
             logger.error(f"Exception listing collections: {e}")
-            return []
+            return {}
+
+    def find_existing_collection(self, name: str) -> Optional[str]:
+        """Find existing collection ID by name"""
+        collections = self.list_knowledge_collections()
+        if name in collections:
+            collection_id = collections[name]
+            logger.info(f"Found existing collection '{name}' (ID: {collection_id})")
+            return collection_id
+        else:
+            logger.error(f"Collection '{name}' not found! Available collections: {list(collections.keys())}")
+            return None
 
 def find_pickle_files(pickle_dir: str) -> List[Path]:
     """
@@ -220,8 +277,47 @@ def upload_confluence_space(client: OpenWebUIClient, pickle_data: Dict,
     logger.info(f"Successfully uploaded {success_count}/{len(sampled_pages)} pages from space {space_key}")
     return success_count
 
+def load_openwebui_settings():
+    """Load Open-WebUI settings from settings.ini"""
+    config = configparser.ConfigParser()
+    
+    # Try to load settings.ini
+    if not os.path.exists('settings.ini'):
+        logger.warning("settings.ini not found, using command line arguments only")
+        return {}
+    
+    config.read('settings.ini')
+    
+    # Get Open-WebUI settings
+    if 'OpenWebUI' not in config:
+        logger.warning("No [OpenWebUI] section found in settings.ini")
+        return {}
+    
+    settings = {}
+    openwebui_section = config['OpenWebUI']
+    
+    # Load settings with fallbacks
+    settings['base_url'] = openwebui_section.get('base_url', 'http://localhost:8080')
+    settings['username'] = openwebui_section.get('username', None)
+    settings['password'] = openwebui_section.get('password', None)
+    
+    # Don't use placeholder values
+    if settings['username'] == 'your_username':
+        settings['username'] = None
+    if settings['password'] == 'your_password':
+        settings['password'] = None
+    
+    logger.info(f"Loaded Open-WebUI settings from settings.ini: {settings['base_url']}")
+    if settings['username']:
+        logger.info(f"Using credentials for: {settings['username']}")
+    
+    return settings
+
 def main():
     """Main function"""
+    # Load settings first
+    settings = load_openwebui_settings()
+    
     parser = argparse.ArgumentParser(
         description="Upload Confluence pickles to Open-WebUI knowledge spaces"
     )
@@ -237,8 +333,8 @@ def main():
     )
     parser.add_argument(
         "--openwebui-server", 
-        default="http://localhost:8080",
-        help="Open-WebUI server URL (default: http://localhost:8080)"
+        default=settings.get('base_url', "http://localhost:8080"),
+        help=f"Open-WebUI server URL (default: {settings.get('base_url', 'http://localhost:8080')})"
     )
     parser.add_argument(
         "--html-collection", 
@@ -252,11 +348,13 @@ def main():
     )
     parser.add_argument(
         "--username",
-        help="Username for Open-WebUI authentication (optional)"
+        default=settings.get('username'),
+        help=f"Username for Open-WebUI authentication (default from settings: {settings.get('username', 'None')})"
     )
     parser.add_argument(
         "--password",
-        help="Password for Open-WebUI authentication (optional)"
+        default=settings.get('password'),
+        help="Password for Open-WebUI authentication (default from settings.ini)"
     )
     parser.add_argument(
         "--verbose", "-v",
@@ -292,6 +390,15 @@ def main():
         logger.error("Authentication failed")
         return 1
     
+    # Find existing knowledge collections
+    logger.info("Finding existing knowledge collections...")
+    html_collection_id = client.find_existing_collection(args.html_collection)
+    text_collection_id = client.find_existing_collection(args.text_collection)
+    
+    if not html_collection_id or not text_collection_id:
+        logger.error("Required knowledge collections not found!")
+        return 1
+    
     # Process each pickle file
     total_success = 0
     total_pages = 0
@@ -311,7 +418,7 @@ def main():
         logger.info(f"Found space '{space_name}' ({space_key}) with {page_count} pages")
         
         success_count = upload_confluence_space(
-            client, pickle_data, args.html_collection, args.text_collection
+            client, pickle_data, html_collection_id, text_collection_id
         )
         
         total_success += success_count
