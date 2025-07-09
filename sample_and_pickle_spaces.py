@@ -534,7 +534,7 @@ def fetch_page_metadata_bulk(page_ids, batch_size=100):
     logging.info(f"Completed bulk metadata fetch. Total results: {len(all_metadata)}")
     return all_metadata
 
-def update_existing_pickles(target_dir, log_file=None):
+def update_existing_pickles(target_dir, log_file=None, reverse_order=False):
     """Update existing pickle files with latest page versions based on timestamp comparison."""
     abs_target_dir = os.path.abspath(target_dir)
     print(f"Pickle directory: {abs_target_dir}")
@@ -553,8 +553,15 @@ def update_existing_pickles(target_dir, log_file=None):
         logging.warning(warning_msg)
         return
     
-    print(f"Found {len(pickle_files)} pickle files to potentially update")
-    logging.info(f"Found {len(pickle_files)} pickle files to potentially update")
+    # Sort pickle files in the requested order
+    if reverse_order:
+        pickle_files.sort(reverse=True)
+        print(f"Found {len(pickle_files)} pickle files to potentially update (processing in Z-A order)")
+        logging.info(f"Found {len(pickle_files)} pickle files to potentially update (processing in Z-A order)")
+    else:
+        pickle_files.sort()
+        print(f"Found {len(pickle_files)} pickle files to potentially update")
+        logging.info(f"Found {len(pickle_files)} pickle files to potentially update")
     
     total_updated_pages = 0
     total_checked_files = 0
@@ -763,7 +770,7 @@ def main():
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
         description="Sample and pickle Confluence spaces. Handles checkpointing for resumable execution.",
-        epilog="If no run mode argument (--reset, --batch-continue, --resume-from-pickles, --update-pickles, --pickle-space-full SPACE_KEY) is provided, an interactive menu is shown." # Updated epilog
+        epilog="If no run mode argument (--reset, --batch-continue, --resume-from-pickles, --update-pickles, --update-pickles-reverse, --pickle-space-full SPACE_KEY) is provided, an interactive menu is shown." # Updated epilog
     )
     # Group for mutually exclusive run modes
     mode_group = parser.add_mutually_exclusive_group()
@@ -771,6 +778,7 @@ def main():
     mode_group.add_argument('--batch-continue', action='store_true', help='Run in continue mode using checkpoint without interactive menu (non-interactive).')
     mode_group.add_argument('--resume-from-pickles', action='store_true', help='Resume work based on scanning existing pickle files in output directory (non-interactive).')
     mode_group.add_argument('--update-pickles', action='store_true', help='Update existing pickle files with latest page versions based on timestamp comparison (non-interactive).')
+    mode_group.add_argument('--update-pickles-reverse', action='store_true', help='Update existing pickle files with latest page versions in Z-A order (non-interactive).')
     mode_group.add_argument('--pickle-space-full', type=str, metavar='SPACE_KEY',
                                help=f'Pickle all pages for a single space. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}. Bypasses sampling, checkpointing, and interactive menu.') # Updated help
     mode_group.add_argument('--pickle-all-spaces-full', action='store_true',
@@ -806,6 +814,19 @@ def main():
             print(f"Logging to: {log_file}")
         
         update_existing_pickles(OUTPUT_DIR, log_file)
+        sys.exit(0)
+
+    # Handle --update-pickles-reverse mode
+    if args.update_pickles_reverse:
+        print(f"Mode: Updating existing pickle files with latest page versions (Z-A order)")
+        print(f"Target directory: {OUTPUT_DIR}")
+        
+        # Setup logging for update process
+        log_file = setup_simple_logging('.')
+        if log_file:
+            print(f"Logging to: {log_file}")
+        
+        update_existing_pickles(OUTPUT_DIR, log_file, reverse_order=True)
         sys.exit(0)
 
     # Handle --pickle-all-spaces-full mode
@@ -1072,6 +1093,7 @@ def main():
         print("  --batch-continue              : Skips this menu and continues from the last checkpoint (standard sampling mode).") # Updated help
         print("  --resume-from-pickles         : Resume work based on scanning existing pickle files in output directory.") # NEW help line
         print("  --update-pickles              : Update existing pickle files with latest page versions based on timestamp comparison.") # NEW help line
+        print("  --update-pickles-reverse      : Update existing pickle files with latest page versions in Z-A order.") # NEW help line
         print(f"  --pickle-space-full SPACE_KEY : Pickles all pages for a single space. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}.") # Updated help
         print(f"  --pickle-all-spaces-full      : Pickles all pages for ALL non-user spaces. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}.") # New help line
         print(f"                                  Uses its own checkpoint ({FULL_PICKLE_CHECKPOINT_FILENAME}) and bypasses sampling and this interactive menu.") # Updated help
@@ -1085,12 +1107,13 @@ def main():
                            "  2: Reset and start from beginning (standard sampling mode, deletes checkpoint)\n"
                            "  3: Resume from existing pickle files (scans output directory for existing pickles)\n"
                            "  4: Update existing pickle files with latest page versions (compares timestamps)\n"
-                           "  5: Pickle all pages for a single space (e.g., DOC). Saves to configured full pickle directory.\n"
-                           "  6: Pickle all pages for ALL non-user spaces. Saves to configured full pickle directory (uses its own checkpoint).\n"
-                           "  7: List all non-user spaces to console (Key, Name, Description)\n"  # MODIFIED MENU OPTION
-                           "  8: List all non-user space KEYS only to console\n"  # NEW MENU OPTION
+                           "  5: Update existing pickle files with latest page versions in Z-A order (compares timestamps)\n"
+                           "  6: Pickle all pages for a single space (e.g., DOC). Saves to configured full pickle directory.\n"
+                           "  7: Pickle all pages for ALL non-user spaces. Saves to configured full pickle directory (uses its own checkpoint).\n"
+                           "  8: List all non-user spaces to console (Key, Name, Description)\n"  # MODIFIED MENU OPTION
+                           "  9: List all non-user space KEYS only to console\n"  # NEW MENU OPTION
                            "  q: Quit\n"
-                           "Enter choice (1, 2, 3, 4, 5, 6, 7, 8, or q): ").strip().lower() # UPDATED PROMPT
+                           "Enter choice (1, 2, 3, 4, 5, 6, 7, 8, 9, or q): ").strip().lower() # UPDATED PROMPT
             if choice == '1':
                 perform_reset = False
                 print("Mode: Continuing with existing progress (standard sampling).")
@@ -1143,6 +1166,18 @@ def main():
                 print("\nReturning to menu...")
                 continue # Go back to the interactive menu
             elif choice == '5':
+                print(f"Mode: Update existing pickle files with latest page versions (Z-A order)")
+                print(f"Target directory: {OUTPUT_DIR}")
+                
+                # Setup logging for update process
+                log_file = setup_simple_logging('.')
+                if log_file:
+                    print(f"Logging to: {log_file}")
+                
+                update_existing_pickles(OUTPUT_DIR, log_file, reverse_order=True)
+                print("\nReturning to menu...")
+                continue # Go back to the interactive menu
+            elif choice == '6':
                 target_space_key_interactive = input("Enter the SPACE_KEY to pickle in full: ").strip().upper()
                 if not target_space_key_interactive:
                     print("No space key provided. Please try again.")
@@ -1234,7 +1269,7 @@ def main():
                     download_attachments_for_space(args.pickle_space_full, pages_metadata, EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, (USERNAME, PASSWORD), VERIFY_SSL, BASE_URL)
 
                 sys.exit(0) # Exit after this action
-            elif choice == '6':
+            elif choice == '7':
                 # Simulate args for --pickle-all-spaces-full
                 # args.pickle_all_spaces_full = True # This is implicitly handled by falling into the shared logic
                 
@@ -1366,13 +1401,13 @@ def main():
                 if failed_this_run > 0:
                     print("Rerun the script to attempt processing failed spaces.")
                 sys.exit(0) # Exit after this action
-            elif choice == '7': # MODIFIED MENU HANDLING
+            elif choice == '8': # MODIFIED MENU HANDLING
                 print("Action: Listing all non-user spaces from Confluence...")
                 all_spaces_interactive = fetch_all_spaces_with_details(auth_details=(USERNAME, PASSWORD), verify_ssl_cert=VERIFY_SSL)
                 print_spaces_nicely(all_spaces_interactive)
                 print("\nReturning to menu...")
                 continue # Go back to the interactive menu
-            elif choice == '8': # NEW MENU HANDLING
+            elif choice == '9': # NEW MENU HANDLING
                 print("Action: Listing all non-user space KKEYS only from Confluence...")
                 all_spaces_interactive_keys = fetch_all_spaces_with_details(auth_details=(USERNAME, PASSWORD), verify_ssl_cert=VERIFY_SSL)
                 print_space_keys_only(all_spaces_interactive_keys)
@@ -1382,7 +1417,7 @@ def main():
                 print("Exiting script.")
                 sys.exit(0) # Exit gracefully
             else:
-                print("Invalid choice. Please enter 1, 2, 3, 4, 5, 6, 7, 8, or q.") # UPDATED ERROR MESSAGE
+                print("Invalid choice. Please enter 1, 2, 3, 4, 5, 6, 7, 8, 9, or q.") # UPDATED ERROR MESSAGE
     
     # --- Checkpoint handling ---
     if perform_reset and os.path.exists(CHECKPOINT_FILE):
