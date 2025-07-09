@@ -137,8 +137,8 @@ class OpenWebUIClient:
                 content_type = "text/plain"
                 filename = f"{title}.txt"
             
-            # Create a temporary file with the content
-            with tempfile.NamedTemporaryFile(mode='w', suffix=file_extension, delete=False) as tmp:
+            # Create a temporary file with the content (specify UTF-8 encoding)
+            with tempfile.NamedTemporaryFile(mode='w', suffix=file_extension, delete=False, encoding='utf-8') as tmp:
                 tmp.write(content)
                 tmp_path = tmp.name
             
