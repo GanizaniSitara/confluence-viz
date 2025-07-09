@@ -70,7 +70,7 @@ class OpenWebUIClient:
         logger.info("Authentication successful")
         return True
 
-    def upload_document(self, title: str, content: str, collection_name: str = "default") -> bool:
+    def upload_document(self, title: str, content: str, collection_name: str = "default", is_html: bool = False) -> bool:
         """
         Upload a document to Open-WebUI knowledge base using the correct two-step process
         """
@@ -83,14 +83,25 @@ class OpenWebUIClient:
         logger.debug(f"Uploading content as '{title}' to {upload_url}")
         
         try:
+            # Determine file extension and content type
+            if is_html:
+                file_extension = ".html"
+                content_type = "text/html"
+                filename = f"{title}.html"
+            else:
+                file_extension = ".txt"
+                content_type = "text/plain"
+                filename = f"{title}.txt"
+            
             # Create a temporary file with the content
-            with tempfile.NamedTemporaryFile(mode='w', suffix=f".{title.split('.')[-1]}", delete=False) as tmp:
+            with tempfile.NamedTemporaryFile(mode='w', suffix=file_extension, delete=False) as tmp:
                 tmp.write(content)
                 tmp_path = tmp.name
             
             # Upload the file
             with open(tmp_path, 'rb') as f:
-                files = {'file': (f"{title}.txt", f, 'text/plain')}
+                files = {'file': (filename, f, content_type)}
+                logger.info(f"Uploading as filename='{filename}', content_type='{content_type}', is_html={is_html}")
                 response = self.session.post(upload_url, files=files)
                 logger.debug(f"UPLOAD [{response.status_code}]: {response.text}")
             
@@ -211,22 +222,24 @@ def process_confluence_page(page: Dict, space_key: str, space_name: str) -> tupl
     body = page.get('body', '')
     updated = page.get('updated', 'Unknown')
     
-    # Create HTML version with structured content
-    html_content = f"""<h1>{title}</h1>
-<p><strong>Page ID:</strong> {page_id}</p>
-<p><strong>Space:</strong> {space_name} ({space_key})</p>
-<p><strong>Last Updated:</strong> {updated}</p>
-<hr>
-{body}"""
+    # HTML version - keep content completely INTACT, no changes whatsoever
+    html_content = body
     
-    # Create text version using the HTML cleaner
+    # Text version - strip ALL tags (Confluence and standard HTML) using BeautifulSoup
+    from bs4 import BeautifulSoup
+    
+    # Use BeautifulSoup to strip all HTML and XML tags
+    soup = BeautifulSoup(body, 'html.parser')
+    cleaned_text = soup.get_text(separator='\n', strip=True)
+    
+    # Create text version with metadata
     text_content = f"""Title: {title}
 Page ID: {page_id}
 Space: {space_name} ({space_key})
 Last Updated: {updated}
 {'='*60}
 
-{clean_confluence_html(body)}"""
+{cleaned_text}"""
     
     return html_content, text_content
 
@@ -259,11 +272,11 @@ def upload_confluence_space(client: OpenWebUIClient, pickle_data: Dict,
             
             # Upload HTML version
             html_title = f"{space_key}-{page_id}-HTML"
-            html_success = client.upload_document(html_title, html_content, html_collection)
+            html_success = client.upload_document(html_title, html_content, html_collection, is_html=True)
             
             # Upload text version
             text_title = f"{space_key}-{page_id}-TEXT"
-            text_success = client.upload_document(text_title, text_content, text_collection)
+            text_success = client.upload_document(text_title, text_content, text_collection, is_html=False)
             
             if html_success and text_success:
                 success_count += 1
