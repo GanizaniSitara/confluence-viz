@@ -313,6 +313,7 @@ def load_openwebui_settings():
     settings['base_url'] = openwebui_section.get('base_url', 'http://localhost:8080')
     settings['username'] = openwebui_section.get('username', None)
     settings['password'] = openwebui_section.get('password', None)
+    settings['upload_dir'] = openwebui_section.get('upload_dir', None)
     
     # Don't use placeholder values
     if settings['username'] == 'your_username':
@@ -336,8 +337,8 @@ def main():
     )
     parser.add_argument(
         "--pickle-dir", 
-        required=True,
-        help="Directory containing Confluence pickle files"
+        default=settings.get('upload_dir', 'temp'),
+        help=f"Directory containing Confluence pickle files (default: {settings.get('upload_dir', 'temp')})"
     )
     parser.add_argument(
         "--ollama-server", 
