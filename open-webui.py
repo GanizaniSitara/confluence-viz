@@ -15,8 +15,6 @@ from typing import List, Dict, Optional, Any
 import requests
 from requests.auth import HTTPBasicAuth
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
 from utils.html_cleaner import clean_confluence_html
 
 # Set up logging
@@ -34,19 +32,14 @@ def setup_logging(log_file='openwebui_upload.log'):
 
 logger = setup_logging()
 
-# Thread-safe checkpoint handling
-checkpoint_lock = threading.Lock()
-progress_lock = threading.Lock()
-
 def save_checkpoint(space_key: str, checkpoint_file: str = 'openwebui_checkpoint.txt'):
-    """Save the last successfully uploaded space to checkpoint file (thread-safe)"""
-    with checkpoint_lock:
-        try:
-            with open(checkpoint_file, 'w') as f:
-                f.write(space_key)
-            logger.info(f"Checkpoint saved: {space_key}")
-        except Exception as e:
-            logger.error(f"Failed to save checkpoint: {e}")
+    """Save the last successfully uploaded space to checkpoint file"""
+    try:
+        with open(checkpoint_file, 'w') as f:
+            f.write(space_key)
+        logger.info(f"Checkpoint saved: {space_key}")
+    except Exception as e:
+        logger.error(f"Failed to save checkpoint: {e}")
 
 def load_checkpoint(checkpoint_file: str = 'openwebui_checkpoint.txt') -> Optional[str]:
     """Load the last successfully uploaded space from checkpoint file"""
@@ -341,42 +334,6 @@ def upload_confluence_space(client: OpenWebUIClient, pickle_data: Dict,
     logger.info(f"Successfully uploaded {success_count}/{len(sampled_pages)} pages from space {space_key}")
     return success_count
 
-def log_progress(message: str, force_console: bool = False):
-    """Thread-safe progress logging that ensures console output"""
-    with progress_lock:
-        if force_console:
-            print(f"[{threading.current_thread().name}] {message}")
-        logger.info(f"[{threading.current_thread().name}] {message}")
-
-def process_single_space(args_tuple):
-    """Process a single space for multithreading"""
-    pickle_file, html_collection_id, text_collection_id, base_url, username, password = args_tuple
-    
-    # Create a new client for this thread
-    client = OpenWebUIClient(base_url, username, password)
-    if not client.authenticate():
-        log_progress(f"❌ Authentication failed for {pickle_file.name}", force_console=True)
-        return 0, 0, None
-    
-    # Load and process the pickle file
-    pickle_data = load_confluence_pickle(pickle_file)
-    if not pickle_data:
-        log_progress(f"⚠️ Skipping invalid pickle file: {pickle_file.name}", force_console=True)
-        return 0, 0, None
-    
-    space_key = pickle_data.get('space_key', 'UNKNOWN')
-    space_name = pickle_data.get('name', 'Unknown Space')
-    page_count = len(pickle_data.get('sampled_pages', []))
-    
-    log_progress(f"🔄 Processing space '{space_name}' ({space_key}) with {page_count} pages", force_console=True)
-    
-    success_count = upload_confluence_space(
-        client, pickle_data, html_collection_id, text_collection_id
-    )
-    
-    log_progress(f"✅ Completed space '{space_name}' ({space_key}): {success_count}/{page_count} pages uploaded", force_console=True)
-    
-    return success_count, page_count, space_key
 
 def load_openwebui_settings():
     """Load Open-WebUI settings from settings.ini"""
@@ -468,12 +425,6 @@ def main():
         action="store_true",
         help="Clear the checkpoint file and start from beginning"
     )
-    parser.add_argument(
-        "--threads",
-        type=int,
-        default=10,
-        help="Number of threads to use for parallel upload (default: 10)"
-    )
     
     args = parser.parse_args()
     
@@ -549,45 +500,46 @@ def main():
         logger.info("No files to process")
         return 0
     
-    log_progress(f"🚀 Starting upload: {len(files_to_process)} spaces using {args.threads} threads", force_console=True)
+    logger.info(f"🚀 Starting upload: {len(files_to_process)} spaces")
     
-    # Process files using multithreading
+    # Process files sequentially
     total_success = 0
     total_pages = 0
     
-    # Create argument tuples for each thread
-    thread_args = [
-        (pickle_file, html_collection_id, text_collection_id, args.openwebui_server, args.username, args.password)
-        for pickle_file in files_to_process
-    ]
-    
-    # Use ThreadPoolExecutor to process spaces in parallel
-    with ThreadPoolExecutor(max_workers=args.threads) as executor:
-        # Submit all tasks
-        future_to_file = {executor.submit(process_single_space, args): args[0] for args in thread_args}
+    for i, pickle_file in enumerate(files_to_process, 1):
+        logger.info(f"Processing space {i}/{len(files_to_process)}: {pickle_file.name}")
         
-        # Process completed tasks
-        completed_spaces = 0
-        for future in as_completed(future_to_file):
-            pickle_file = future_to_file[future]
-            try:
-                success_count, page_count, space_key = future.result()
-                total_success += success_count
-                total_pages += page_count
-                completed_spaces += 1
+        try:
+            # Load and process the pickle file
+            pickle_data = load_confluence_pickle(pickle_file)
+            if not pickle_data:
+                logger.warning(f"⚠️ Skipping invalid pickle file: {pickle_file.name}")
+                continue
+            
+            space_key = pickle_data.get('space_key', 'UNKNOWN')
+            space_name = pickle_data.get('name', 'Unknown Space')
+            page_count = len(pickle_data.get('sampled_pages', []))
+            
+            logger.info(f"🔄 Processing space '{space_name}' ({space_key}) with {page_count} pages")
+            
+            success_count = upload_confluence_space(
+                client, pickle_data, html_collection_id, text_collection_id
+            )
+            
+            total_success += success_count
+            total_pages += page_count
+            
+            # Save checkpoint after successful upload
+            if success_count > 0:
+                save_checkpoint(space_key)
+            
+            logger.info(f"✅ Completed space '{space_name}' ({space_key}): {success_count}/{page_count} pages uploaded")
+            logger.info(f"📊 Overall progress: {i}/{len(files_to_process)} spaces, {total_success}/{total_pages} pages uploaded")
                 
-                # Save checkpoint after successful upload (thread-safe)
-                if success_count > 0 and space_key:
-                    save_checkpoint(space_key)
-                
-                # Show overall progress
-                log_progress(f"📊 Overall progress: {completed_spaces}/{len(files_to_process)} spaces, {total_success}/{total_pages} pages uploaded", force_console=True)
-                    
-            except Exception as e:
-                completed_spaces += 1
-                log_progress(f"❌ Thread processing {pickle_file.name} failed: {e}", force_console=True)
+        except Exception as e:
+            logger.error(f"❌ Processing {pickle_file.name} failed: {e}")
     
-    log_progress(f"🎉 Upload complete: {total_success}/{total_pages} pages uploaded successfully", force_console=True)
+    logger.info(f"🎉 Upload complete: {total_success}/{total_pages} pages uploaded successfully")
     
     # Clear checkpoint on successful completion
     if total_success == total_pages:
