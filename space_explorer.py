@@ -606,11 +606,22 @@ def pickle_all_spaces(include_body):
 def count_non_user_spaces():
     """
     Counts the total number of non-user (global) spaces in Confluence.
+    Also writes space keys to a file for comparison with pickle files.
     """
     print("Counting non-user spaces...")
     space_keys = get_all_non_personal_spaces()
     if space_keys is not None:
         print(f"\nTotal non-user spaces: {len(space_keys)}")
+        
+        # Write space keys to file
+        output_file = "confluence_space_keys.txt"
+        try:
+            with open(output_file, 'w') as f:
+                for key in sorted(space_keys):
+                    f.write(f"{key}\n")
+            print(f"Space keys written to: {output_file}")
+        except Exception as e:
+            print(f"Error writing to file: {e}")
     else:
         print("Failed to count spaces.")
 
