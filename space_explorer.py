@@ -46,9 +46,10 @@ API_BASE = f'{CONFLUENCE_API_BASE_URL}{API_ENDPOINT}'
 API_CONTENT_ENDPOINT = f'{API_BASE}/content'
 API_USER_ENDPOINT = f'{API_BASE}/user' # May need this later
 
-def make_api_request(url, params=None, max_retries=5):
+def make_api_request(url, params=None, max_retries=10):
     """
     Makes an API request, handling authentication, 429 rate limiting, and SSL verification.
+    Increased retries to 10 and properly respects Retry-After header.
     """
     retries = 0
     while retries < max_retries:
@@ -74,9 +75,22 @@ def make_api_request(url, params=None, max_retries=5):
 
             elif response.status_code == 429:
                 retry_after = response.headers.get('Retry-After')
-                wait_time = int(retry_after) if retry_after else (2 ** retries) * 5
-                jitter = random.uniform(0, 1) * 2
+                if retry_after:
+                    # Retry-After can be in seconds or HTTP-date format
+                    try:
+                        # Try parsing as integer (seconds)
+                        wait_time = float(retry_after)
+                    except ValueError:
+                        # If not a number, might be HTTP-date, default to exponential backoff
+                        wait_time = min((2 ** retries) * 5, 300)  # Cap at 5 minutes
+                else:
+                    # No Retry-After header, use exponential backoff with cap
+                    wait_time = min((2 ** retries) * 5, 300)  # Cap at 5 minutes
+                
+                # Add small jitter to prevent thundering herd
+                jitter = random.uniform(0, min(wait_time * 0.1, 5))  # Max 10% jitter or 5 seconds
                 wait_time += jitter
+                
                 print(f"Rate limited (429). Server requested Retry-After: {retry_after or 'Not specified'}")
                 print(f"Waiting for {wait_time:.2f} seconds before retry {retries + 1}/{max_retries}")
                 time.sleep(wait_time)
@@ -93,17 +107,23 @@ def make_api_request(url, params=None, max_retries=5):
                  print(f"Response body: {response.text}")
                  return None # Not found errors won't succeed on retry
 
+            elif response.status_code >= 500:
+                # Server errors might be temporary, retry them
+                wait_time = min((2 ** retries) * 3, 60)  # Shorter wait for server errors, cap at 1 minute
+                print(f"Server error ({response.status_code}). Waiting {wait_time} seconds before retry {retries + 1}/{max_retries}")
+                time.sleep(wait_time)
+                retries += 1
+                continue
+
             else:
                 print(f"Error: Received status code {response.status_code} for {url}")
                 print(f"Response body: {response.text}")
-                # Consider retrying for 5xx server errors? For now, fail.
                 return None
 
         except requests.exceptions.RequestException as e:
             print(f"Request failed: {e}")
-            # Basic handling, could implement retry for network errors too
             # Wait briefly before retrying network errors
-            wait_time = (2 ** retries) * 2 # Shorter backoff for network issues
+            wait_time = min((2 ** retries) * 2, 30)  # Cap at 30 seconds for network errors
             print(f"Network error. Waiting {wait_time} seconds before retry {retries + 1}/{max_retries}")
             time.sleep(wait_time)
             retries += 1
