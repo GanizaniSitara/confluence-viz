@@ -1104,30 +1104,28 @@ def main():
         print("------------------------------------\n") # Corrected to \\n
         while True:
             choice = input("Choose an action:\n" # Updated prompt
-                           "  1: Fetch ALL pages - Continue from checkpoint (FULL mode)\n"
+                           "  1: [DEFUNCT] - File checkpoint deprecated, use option 9 to scan folder\n"
                            "  2: [DEFUNCT] - This option has been disabled to prevent data loss\n"
                            "  3: Fetch ALL pages - Single space (FULL mode)\n"
-                           "  4: Fetch ALL pages - All spaces with checkpoint (FULL mode)\n"
+                           "  4: [DEFUNCT] - File checkpoint deprecated, use option 9 to scan folder\n"
                            "  5: SAMPLE pages only - Continue from checkpoint (samples ~30-70 pages per space)\n"
                            "  6: SAMPLE pages only - Reset and start fresh (samples ~30-70 pages per space)\n"
                            "  7: Update existing pickles - Add newer page versions\n"
                            "  8: Update existing pickles - Add newer page versions (Z-A order)\n"
-                           "  9: Resume from existing pickle files (scans output directory)\n"
+                           "  9: Resume from existing pickle files (SCANS FOLDER for completed spaces)\n"
                            "  10: List all non-user spaces (Key, Name, Description)\n"
                            "  11: List all non-user space KEYS only\n"
                            "  q: Quit\n"
                            "Enter choice (1-11 or q): ").strip().lower() # UPDATED PROMPT
             if choice == '1':
-                # Full mode - continue from checkpoint for all spaces
-                # This will use the full pickle checkpoint and directory
-                print("Mode: Fetching ALL pages for all spaces - continuing from checkpoint (FULL mode).")
-                # Jump to the full pickle all spaces logic (old choice 7)
-                choice = 'full_all_continue'
-                break
+                # Defunct option - file checkpoint deprecated
+                print("This option has been deprecated. File checkpoints are no longer used.")
+                print("Use option 9 to resume from existing pickle files by scanning the output folder.")
+                continue  # Return to menu
             elif choice == '2':
                 # Defunct option - disabled to prevent data loss
                 print("This option has been disabled to prevent accidental data loss.")
-                print("Use option 1 to continue from checkpoint or option 3/4 for other full mode options.")
+                print("Use option 9 to resume from existing pickles or option 3 for single space.")
                 continue  # Return to menu
             elif choice == '3':
                 # Full mode - single space
@@ -1135,10 +1133,10 @@ def main():
                 choice = 'full_single'
                 break
             elif choice == '4':
-                # Full mode - all spaces with checkpoint (same as choice 1)
-                print("Mode: Fetching ALL pages for all spaces with checkpoint (FULL mode).")
-                choice = 'full_all_continue'
-                break
+                # Defunct option - file checkpoint deprecated
+                print("This option has been deprecated. File checkpoints are no longer used.")
+                print("Use option 9 to resume from existing pickle files by scanning the output folder.")
+                continue  # Return to menu
             elif choice == '5':
                 # Sample mode - continue from checkpoint
                 perform_reset = False
