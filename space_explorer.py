@@ -646,6 +646,186 @@ def count_non_user_spaces():
     else:
         print("Failed to count spaces.")
 
+def three_way_comparison():
+    """
+    Three-way comparison between Production, UAT, and pickled spaces.
+    UAT URL is constructed by adding '-uat' suffix to the production URL.
+    """
+    print("Performing three-way comparison: Production vs UAT vs Pickled spaces...\n")
+    
+    # Get production spaces
+    print("Fetching Production spaces...")
+    prod_keys = get_all_non_personal_spaces()
+    if prod_keys is None:
+        print("Failed to get Production spaces. Aborting comparison.")
+        return
+    prod_keys_set = set(prod_keys)
+    print(f"Found {len(prod_keys_set)} spaces in Production")
+    
+    # Temporarily switch to UAT
+    global CONFLUENCE_API_BASE_URL, API_BASE, API_CONTENT_ENDPOINT
+    original_base_url = CONFLUENCE_API_BASE_URL
+    original_api_base = API_BASE
+    original_content_endpoint = API_CONTENT_ENDPOINT
+    
+    # Create UAT URL by adding -uat suffix
+    if "https://confluence." in CONFLUENCE_API_BASE_URL:
+        uat_base_url = CONFLUENCE_API_BASE_URL.replace("https://confluence.", "https://confluence-uat.")
+    else:
+        print("Warning: Production URL doesn't match expected pattern. Adding -uat before first dot.")
+        parts = CONFLUENCE_API_BASE_URL.split('.')
+        if len(parts) > 1:
+            parts[0] = parts[0] + "-uat"
+            uat_base_url = '.'.join(parts)
+        else:
+            print("Error: Cannot construct UAT URL. Aborting.")
+            return
+    
+    print(f"\nSwitching to UAT: {uat_base_url}")
+    CONFLUENCE_API_BASE_URL = uat_base_url
+    API_BASE = f'{CONFLUENCE_API_BASE_URL}{API_ENDPOINT}'
+    API_CONTENT_ENDPOINT = f'{API_BASE}/content'
+    
+    # Get UAT spaces
+    print("Fetching UAT spaces...")
+    uat_keys = get_all_non_personal_spaces()
+    if uat_keys is None:
+        print("Failed to get UAT spaces. Continuing with Production and Pickled only.")
+        uat_keys_set = set()
+    else:
+        uat_keys_set = set(uat_keys)
+        print(f"Found {len(uat_keys_set)} spaces in UAT")
+    
+    # Restore original URLs
+    CONFLUENCE_API_BASE_URL = original_base_url
+    API_BASE = original_api_base
+    API_CONTENT_ENDPOINT = original_content_endpoint
+    
+    # Get pickle files from temp directory
+    print("\nChecking pickle files...")
+    pickle_files = glob.glob(os.path.join("temp", "*.pkl"))
+    pickle_space_keys = set()
+    
+    for filepath in pickle_files:
+        filename = os.path.basename(filepath)
+        if filename.endswith('.pkl'):
+            space_key = filename[:-4]
+            pickle_space_keys.add(space_key)
+    
+    print(f"Found {len(pickle_space_keys)} pickle files in temp/")
+    
+    # Calculate all combinations
+    in_all_three = prod_keys_set & uat_keys_set & pickle_space_keys
+    in_prod_and_uat = (prod_keys_set & uat_keys_set) - pickle_space_keys
+    in_prod_and_pickle = (prod_keys_set & pickle_space_keys) - uat_keys_set
+    in_uat_and_pickle = (uat_keys_set & pickle_space_keys) - prod_keys_set
+    only_in_prod = prod_keys_set - uat_keys_set - pickle_space_keys
+    only_in_uat = uat_keys_set - prod_keys_set - pickle_space_keys
+    only_in_pickle = pickle_space_keys - prod_keys_set - uat_keys_set
+    
+    # Display results
+    print("\n" + "="*60)
+    print("THREE-WAY COMPARISON RESULTS")
+    print("="*60)
+    
+    print(f"\nIn all three (Prod + UAT + Pickled): {len(in_all_three)}")
+    if in_all_three and len(in_all_three) <= 10:
+        for key in sorted(in_all_three)[:10]:
+            print(f"  {key}")
+    
+    print(f"\nIn Prod + UAT only (not pickled): {len(in_prod_and_uat)}")
+    if in_prod_and_uat:
+        for key in sorted(in_prod_and_uat)[:10]:
+            print(f"  {key}")
+        if len(in_prod_and_uat) > 10:
+            print(f"  ... and {len(in_prod_and_uat) - 10} more")
+    
+    print(f"\nIn Prod + Pickled only (not in UAT): {len(in_prod_and_pickle)}")
+    if in_prod_and_pickle:
+        for key in sorted(in_prod_and_pickle)[:10]:
+            print(f"  {key}")
+        if len(in_prod_and_pickle) > 10:
+            print(f"  ... and {len(in_prod_and_pickle) - 10} more")
+    
+    print(f"\nIn UAT + Pickled only (not in Prod): {len(in_uat_and_pickle)}")
+    if in_uat_and_pickle:
+        for key in sorted(in_uat_and_pickle)[:10]:
+            print(f"  {key}")
+        if len(in_uat_and_pickle) > 10:
+            print(f"  ... and {len(in_uat_and_pickle) - 10} more")
+    
+    print(f"\nOnly in Production: {len(only_in_prod)}")
+    if only_in_prod:
+        for key in sorted(only_in_prod)[:10]:
+            print(f"  {key}")
+        if len(only_in_prod) > 10:
+            print(f"  ... and {len(only_in_prod) - 10} more")
+    
+    print(f"\nOnly in UAT: {len(only_in_uat)}")
+    if only_in_uat:
+        for key in sorted(only_in_uat)[:10]:
+            print(f"  {key}")
+        if len(only_in_uat) > 10:
+            print(f"  ... and {len(only_in_uat) - 10} more")
+    
+    print(f"\nOnly in Pickle files: {len(only_in_pickle)}")
+    if only_in_pickle:
+        for key in sorted(only_in_pickle)[:10]:
+            print(f"  {key}")
+        if len(only_in_pickle) > 10:
+            print(f"  ... and {len(only_in_pickle) - 10} more")
+    
+    # Summary
+    print("\n" + "="*60)
+    print("SUMMARY:")
+    print(f"  Production spaces: {len(prod_keys_set)}")
+    print(f"  UAT spaces: {len(uat_keys_set)}")
+    print(f"  Pickle files: {len(pickle_space_keys)}")
+    print(f"  In all three: {len(in_all_three)}")
+    print("="*60)
+    
+    # Save detailed results to file
+    output_file = "three_way_comparison_results.txt"
+    try:
+        with open(output_file, 'w') as f:
+            f.write("Three-Way Space Comparison Results\n")
+            f.write("=" * 60 + "\n\n")
+            f.write(f"Production spaces: {len(prod_keys_set)}\n")
+            f.write(f"UAT spaces: {len(uat_keys_set)}\n")
+            f.write(f"Pickle files: {len(pickle_space_keys)}\n\n")
+            
+            f.write(f"In all three (Prod + UAT + Pickled): {len(in_all_three)}\n")
+            for key in sorted(in_all_three):
+                f.write(f"  {key}\n")
+            
+            f.write(f"\nIn Prod + UAT only (not pickled): {len(in_prod_and_uat)}\n")
+            for key in sorted(in_prod_and_uat):
+                f.write(f"  {key}\n")
+            
+            f.write(f"\nIn Prod + Pickled only (not in UAT): {len(in_prod_and_pickle)}\n")
+            for key in sorted(in_prod_and_pickle):
+                f.write(f"  {key}\n")
+            
+            f.write(f"\nIn UAT + Pickled only (not in Prod): {len(in_uat_and_pickle)}\n")
+            for key in sorted(in_uat_and_pickle):
+                f.write(f"  {key}\n")
+            
+            f.write(f"\nOnly in Production: {len(only_in_prod)}\n")
+            for key in sorted(only_in_prod):
+                f.write(f"  {key}\n")
+            
+            f.write(f"\nOnly in UAT: {len(only_in_uat)}\n")
+            for key in sorted(only_in_uat):
+                f.write(f"  {key}\n")
+            
+            f.write(f"\nOnly in Pickle files: {len(only_in_pickle)}\n")
+            for key in sorted(only_in_pickle):
+                f.write(f"  {key}\n")
+        
+        print(f"\nDetailed results saved to: {output_file}")
+    except Exception as e:
+        print(f"Error saving results to file: {e}")
+
 def compare_spaces_to_pickles():
     """
     Compares Confluence space keys from the API with pickle files in temp/ directory.
@@ -746,6 +926,7 @@ def show_main_menu():
         print("9. Fetch ALL Spaces (incl. body) (to temp_space_explorer_body/) [CHECKPOINT]")
         print("10. Count Non-User Spaces")
         print("11. Compare Confluence Spaces to Pickle Files")
+        print("12. Three-Way Comparison (Prod vs UAT vs Pickled)")
         print("Q. Quit")
         choice = input("Select option: ").strip().lower()
 
@@ -781,6 +962,8 @@ def show_main_menu():
             count_non_user_spaces()
         elif choice == '11':
             compare_spaces_to_pickles()
+        elif choice == '12':
+            three_way_comparison()
         elif choice == 'q':
             print("Exiting.")
             break
