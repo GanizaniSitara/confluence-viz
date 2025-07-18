@@ -1105,7 +1105,7 @@ def main():
         while True:
             choice = input("Choose an action:\n" # Updated prompt
                            "  1: Fetch ALL pages - Continue from checkpoint (FULL mode)\n"
-                           "  2: Fetch ALL pages - Reset and start fresh (FULL mode)\n"
+                           "  2: [DEFUNCT] - This option has been disabled to prevent data loss\n"
                            "  3: Fetch ALL pages - Single space (FULL mode)\n"
                            "  4: Fetch ALL pages - All spaces with checkpoint (FULL mode)\n"
                            "  5: SAMPLE pages only - Continue from checkpoint (samples ~30-70 pages per space)\n"
@@ -1125,11 +1125,10 @@ def main():
                 choice = 'full_all_continue'
                 break
             elif choice == '2':
-                # Full mode - reset and start fresh for all spaces  
-                print("Mode: Fetching ALL pages for all spaces - resetting and starting fresh (FULL mode).")
-                # Jump to the full pickle all spaces logic but with reset
-                choice = 'full_all_reset'
-                break
+                # Defunct option - disabled to prevent data loss
+                print("This option has been disabled to prevent accidental data loss.")
+                print("Use option 1 to continue from checkpoint or option 3/4 for other full mode options.")
+                continue  # Return to menu
             elif choice == '3':
                 # Full mode - single space
                 print("Mode: Fetch ALL pages for a single space (FULL mode)")
