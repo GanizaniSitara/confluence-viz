@@ -13,6 +13,7 @@ def get_pickle_info(filepath):
     """Get information about a pickle file"""
     try:
         file_size = os.path.getsize(filepath)
+        file_mtime = os.path.getmtime(filepath)
         with open(filepath, 'rb') as f:
             data = pickle.load(f)
             num_pages = len(data.get('sampled_pages', []))
@@ -22,7 +23,8 @@ def get_pickle_info(filepath):
             'size': file_size,
             'pages': num_pages,
             'space_key': space_key,
-            'space_name': space_name
+            'space_name': space_name,
+            'mtime': file_mtime
         }
     except Exception as e:
         print(f"Error reading {filepath}: {e}")
@@ -91,8 +93,8 @@ def reconcile_pickles(directory, dry_run=True):
                 remove_file = full_path
                 source = "standard"
             else:
-                # Same number of pages, use file size
-                if full_info['size'] >= standard_info['size']:
+                # Same number of pages, use modification time (most recent)
+                if full_info['mtime'] > standard_info['mtime']:
                     keep_file = full_path
                     remove_file = standard_path
                     source = "full"
