@@ -1153,12 +1153,12 @@ def main():
                 # Update existing pickles
                 print("Mode: Update existing pickle files with latest page versions")
                 choice = 'update_existing'
-                continue
+                break
             elif choice == '8':
                 # Update existing pickles Z-A
                 print("Mode: Update existing pickle files with latest page versions (Z-A order)")
                 choice = 'update_existing_za'
-                continue
+                break
             elif choice == '9':
                 # Resume from existing pickle files
                 print("Mode: Resume from existing pickle files (scanning output directory)")
