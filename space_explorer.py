@@ -603,6 +603,17 @@ def pickle_all_spaces(include_body):
     print(f"Failed: {failed_count}")
     print("---------------------------")
 
+def count_non_user_spaces():
+    """
+    Counts the total number of non-user (global) spaces in Confluence.
+    """
+    print("Counting non-user spaces...")
+    space_keys = get_all_space_keys()
+    if space_keys is not None:
+        print(f"\nTotal non-user spaces: {len(space_keys)}")
+    else:
+        print("Failed to count spaces.")
+
 def show_main_menu():
     """
     Displays the main menu and handles user input.
@@ -618,6 +629,7 @@ def show_main_menu():
         print("7. View Full Pickle (from temp_space_explorer_no_body/)")
         print("8. Fetch ALL Spaces (NO body) (to temp_space_explorer_no_body/) [CHECKPOINT]")
         print("9. Fetch ALL Spaces (incl. body) (to temp_space_explorer_body/) [CHECKPOINT]")
+        print("10. Count Non-User Spaces")
         print("Q. Quit")
         choice = input("Select option: ").strip().lower()
 
@@ -649,6 +661,8 @@ def show_main_menu():
         elif choice == '9':
             print("Starting bulk fetch for ALL non-personal spaces (incl. body)...")
             pickle_all_spaces(include_body=True)
+        elif choice == '10':
+            count_non_user_spaces()
         elif choice == 'q':
             print("Exiting.")
             break
