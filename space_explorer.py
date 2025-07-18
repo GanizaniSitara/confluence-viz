@@ -49,10 +49,10 @@ API_USER_ENDPOINT = f'{API_BASE}/user' # May need this later
 def make_api_request(url, params=None, max_retries=10):
     """
     Makes an API request, handling authentication, 429 rate limiting, and SSL verification.
-    Increased retries to 10 and properly respects Retry-After header.
+    For 429 errors, retries indefinitely. For other errors, respects max_retries limit.
     """
     retries = 0
-    while retries < max_retries:
+    while True:
         query_params = '&'.join([f"{k}={v}" for k, v in (params or {}).items()])
         request_url = f"{url}?{query_params}" if query_params else url
         print(f"REST Request: GET {request_url}")
@@ -92,9 +92,9 @@ def make_api_request(url, params=None, max_retries=10):
                 wait_time += jitter
                 
                 print(f"Rate limited (429). Server requested Retry-After: {retry_after or 'Not specified'}")
-                print(f"Waiting for {wait_time:.2f} seconds before retry {retries + 1}/{max_retries}")
+                print(f"Waiting for {wait_time:.2f} seconds before retrying (infinite retries for 429)")
                 time.sleep(wait_time)
-                retries += 1
+                # Don't increment retries for 429 errors - retry indefinitely
                 continue
 
             elif response.status_code in [401, 403]:
@@ -109,6 +109,9 @@ def make_api_request(url, params=None, max_retries=10):
 
             elif response.status_code >= 500:
                 # Server errors might be temporary, retry them
+                if retries >= max_retries:
+                    print(f"Server error ({response.status_code}). Max retries ({max_retries}) exceeded.")
+                    return None
                 wait_time = min((2 ** retries) * 3, 60)  # Shorter wait for server errors, cap at 1 minute
                 print(f"Server error ({response.status_code}). Waiting {wait_time} seconds before retry {retries + 1}/{max_retries}")
                 time.sleep(wait_time)
@@ -122,14 +125,14 @@ def make_api_request(url, params=None, max_retries=10):
 
         except requests.exceptions.RequestException as e:
             print(f"Request failed: {e}")
+            if retries >= max_retries:
+                print(f"Network error. Max retries ({max_retries}) exceeded.")
+                return None
             # Wait briefly before retrying network errors
             wait_time = min((2 ** retries) * 2, 30)  # Cap at 30 seconds for network errors
             print(f"Network error. Waiting {wait_time} seconds before retry {retries + 1}/{max_retries}")
             time.sleep(wait_time)
             retries += 1
-
-    print(f"Failed to fetch data from {url} after {max_retries} retries.")
-    return None
 
 def get_page_id_from_url(url):
     """Extracts the page ID from various Confluence URL formats."""
