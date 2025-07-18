@@ -14,6 +14,7 @@ from config_loader import load_confluence_settings
 from urllib.parse import urlparse, parse_qs
 import pprint # Import pprint for pretty printing
 import urllib.parse # Make sure urllib.parse is imported
+import glob # Import glob for file pattern matching
 
 # --- Suppress InsecureRequestWarning ---
 # WARNING: Disabling SSL verification is INSECURE and should only be done
@@ -625,6 +626,89 @@ def count_non_user_spaces():
     else:
         print("Failed to count spaces.")
 
+def compare_spaces_to_pickles():
+    """
+    Compares Confluence space keys from the API with pickle files in temp/ directory.
+    Identifies discrepancies between what's in Confluence and what's been pickled.
+    """
+    print("Comparing Confluence spaces with pickle files...\n")
+    
+    # Get space keys from Confluence
+    confluence_keys = get_all_non_personal_spaces()
+    if confluence_keys is None:
+        print("Failed to get Confluence spaces. Aborting comparison.")
+        return
+    
+    confluence_keys_set = set(confluence_keys)
+    
+    # Get pickle files from temp directory
+    pickle_files = glob.glob(os.path.join("temp", "*.pkl"))
+    pickle_space_keys = set()
+    
+    for filepath in pickle_files:
+        filename = os.path.basename(filepath)
+        # Remove .pkl extension
+        if filename.endswith('.pkl'):
+            space_key = filename[:-4]
+            pickle_space_keys.add(space_key)
+    
+    # Calculate deltas
+    in_confluence_not_pickled = confluence_keys_set - pickle_space_keys
+    in_pickle_not_confluence = pickle_space_keys - confluence_keys_set
+    in_both = confluence_keys_set & pickle_space_keys
+    
+    # Display results
+    print(f"Total spaces in Confluence: {len(confluence_keys_set)}")
+    print(f"Total pickle files in temp/: {len(pickle_space_keys)}")
+    print(f"Spaces in both: {len(in_both)}")
+    print()
+    
+    if in_confluence_not_pickled:
+        print(f"\nSpaces in Confluence but NOT pickled ({len(in_confluence_not_pickled)}):")
+        for key in sorted(in_confluence_not_pickled):
+            print(f"  {key}")
+    else:
+        print("\nAll Confluence spaces have been pickled.")
+    
+    if in_pickle_not_confluence:
+        print(f"\nPickle files with NO corresponding Confluence space ({len(in_pickle_not_confluence)}):")
+        print("(These might be deleted/archived spaces or personal spaces)")
+        for key in sorted(in_pickle_not_confluence):
+            print(f"  {key}")
+    else:
+        print("\nAll pickle files correspond to existing Confluence spaces.")
+    
+    # Summary
+    print("\n" + "="*50)
+    print("SUMMARY:")
+    print(f"  Missing pickles: {len(in_confluence_not_pickled)}")
+    print(f"  Extra pickles: {len(in_pickle_not_confluence)}")
+    print(f"  Matched: {len(in_both)}")
+    
+    # Save results to file
+    output_file = "space_comparison_results.txt"
+    try:
+        with open(output_file, 'w') as f:
+            f.write("Space Comparison Results\n")
+            f.write("=" * 50 + "\n\n")
+            f.write(f"Total spaces in Confluence: {len(confluence_keys_set)}\n")
+            f.write(f"Total pickle files in temp/: {len(pickle_space_keys)}\n")
+            f.write(f"Spaces in both: {len(in_both)}\n\n")
+            
+            if in_confluence_not_pickled:
+                f.write(f"Spaces in Confluence but NOT pickled ({len(in_confluence_not_pickled)}):\n")
+                for key in sorted(in_confluence_not_pickled):
+                    f.write(f"  {key}\n")
+            
+            if in_pickle_not_confluence:
+                f.write(f"\nPickle files with NO corresponding Confluence space ({len(in_pickle_not_confluence)}):\n")
+                for key in sorted(in_pickle_not_confluence):
+                    f.write(f"  {key}\n")
+        
+        print(f"\nDetailed results saved to: {output_file}")
+    except Exception as e:
+        print(f"Error saving results to file: {e}")
+
 def show_main_menu():
     """
     Displays the main menu and handles user input.
@@ -641,6 +725,7 @@ def show_main_menu():
         print("8. Fetch ALL Spaces (NO body) (to temp_space_explorer_no_body/) [CHECKPOINT]")
         print("9. Fetch ALL Spaces (incl. body) (to temp_space_explorer_body/) [CHECKPOINT]")
         print("10. Count Non-User Spaces")
+        print("11. Compare Confluence Spaces to Pickle Files")
         print("Q. Quit")
         choice = input("Select option: ").strip().lower()
 
@@ -674,6 +759,8 @@ def show_main_menu():
             pickle_all_spaces(include_body=True)
         elif choice == '10':
             count_non_user_spaces()
+        elif choice == '11':
+            compare_spaces_to_pickles()
         elif choice == 'q':
             print("Exiting.")
             break
