@@ -608,7 +608,7 @@ def count_non_user_spaces():
     Counts the total number of non-user (global) spaces in Confluence.
     """
     print("Counting non-user spaces...")
-    space_keys = get_all_space_keys()
+    space_keys = get_all_non_personal_spaces()
     if space_keys is not None:
         print(f"\nTotal non-user spaces: {len(space_keys)}")
     else:
