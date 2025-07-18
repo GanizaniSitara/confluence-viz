@@ -538,7 +538,7 @@ def print_content_size_list_sorted(pickle_data, smallest_first=True):
         print(f"{display_title:<{max_title_len}} (ID: {page_id}) - {size_kb:.2f} KB")
 
 def list_and_select_pickled_space():
-    """Lists available _full.pkl files and allows user to select one by number or space key."""
+    """Lists available .pkl files and allows user to select one by number or space key."""
     clear_console() # ADDED: Clear console before displaying menu
     # Determine the directory to scan for pickles
     pickle_dir_to_scan = os.path.join(OUTPUT_DIR, FULL_PICKLE_SUBDIR) # Default local path
@@ -563,16 +563,16 @@ def list_and_select_pickled_space():
         print("in the sample_and_pickle_spaces.py script, or check your remote_full_pickle_dir setting.")
         return None
 
-    pickle_files = [f for f in os.listdir(pickle_dir_to_scan) if f.endswith("_full.pkl")]
+    pickle_files = [f for f in os.listdir(pickle_dir_to_scan) if f.endswith(".pkl")]
 
     if not pickle_files:
-        print(f"No '*_full.pkl' files found in {pickle_dir_to_scan}.")
+        print(f"No '*.pkl' files found in {pickle_dir_to_scan}.")
         return None
 
     print(f"\n--- Available Pickled Spaces in {pickle_dir_to_scan} ---")
     spaces = []
     for i, filename in enumerate(pickle_files):
-        space_key = filename.replace("_full.pkl", "")
+        space_key = filename.replace(".pkl", "")
         spaces.append({'key': space_key, 'filename': filename, 'number': i + 1})
     
     # Sort spaces by key for consistent ordering
@@ -729,7 +729,7 @@ def main():
     
     # Default to 'temp' if not in settings, then join with FULL_PICKLE_SUBDIR for CLI loading.
     local_base_pickle_dir = settings.get('pickle_dir', 'temp')
-    # This is the directory where _full.pkl files are expected for direct CLI loading.
+    # This is the directory where .pkl files are expected for direct CLI loading.
     # list_and_select_pickled_space has its own logic to check remote_full_pickle_dir.
     cli_load_pickle_dir = os.path.join(local_base_pickle_dir, FULL_PICKLE_SUBDIR)
 
@@ -744,13 +744,13 @@ def main():
     if args.space_key:
         space_key_upper = args.space_key.upper()
         # Try loading from the path derived for CLI arguments first
-        pickle_file_path_cli = os.path.join(cli_load_pickle_dir, f"{space_key_upper}_full.pkl")
+        pickle_file_path_cli = os.path.join(cli_load_pickle_dir, f"{space_key_upper}.pkl")
         
         # Fallback: Check remote_full_pickle_dir if specified and file not in cli_load_pickle_dir
         remote_full_pickle_dir = settings.get('remote_full_pickle_dir')
         pickle_file_path_remote = None
         if remote_full_pickle_dir and os.path.isdir(remote_full_pickle_dir):
-            pickle_file_path_remote = os.path.join(remote_full_pickle_dir, f"{space_key_upper}_full.pkl")
+            pickle_file_path_remote = os.path.join(remote_full_pickle_dir, f"{space_key_upper}.pkl")
 
         actual_pickle_file_path = None
         if os.path.exists(pickle_file_path_cli):
