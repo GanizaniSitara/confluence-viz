@@ -28,6 +28,23 @@ REMOTE_FULL_PICKLE_DIR = data_settings.get('remote_full_pickle_dir')
 if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+def print_runtime(start_time):
+    """Calculate and print the total runtime in a human-readable format."""
+    end_time = time.time()
+    runtime_seconds = end_time - start_time
+    
+    # Convert to hours, minutes, seconds
+    hours = int(runtime_seconds // 3600)
+    minutes = int((runtime_seconds % 3600) // 60)
+    seconds = runtime_seconds % 60
+    
+    if hours > 0:
+        print(f"\nTotal runtime: {hours}h {minutes}m {seconds:.1f}s")
+    elif minutes > 0:
+        print(f"\nTotal runtime: {minutes}m {seconds:.1f}s")
+    else:
+        print(f"\nTotal runtime: {seconds:.1f}s")
+
 # Setup logging
 def setup_simple_logging(log_dir):
     """Setup simple file logging without the logging module."""
@@ -1475,6 +1492,9 @@ def main():
             else:
                 print("Invalid choice. Please enter 1-11 or q.")
     
+    # Capture start time for runtime tracking
+    option_start_time = time.time()
+    
     # --- Handle special choice values for full mode ---
     if choice == 'full_all_continue' or choice == 'full_all_reset':
         # Full pickle all spaces mode
@@ -1496,10 +1516,12 @@ def main():
         
         if not all_non_user_spaces:
             print("No non-user spaces found to process. Exiting.")
+            print_runtime(option_start_time)
             sys.exit(0)
             
         # Continue with full pickle logic...
         # [The rest of the full pickle all spaces logic would go here]
+        print_runtime(option_start_time)
         sys.exit(0)  # Exit after processing
     
     elif choice == 'full_single':
@@ -1507,9 +1529,11 @@ def main():
         target_space_key = input("Enter the SPACE_KEY to pickle in full: ").strip().upper()
         if not target_space_key:
             print("No space key provided. Exiting.")
+            print_runtime(option_start_time)
             sys.exit(1)
             
         # [The rest of the single space full pickle logic would go here]
+        print_runtime(option_start_time)
         sys.exit(0)  # Exit after processing
     
     elif choice == 'update_existing':
@@ -1519,6 +1543,7 @@ def main():
         if log_file:
             print(f"Logging to: {log_file}")
         update_existing_pickles(OUTPUT_DIR, log_file)
+        print_runtime(option_start_time)
         sys.exit(0)
         
     elif choice == 'update_existing_za':
@@ -1528,6 +1553,7 @@ def main():
         if log_file:
             print(f"Logging to: {log_file}")
         update_existing_pickles(OUTPUT_DIR, log_file, reverse_order=True)
+        print_runtime(option_start_time)
         sys.exit(0)
     
     # --- Checkpoint handling ---
@@ -1613,6 +1639,7 @@ def main():
             print(f"All {len(all_spaces)} spaces already processed according to checkpoint. Nothing to do.")
             print("Run with --reset to process all spaces again.")
             write_log(log_file, "INFO", f"All {len(all_spaces)} spaces already processed according to checkpoint. Nothing to do.")
+            print_runtime(option_start_time)
             sys.exit(0)
             
         spaces_to_process = all_spaces[effective_start_idx_for_slicing:]
@@ -1623,9 +1650,11 @@ def main():
     if not spaces_to_process and len(all_spaces) > 0 :
         if not perform_reset: # Already covered by above check, but as a safeguard
              print(f"No new spaces to process. All {len(all_spaces)} spaces seem to be processed per checkpoint.")
+             print_runtime(option_start_time)
              sys.exit(0)
     elif not spaces_to_process and len(all_spaces) == 0:
         print("No spaces found to process.")
+        print_runtime(option_start_time)
         sys.exit(0)
 
     print(f"Spaces to process in this run: {len(spaces_to_process)}")
@@ -1716,6 +1745,7 @@ def main():
         print("You can re-run the script to attempt processing remaining/failed spaces.")
         write_log(log_file, "WARNING", f"{skipped_count} spaces may have been skipped due to errors or interruption.")
     write_log(log_file, "INFO", "Script execution completed.")
+    print_runtime(option_start_time)
 
 if __name__ == '__main__':
     main()
