@@ -45,7 +45,7 @@ def load_visualization_settings(config_path='settings.ini'):
     """Load visualization settings from the configuration file."""
     config = configparser.ConfigParser()
     
-    # Set default values for visualization section only
+    #Set default values for visualization section only
     config['visualization'] = {
         'default_clusters': '20',
         'default_min_pages': '5'
