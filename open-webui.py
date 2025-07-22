@@ -257,14 +257,17 @@ def load_confluence_pickle(pickle_path: Path) -> Optional[Dict]:
         logger.error(f"Error loading pickle file '{pickle_path}': {e}")
         return None
 
-def process_confluence_page(page: Dict, space_key: str, space_name: str) -> tuple[str, str]:
+def process_confluence_page(page: Dict, space_key: str, space_name: str) -> tuple[str, str, str]:
     """
-    Process a single Confluence page and return HTML and text versions
+    Process a single Confluence page and return path, HTML and text versions
     """
     page_id = page.get('id', 'unknown')
     title = page.get('title', 'Untitled')
     body = page.get('body', '')
     updated = page.get('updated', 'Unknown')
+    
+    # Path version - just the page location info
+    path_content = f"Space: {space_name} ({space_key}) > Page: {title} (ID: {page_id})"
     
     # HTML version - keep content completely INTACT, no changes whatsoever
     html_content = body
@@ -285,10 +288,48 @@ Last Updated: {updated}
 
 {cleaned_text}"""
     
-    return html_content, text_content
+    return path_content, html_content, text_content
+
+def inspect_document(page: Dict, space_key: str, space_name: str, format_choice: str = 'both') -> None:
+    """
+    Display document content for inspection before upload
+    """
+    page_id = page.get('id', 'unknown')
+    title = page.get('title', 'Untitled')
+    
+    path_content, html_content, text_content = process_confluence_page(page, space_key, space_name)
+    
+    print("\n" + "="*80)
+    print(f"DOCUMENT INSPECTION: {title}")
+    print("="*80)
+    print(f"Page ID: {page_id}")
+    print(f"Space: {space_name} ({space_key})")
+    print("-"*80)
+    
+    if format_choice in ['path', 'both']:
+        print("\n📁 PATH VERSION:")
+        print(path_content)
+        print("-"*40)
+    
+    if format_choice in ['html', 'both']:
+        print("\n🌐 HTML VERSION (first 1000 chars):")
+        print(html_content[:1000])
+        if len(html_content) > 1000:
+            print(f"... (truncated, total {len(html_content)} chars)")
+        print("-"*40)
+    
+    if format_choice in ['txt', 'both']:
+        print("\n📝 TEXT VERSION (first 1000 chars):")
+        print(text_content[:1000])
+        if len(text_content) > 1000:
+            print(f"... (truncated, total {len(text_content)} chars)")
+    
+    print("="*80)
 
 def upload_confluence_space(client: OpenWebUIClient, pickle_data: Dict, 
-                          html_collection: str, text_collection: str) -> int:
+                          html_collection: str, text_collection: str,
+                          inspect: bool = False, format_choice: str = 'both',
+                          interactive: bool = False) -> int:
     """
     Upload all pages from a Confluence space to Open-WebUI
     Returns number of successfully uploaded pages
@@ -311,20 +352,60 @@ def upload_confluence_space(client: OpenWebUIClient, pickle_data: Dict,
         
         logger.debug(f"Processing page {i}/{len(sampled_pages)}: {title}")
         
+        # If inspection is enabled, show the document
+        if inspect:
+            inspect_document(page, space_key, space_name, format_choice)
+            
+            if interactive:
+                # Interactive mode - ask user what to do
+                print("\nOptions:")
+                print("  u - Upload this document")
+                print("  s - Skip this document")
+                print("  a - Upload all remaining documents without inspection")
+                print("  q - Quit")
+                
+                choice = input("\nEnter choice (u/s/a/q): ").strip().lower()
+                
+                if choice == 'q':
+                    logger.info("User quit inspection mode")
+                    return success_count
+                elif choice == 's':
+                    logger.info(f"Skipped page '{title}' by user request")
+                    continue
+                elif choice == 'a':
+                    logger.info("User selected to upload all remaining documents")
+                    inspect = False  # Turn off inspection for remaining documents
+                elif choice != 'u':
+                    logger.warning(f"Invalid choice '{choice}', skipping document")
+                    continue
+        
         try:
-            html_content, text_content = process_confluence_page(page, space_key, space_name)
+            path_content, html_content, text_content = process_confluence_page(page, space_key, space_name)
             
-            # Upload HTML version
-            html_title = f"{space_key}-{page_id}-HTML"
-            html_success = client.upload_document(html_title, html_content, html_collection, is_html=True)
+            upload_success = True
             
-            # Upload text version
-            text_title = f"{space_key}-{page_id}-TEXT"
-            text_success = client.upload_document(text_title, text_content, text_collection, is_html=False)
+            # Upload based on format choice
+            if format_choice in ['html', 'both']:
+                # Upload HTML version
+                html_title = f"{space_key}-{page_id}-HTML"
+                html_success = client.upload_document(html_title, html_content, html_collection, is_html=True)
+                upload_success = upload_success and html_success
             
-            if html_success and text_success:
+            if format_choice in ['txt', 'both']:
+                # Upload text version
+                text_title = f"{space_key}-{page_id}-TEXT"
+                text_success = client.upload_document(text_title, text_content, text_collection, is_html=False)
+                upload_success = upload_success and text_success
+            
+            if format_choice == 'path':
+                # Upload path version as text
+                path_title = f"{space_key}-{page_id}-PATH"
+                path_success = client.upload_document(path_title, path_content, text_collection, is_html=False)
+                upload_success = upload_success and path_success
+            
+            if upload_success:
                 success_count += 1
-                logger.info(f"Successfully uploaded page '{title}' ({page_id})")
+                logger.info(f"Successfully uploaded page '{title}' ({page_id}) - format: {format_choice}")
             else:
                 logger.warning(f"Failed to upload page '{title}' ({page_id})")
                 
@@ -425,11 +506,111 @@ def main():
         action="store_true",
         help="Clear the checkpoint file and start from beginning"
     )
+    parser.add_argument(
+        "--inspect",
+        action="store_true",
+        help="Inspect each document before uploading"
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Interactive mode - choose whether to upload each document after inspection"
+    )
+    parser.add_argument(
+        "--format",
+        choices=['path', 'html', 'txt', 'both'],
+        default='both',
+        help="Format to upload: path (location info only), html, txt, or both (default: both)"
+    )
     
     args = parser.parse_args()
     
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
+    
+    # If interactive mode is requested without inspect, enable inspect automatically
+    if args.interactive and not args.inspect:
+        args.inspect = True
+        logger.info("Enabling document inspection for interactive mode")
+    
+    # Show interactive menu if no specific mode is selected
+    if not args.inspect and not any([args.clear_checkpoint]):
+        print("\n" + "="*60)
+        print("OPEN-WEBUI CONFLUENCE UPLOADER")
+        print("="*60)
+        print("\nUpload Modes:")
+        print("  1. Standard upload (both HTML and text)")
+        print("  2. Upload with document inspection")
+        print("  3. Interactive upload (inspect and choose per document)")
+        print("  4. Upload path information only")
+        print("  5. Upload HTML format only")
+        print("  6. Upload text format only")
+        print("  q. Quit")
+        
+        choice = input("\nSelect mode (1-6 or q): ").strip().lower()
+        
+        if choice == 'q':
+            print("Exiting...")
+            return 0
+        elif choice == '1':
+            args.inspect = False
+            args.interactive = False
+            args.format = 'both'
+        elif choice == '2':
+            args.inspect = True
+            args.interactive = False
+            # Ask for format
+            print("\nSelect format to upload:")
+            print("  1. Both HTML and text (default)")
+            print("  2. HTML only")
+            print("  3. Text only")
+            print("  4. Path information only")
+            format_choice = input("\nSelect format (1-4): ").strip()
+            if format_choice == '2':
+                args.format = 'html'
+            elif format_choice == '3':
+                args.format = 'txt'
+            elif format_choice == '4':
+                args.format = 'path'
+            else:
+                args.format = 'both'
+        elif choice == '3':
+            args.inspect = True
+            args.interactive = True
+            # Ask for format
+            print("\nSelect format to upload:")
+            print("  1. Both HTML and text (default)")
+            print("  2. HTML only")
+            print("  3. Text only")
+            print("  4. Path information only")
+            format_choice = input("\nSelect format (1-4): ").strip()
+            if format_choice == '2':
+                args.format = 'html'
+            elif format_choice == '3':
+                args.format = 'txt'
+            elif format_choice == '4':
+                args.format = 'path'
+            else:
+                args.format = 'both'
+        elif choice == '4':
+            args.inspect = False
+            args.interactive = False
+            args.format = 'path'
+        elif choice == '5':
+            args.inspect = False
+            args.interactive = False
+            args.format = 'html'
+        elif choice == '6':
+            args.inspect = False
+            args.interactive = False
+            args.format = 'txt'
+        else:
+            print("Invalid choice, using standard upload mode")
+            args.inspect = False
+            args.interactive = False
+            args.format = 'both'
+        
+        print(f"\nSelected: inspect={args.inspect}, interactive={args.interactive}, format={args.format}")
     
     # Clear checkpoint if requested
     if args.clear_checkpoint:
@@ -501,6 +682,7 @@ def main():
         return 0
     
     logger.info(f"🚀 Starting upload: {len(files_to_process)} spaces")
+    logger.info(f"📋 Upload settings: format={args.format}, inspect={args.inspect}, interactive={args.interactive}")
     
     # Process files sequentially
     total_success = 0
@@ -523,7 +705,8 @@ def main():
             logger.info(f"🔄 Processing space '{space_name}' ({space_key}) with {page_count} pages")
             
             success_count = upload_confluence_space(
-                client, pickle_data, html_collection_id, text_collection_id
+                client, pickle_data, html_collection_id, text_collection_id,
+                inspect=args.inspect, format_choice=args.format, interactive=args.interactive
             )
             
             total_success += success_count
