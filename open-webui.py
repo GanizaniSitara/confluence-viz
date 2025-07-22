@@ -356,6 +356,7 @@ def inspect_document(page: Dict, space_key: str, space_name: str, format_choice:
 
 def upload_confluence_space(client: OpenWebUIClient, pickle_data: Dict, 
                           html_collection: str, text_collection: str,
+                          path_collection: str = None,
                           inspect: bool = False, format_choice: str = 'both',
                           interactive: bool = False) -> int:
     """
@@ -426,9 +427,10 @@ def upload_confluence_space(client: OpenWebUIClient, pickle_data: Dict,
                 upload_success = upload_success and text_success
             
             if format_choice == 'path':
-                # Upload path version as text
+                # Upload path version to path collection (or text collection if not specified)
                 path_title = f"{space_key}-{page_id}-PATH"
-                path_success = client.upload_document(path_title, path_content, text_collection, is_html=False)
+                collection_to_use = path_collection if path_collection else text_collection
+                path_success = client.upload_document(path_title, path_content, collection_to_use, is_html=False)
                 upload_success = upload_success and path_success
             
             if upload_success:
@@ -515,6 +517,11 @@ def main():
         help="Knowledge collection name for text versions (default: CONF-TXT)"
     )
     parser.add_argument(
+        "--path-collection", 
+        default=None,
+        help="Knowledge collection name for path/index information (default: uses text collection)"
+    )
+    parser.add_argument(
         "--username",
         default=settings.get('username'),
         help=f"Username for Open-WebUI authentication (default from settings: {settings.get('username', 'None')})"
@@ -552,6 +559,10 @@ def main():
     )
     
     args = parser.parse_args()
+    
+    # Ensure path_collection attribute exists
+    if not hasattr(args, 'path_collection'):
+        args.path_collection = None
     
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -629,6 +640,35 @@ def main():
             args.inspect = False
             args.interactive = False
             args.format = 'path'
+            print("\n📁 Path Information Upload Selected")
+            print("   This uploads only the navigation path for each page.")
+            print("\n🔍 Checking available knowledge collections...")
+            
+            # Create a temporary client to list collections
+            temp_client = OpenWebUIClient(
+                args.openwebui_server,
+                args.username,
+                args.password
+            )
+            if temp_client.authenticate():
+                collections = temp_client.list_knowledge_collections()
+                if collections:
+                    print(f"\n📚 Available collections:")
+                    collection_list = list(collections.keys())
+                    for i, name in enumerate(collection_list, 1):
+                        print(f"   {i}. {name}")
+                    print(f"   {len(collection_list) + 1}. Create new collection (not supported yet)")
+                    
+                    choice_num = input(f"\nSelect collection for path index (1-{len(collection_list)}): ").strip()
+                    try:
+                        idx = int(choice_num) - 1
+                        if 0 <= idx < len(collection_list):
+                            args.path_collection = collection_list[idx]
+                            print(f"✅ Selected: {args.path_collection}")
+                        else:
+                            print(f"⚠️  Invalid choice, using default text collection: {args.text_collection}")
+                    except:
+                        print(f"⚠️  Invalid input, using default text collection: {args.text_collection}")
         elif choice == '5':
             args.inspect = False
             args.interactive = False
@@ -746,6 +786,16 @@ def main():
     html_collection_id = client.find_existing_collection(args.html_collection)
     text_collection_id = client.find_existing_collection(args.text_collection)
     
+    # Handle path collection if specified
+    path_collection_id = None
+    if args.format == 'path' and hasattr(args, 'path_collection') and args.path_collection:
+        path_collection_id = client.find_existing_collection(args.path_collection)
+        if not path_collection_id:
+            print(f"⚠️  Path collection '{args.path_collection}' not found, will use text collection")
+            path_collection_id = text_collection_id
+    else:
+        path_collection_id = text_collection_id
+    
     if not html_collection_id or not text_collection_id:
         logger.error("Required knowledge collections not found!")
         print("\n❌ ERROR: Required knowledge collections not found!")
@@ -757,6 +807,8 @@ def main():
     print(f"✅ Found required collections:")
     print(f"   - HTML: {args.html_collection}")
     print(f"   - Text: {args.text_collection}")
+    if args.format == 'path' and hasattr(args, 'path_collection') and args.path_collection:
+        print(f"   - Path: {args.path_collection}")
     
     # Load checkpoint to resume from last successful upload
     print("\n📋 Checking for checkpoint file...")
@@ -828,6 +880,7 @@ def main():
             
             success_count = upload_confluence_space(
                 client, pickle_data, html_collection_id, text_collection_id,
+                path_collection=path_collection_id,
                 inspect=args.inspect, format_choice=args.format, interactive=args.interactive
             )
             
