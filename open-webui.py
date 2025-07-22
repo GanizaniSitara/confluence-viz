@@ -81,6 +81,8 @@ class OpenWebUIClient:
         """Authenticate with Open-WebUI if credentials provided"""
         if not self.username or not self.password:
             logger.info("No credentials provided, skipping authentication")
+            print("ℹ️  No credentials provided - proceeding without authentication")
+            print("   (Some Open-WebUI instances don't require authentication)")
             return True
             
         auth_url = f"{self.base_url}/api/v1/auths/signin"
@@ -103,6 +105,18 @@ class OpenWebUIClient:
 
         if response.status_code != 200:
             logger.error(f"Authentication failed: HTTP {response.status_code}")
+            print(f"❌ Authentication failed: HTTP {response.status_code}")
+            if response.status_code == 401:
+                print("   Unauthorized - check your username/password")
+            elif response.status_code == 404:
+                print("   Auth endpoint not found - check the server URL")
+                print(f"   Tried: {auth_url}")
+            try:
+                error_data = response.json()
+                if 'detail' in error_data:
+                    print(f"   Server message: {error_data['detail']}")
+            except:
+                pass
             return False
 
         try:
@@ -560,9 +574,10 @@ def main():
         print("  5. Upload HTML format only")
         print("  6. Upload text format only")
         print("  7. Clear checkpoint and start fresh")
+        print("  8. Test authentication only")
         print("  q. Quit")
         
-        choice = input("\nSelect mode (1-7 or q): ").strip().lower()
+        choice = input("\nSelect mode (1-8 or q): ").strip().lower()
         
         if choice == 'q':
             print("Exiting...")
@@ -649,6 +664,41 @@ def main():
                 args.format = 'txt'
             else:
                 args.format = 'both'
+        elif choice == '8':
+            # Test authentication only
+            print("\n🔧 Testing authentication...")
+            print(f"   Server: {args.openwebui_server}")
+            print(f"   Username: {args.username or 'Not provided'}")
+            print(f"   Password: {'***' if args.password else 'Not provided'}")
+            
+            test_client = OpenWebUIClient(
+                args.openwebui_server,
+                args.username,
+                args.password
+            )
+            
+            if test_client.authenticate():
+                print("\n✅ Authentication test successful!")
+                print("   You can now proceed with uploads.")
+                
+                # Also test listing collections
+                print("\n📚 Testing collection access...")
+                collections = test_client.list_knowledge_collections()
+                if collections:
+                    print(f"✅ Found {len(collections)} collection(s):")
+                    for name in collections.keys():
+                        print(f"   - {name}")
+                else:
+                    print("❌ No collections found or unable to list collections")
+            else:
+                print("\n❌ Authentication test failed!")
+                print("\nTroubleshooting tips:")
+                print("1. Check if you're using email (not username) for login")
+                print("2. Verify the server URL (should be like http://localhost:8080)")
+                print("3. Try logging into the web UI to confirm credentials work")
+                print("4. Some Open-WebUI instances may have API authentication disabled")
+            
+            return 0
         else:
             print("Invalid choice, using standard upload mode")
             args.inspect = False
