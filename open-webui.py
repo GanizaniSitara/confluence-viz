@@ -340,16 +340,16 @@ def inspect_document(page: Dict, space_key: str, space_name: str, format_choice:
         print("-"*40)
     
     if format_choice in ['html', 'both']:
-        print("\n🌐 HTML VERSION (first 1000 chars):")
-        print(html_content[:1000])
-        if len(html_content) > 1000:
+        print("\n🌐 HTML VERSION (first 2000 chars):")
+        print(html_content[:2000])
+        if len(html_content) > 2000:
             print(f"... (truncated, total {len(html_content)} chars)")
         print("-"*40)
     
     if format_choice in ['txt', 'both']:
-        print("\n📝 TEXT VERSION (first 1000 chars):")
-        print(text_content[:1000])
-        if len(text_content) > 1000:
+        print("\n📝 TEXT VERSION (first 2000 chars):")
+        print(text_content[:2000])
+        if len(text_content) > 2000:
             print(f"... (truncated, total {len(text_content)} chars)")
     
     print("="*80)
@@ -568,8 +568,8 @@ def main():
         print("="*60)
         print("\nUpload Modes:")
         print("  1. Standard upload (both HTML and text)")
-        print("  2. Upload with document inspection (preview each doc before upload)")
-        print("  3. Interactive upload (inspect and choose per document)")
+        print("  2. Preview & upload all (shows 2000 chars, uploads automatically)")
+        print("  3. Interactive upload (preview each, then choose: upload/skip/quit)")
         print("  4. Upload path information only")
         print("  5. Upload HTML format only")
         print("  6. Upload text format only")
@@ -589,9 +589,9 @@ def main():
         elif choice == '2':
             args.inspect = True
             args.interactive = False
-            print("\n📋 Document Inspection Mode Selected")
-            print("   Each document will be displayed before upload.")
-            print("   All documents will be uploaded automatically after preview.")
+            print("\n📋 Preview Mode Selected")
+            print("   Each document will show 2000 characters before upload.")
+            print("   All documents upload automatically (no waiting for input).")
             # Ask for format
             print("\nSelect format to upload:")
             print("  1. Both HTML and text (default)")
