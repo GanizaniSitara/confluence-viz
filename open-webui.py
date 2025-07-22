@@ -85,14 +85,20 @@ class OpenWebUIClient:
             
         auth_url = f"{self.base_url}/api/v1/auths/signin"
         logger.debug(f"AUTH: POST {auth_url}")
+        print(f"🔐 Authenticating with {self.base_url}...")
         try:
             response = self.session.post(auth_url, json={
                 "email": self.username,
                 "password": self.password
-            })
+            }, timeout=10)  # 10 second timeout
             logger.debug(f"AUTH RESPONSE [{response.status_code}]: {response.text}")
+        except requests.exceptions.Timeout:
+            logger.error(f"Authentication timeout - server did not respond within 10 seconds")
+            print("❌ Authentication failed: Server timeout")
+            return False
         except Exception as e:
             logger.error(f"Exception during authentication: {e}")
+            print(f"❌ Authentication failed: {str(e)}")
             return False
 
         if response.status_code != 200:
@@ -112,6 +118,7 @@ class OpenWebUIClient:
 
         self.session.headers.update({"Authorization": f"Bearer {self.auth_token}"})
         logger.info("Authentication successful")
+        print("✅ Authentication successful!")
         return True
 
     def upload_document(self, title: str, content: str, collection_name: str = "default", is_html: bool = False) -> bool:
@@ -193,8 +200,9 @@ class OpenWebUIClient:
     def list_knowledge_collections(self) -> Dict[str, str]:
         """List all knowledge collections and return as dict {name: id}"""
         collections_url = f"{self.base_url}/api/v1/knowledge/"
+        print(f"📚 Fetching knowledge collections from {self.base_url}...")
         try:
-            response = self.session.get(collections_url)
+            response = self.session.get(collections_url, timeout=10)
             if response.status_code == 200:
                 collections = response.json()
                 collection_dict = {}
@@ -207,9 +215,15 @@ class OpenWebUIClient:
                 return collection_dict
             else:
                 logger.warning(f"Failed to list collections: HTTP {response.status_code}")
+                print(f"❌ Failed to fetch collections: HTTP {response.status_code}")
                 return {}
+        except requests.exceptions.Timeout:
+            logger.error("Timeout while fetching collections - server did not respond within 10 seconds")
+            print("❌ Failed to fetch collections: Server timeout")
+            return {}
         except Exception as e:
             logger.error(f"Exception listing collections: {e}")
+            print(f"❌ Failed to fetch collections: {str(e)}")
             return {}
 
     def find_existing_collection(self, name: str) -> Optional[str]:
@@ -540,7 +554,7 @@ def main():
         print("="*60)
         print("\nUpload Modes:")
         print("  1. Standard upload (both HTML and text)")
-        print("  2. Upload with document inspection")
+        print("  2. Upload with document inspection (preview each doc before upload)")
         print("  3. Interactive upload (inspect and choose per document)")
         print("  4. Upload path information only")
         print("  5. Upload HTML format only")
@@ -560,6 +574,9 @@ def main():
         elif choice == '2':
             args.inspect = True
             args.interactive = False
+            print("\n📋 Document Inspection Mode Selected")
+            print("   Each document will be displayed before upload.")
+            print("   All documents will be uploaded automatically after preview.")
             # Ask for format
             print("\nSelect format to upload:")
             print("  1. Both HTML and text (default)")
@@ -670,12 +687,21 @@ def main():
     
     # Find existing knowledge collections
     logger.info("Finding existing knowledge collections...")
+    print(f"\n🔍 Looking for knowledge collections...")
     html_collection_id = client.find_existing_collection(args.html_collection)
     text_collection_id = client.find_existing_collection(args.text_collection)
     
     if not html_collection_id or not text_collection_id:
         logger.error("Required knowledge collections not found!")
+        print("\n❌ ERROR: Required knowledge collections not found!")
+        print(f"   Please ensure these collections exist in Open-WebUI:")
+        print(f"   - HTML collection: {args.html_collection}")
+        print(f"   - Text collection: {args.text_collection}")
         return 1
+    
+    print(f"✅ Found required collections:")
+    print(f"   - HTML: {args.html_collection}")
+    print(f"   - Text: {args.text_collection}")
     
     # Load checkpoint to resume from last successful upload
     last_uploaded_space = load_checkpoint()
