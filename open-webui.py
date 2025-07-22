@@ -770,28 +770,32 @@ def main():
     # Filter pickle files based on checkpoint
     files_to_process = []
     
-    print(f"\n🔄 Processing {len(pickle_files)} pickle file(s) to determine upload order...")
-    for i, pickle_file in enumerate(pickle_files, 1):
-        print(f"   Loading {i}/{len(pickle_files)}: {pickle_file.name}...", end='\r')
-        pickle_data = load_confluence_pickle(pickle_file)
-        if not pickle_data:
-            logger.warning(f"Skipping invalid pickle file: {pickle_file.name}")
-            continue
+    if resume_mode:
+        print(f"\n⏭️  Looking for checkpoint space: {last_uploaded_space}")
+        # We need to find where we left off, but we'll only load files as needed
+        found_checkpoint = False
+        for pickle_file in pickle_files:
+            # Extract space key from filename instead of loading the whole file
+            # Most pickle files are named like "SPACENAME.pkl" or "SPACENAME_full.pkl"
+            filename = pickle_file.stem  # Remove .pkl extension
+            if filename.endswith('_full'):
+                filename = filename[:-5]  # Remove _full suffix
+            
+            if filename == last_uploaded_space:
+                print(f"✅ Found checkpoint at: {pickle_file.name}")
+                found_checkpoint = True
+                continue  # Skip this one, start from next
+            
+            if found_checkpoint:
+                files_to_process.append(pickle_file)
         
-        space_key = pickle_data.get('space_key', 'UNKNOWN')
-        space_name = pickle_data.get('name', 'Unknown Space')
-        
-        # Skip spaces until we reach the checkpoint
-        if resume_mode:
-            if space_key == last_uploaded_space:
-                logger.info(f"Reached checkpoint space '{space_name}' ({space_key}) - resuming from next space")
-                resume_mode = False
-                continue
-            else:
-                logger.info(f"Skipping already processed space '{space_name}' ({space_key})")
-                continue
-        
-        files_to_process.append(pickle_file)
+        if not found_checkpoint:
+            print(f"⚠️  Checkpoint space '{last_uploaded_space}' not found in pickle files")
+            print("   Starting from beginning instead...")
+            files_to_process = pickle_files
+    else:
+        # No checkpoint, process all files
+        files_to_process = pickle_files
     
     if not files_to_process:
         logger.info("No files to process")
