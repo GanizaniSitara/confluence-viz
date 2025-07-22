@@ -780,6 +780,231 @@ def update_existing_pickles(target_dir, log_file=None, reverse_order=False):
     
     logging.info("Update process log completed")
 
+def compare_and_suggest_pruning(target_dir, log_file=None, auto_prune=False):
+    """Compare spaces in pickle files with current live instance and suggest which should be pruned."""
+    abs_target_dir = os.path.abspath(target_dir)
+    print(f"\nComparing pickled spaces with live instance...")
+    print(f"Pickle directory: {abs_target_dir}")
+    write_log(log_file, "INFO", f"Starting space comparison in directory: {abs_target_dir}")
+    
+    if not os.path.exists(target_dir):
+        error_msg = f"Target directory {target_dir} does not exist."
+        print(error_msg)
+        write_log(log_file, "ERROR", error_msg)
+        return
+    
+    # Get all pickled space keys
+    pickled_space_keys = scan_existing_pickles(target_dir)
+    if not pickled_space_keys:
+        warning_msg = "No pickle files found in directory"
+        print(warning_msg)
+        write_log(log_file, "WARNING", warning_msg)
+        return
+    
+    print(f"\nFound {len(pickled_space_keys)} space(s) in pickle files")
+    write_log(log_file, "INFO", f"Found {len(pickled_space_keys)} pickled spaces")
+    
+    # Fetch all current spaces from live instance
+    print("\nFetching current spaces from live instance...")
+    write_log(log_file, "INFO", "Fetching current spaces from live instance")
+    
+    try:
+        all_current_spaces = fetch_all_spaces_with_details(auth_details=(USERNAME, PASSWORD), verify_ssl_cert=VERIFY_SSL)
+        if not all_current_spaces:
+            error_msg = "Failed to fetch spaces from live instance"
+            print(error_msg)
+            write_log(log_file, "ERROR", error_msg)
+            return
+    except Exception as e:
+        error_msg = f"Error fetching spaces from live instance: {e}"
+        print(error_msg)
+        write_log(log_file, "ERROR", error_msg)
+        return
+    
+    # Extract space keys from current instance (excluding personal spaces)
+    current_space_keys = set()
+    current_space_details = {}
+    for space in all_current_spaces:
+        if 'key' in space and not space['key'].startswith('~'):
+            current_space_keys.add(space['key'])
+            current_space_details[space['key']] = {
+                'name': space.get('name', 'Unknown'),
+                'type': space.get('type', 'Unknown'),
+                'status': space.get('status', 'Unknown')
+            }
+    
+    print(f"Found {len(current_space_keys)} non-personal space(s) in live instance")
+    write_log(log_file, "INFO", f"Found {len(current_space_keys)} spaces in live instance")
+    
+    # Compare pickled spaces with current spaces
+    pickled_set = set(pickled_space_keys)
+    spaces_to_prune = pickled_set - current_space_keys
+    spaces_in_both = pickled_set & current_space_keys
+    new_spaces_not_pickled = current_space_keys - pickled_set
+    
+    # Display results
+    print("\n" + "="*70)
+    print("SPACE COMPARISON RESULTS")
+    print("="*70)
+    
+    if spaces_in_both:
+        print(f"\n✓ ACTIVE SPACES ({len(spaces_in_both)}):")
+        print("  These spaces exist in both pickle files and live instance:")
+        for space_key in sorted(spaces_in_both):
+            details = current_space_details.get(space_key, {})
+            print(f"    - {space_key}: {details.get('name', 'Unknown')}")
+        write_log(log_file, "INFO", f"Active spaces: {sorted(spaces_in_both)}")
+    
+    if spaces_to_prune:
+        print(f"\n⚠ SPACES TO PRUNE ({len(spaces_to_prune)}):")
+        print("  These spaces exist in pickle files but NOT in live instance:")
+        print("  (These may have been retired/deleted in production)")
+        for space_key in sorted(spaces_to_prune):
+            pickle_files = []
+            # Find which pickle files contain this space
+            for f in os.listdir(target_dir):
+                if f.endswith('.pkl') and (f.startswith(space_key + '.') or f.startswith(space_key + '_')):
+                    pickle_files.append(f)
+            print(f"    - {space_key}")
+            if pickle_files:
+                print(f"      Files: {', '.join(pickle_files)}")
+        write_log(log_file, "WARNING", f"Spaces to prune: {sorted(spaces_to_prune)}")
+        
+        # Offer to create a pruning script
+        print("\n  RECOMMENDED ACTION:")
+        print("  Consider removing the pickle files for these retired spaces.")
+        print("  You can manually delete them or create a cleanup script.")
+    
+    if new_spaces_not_pickled:
+        print(f"\n✨ NEW SPACES NOT YET PICKLED ({len(new_spaces_not_pickled)}):")
+        print("  These spaces exist in live instance but NOT in pickle files:")
+        for space_key in sorted(new_spaces_not_pickled):
+            details = current_space_details.get(space_key, {})
+            print(f"    - {space_key}: {details.get('name', 'Unknown')}")
+        write_log(log_file, "INFO", f"New spaces not pickled: {sorted(new_spaces_not_pickled)}")
+    
+    print("\n" + "="*70)
+    print(f"SUMMARY:")
+    print(f"  Total pickled spaces: {len(pickled_space_keys)}")
+    print(f"  Total live spaces: {len(current_space_keys)}")
+    print(f"  Active (in both): {len(spaces_in_both)}")
+    print(f"  To prune: {len(spaces_to_prune)}")
+    print(f"  New (not pickled): {len(new_spaces_not_pickled)}")
+    print("="*70)
+    
+    write_log(log_file, "INFO", f"Comparison complete - Active: {len(spaces_in_both)}, To prune: {len(spaces_to_prune)}, New: {len(new_spaces_not_pickled)}")
+    
+    # Handle deletion of retired spaces
+    if spaces_to_prune:
+        if auto_prune:
+            # Auto-prune mode (from command line with --prune-retired)
+            print("\n⚠️  AUTO-PRUNE MODE: Will delete pickle files for retired spaces")
+            print("Files to be deleted:")
+            files_to_delete = []
+            for space_key in sorted(spaces_to_prune):
+                for f in os.listdir(target_dir):
+                    if f.endswith('.pkl') and (f.startswith(space_key + '.') or f.startswith(space_key + '_')):
+                        files_to_delete.append(f)
+                        print(f"  - {f}")
+            
+            if files_to_delete:
+                print(f"\nTotal files to delete: {len(files_to_delete)}")
+                deleted_count = 0
+                for f in files_to_delete:
+                    try:
+                        os.remove(os.path.join(target_dir, f))
+                        write_log(log_file, "INFO", f"Deleted: {f}")
+                        deleted_count += 1
+                    except Exception as e:
+                        error_msg = f"Failed to delete {f}: {e}"
+                        print(f"  ERROR: {error_msg}")
+                        write_log(log_file, "ERROR", error_msg)
+                
+                print(f"\n✓ Deleted {deleted_count} file(s)")
+                write_log(log_file, "INFO", f"Auto-prune complete: deleted {deleted_count} files")
+        else:
+            # Interactive mode - ask user
+            print("\n" + "="*70)
+            print("DELETION OPTIONS")
+            print("="*70)
+            
+            choice = input("\nWould you like to:\n"
+                         "  1. Delete retired space pickle files now (interactive)\n"
+                         "  2. Generate a cleanup script for later use\n"
+                         "  3. Skip deletion\n"
+                         "Enter choice (1-3): ").strip()
+            
+            if choice == '1':
+                # Interactive deletion with safety confirmation
+                print("\n⚠️  WARNING: This will permanently delete pickle files for retired spaces!")
+                print("Files to be deleted:")
+                
+                files_to_delete = []
+                for space_key in sorted(spaces_to_prune):
+                    for f in os.listdir(target_dir):
+                        if f.endswith('.pkl') and (f.startswith(space_key + '.') or f.startswith(space_key + '_')):
+                            files_to_delete.append(f)
+                            print(f"  - {f}")
+                
+                if files_to_delete:
+                    print(f"\nTotal files to delete: {len(files_to_delete)}")
+                    print("\nTo confirm deletion, type 'DELETE' (all caps): ", end='')
+                    confirmation = input().strip()
+                    
+                    if confirmation == 'DELETE':
+                        deleted_count = 0
+                        failed_count = 0
+                        for f in files_to_delete:
+                            try:
+                                os.remove(os.path.join(target_dir, f))
+                                write_log(log_file, "INFO", f"Deleted: {f}")
+                                deleted_count += 1
+                            except Exception as e:
+                                error_msg = f"Failed to delete {f}: {e}"
+                                print(f"  ERROR: {error_msg}")
+                                write_log(log_file, "ERROR", error_msg)
+                                failed_count += 1
+                        
+                        print(f"\n✓ Deleted {deleted_count} file(s)")
+                        if failed_count > 0:
+                            print(f"⚠ Failed to delete {failed_count} file(s)")
+                        write_log(log_file, "INFO", f"Interactive deletion complete: deleted {deleted_count} files, failed {failed_count}")
+                    else:
+                        print("\n✗ Deletion cancelled (confirmation not received)")
+                        write_log(log_file, "INFO", "Interactive deletion cancelled by user")
+                
+            elif choice == '2':
+                # Generate cleanup script
+                script_path = os.path.join(target_dir, "prune_retired_spaces.sh")
+                with open(script_path, 'w') as f:
+                    f.write("#!/bin/bash\n")
+                    f.write("# Script to remove pickle files for retired spaces\n")
+                    f.write(f"# Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                    f.write("echo 'This will remove pickle files for spaces that no longer exist in the live instance.'\n")
+                    f.write("read -p 'Are you sure you want to proceed? (y/n): ' confirm\n")
+                    f.write("if [ \"$confirm\" != \"y\" ]; then\n")
+                    f.write("    echo 'Cancelled.'\n")
+                    f.write("    exit 0\n")
+                    f.write("fi\n\n")
+                    
+                    for space_key in sorted(spaces_to_prune):
+                        # Find all pickle files for this space
+                        for f in os.listdir(target_dir):
+                            if f.endswith('.pkl') and (f.startswith(space_key + '.') or f.startswith(space_key + '_')):
+                                f.write(f"echo 'Removing {f}...'\n")
+                                f.write(f"rm -f '{os.path.join(target_dir, f)}'\n")
+                    
+                    f.write("\necho 'Cleanup complete.'\n")
+                
+                os.chmod(script_path, 0o755)  # Make script executable
+                print(f"\nCleanup script generated: {script_path}")
+                print("Review the script before running it!")
+                write_log(log_file, "INFO", f"Generated cleanup script: {script_path}")
+            
+            else:
+                print("\nSkipping deletion.")
+                write_log(log_file, "INFO", "User chose to skip deletion")
+
 def main():
     # Initialize log_file variable (will be set if logging is enabled)
     log_file = None
@@ -800,10 +1025,14 @@ def main():
                                help=f'Pickle all pages for a single space. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}. Bypasses sampling, checkpointing, and interactive menu.') # Updated help
     mode_group.add_argument('--pickle-all-spaces-full', action='store_true',
                                help=f'Pickle all pages for ALL non-user spaces. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}. Uses checkpoint file \'{FULL_PICKLE_CHECKPOINT_FILENAME}\' in that directory. Bypasses sampling and interactive menu.') # New argument, updated help
+    mode_group.add_argument('--compare-spaces', action='store_true',
+                               help='Compare pickled spaces with live instance and suggest which should be pruned (non-interactive).')
     parser.add_argument('--list-spaces', action='store_true', help='List all non-user spaces (key, name, description) to the console and exit.') # MODIFIED HELP
     parser.add_argument('--list-space-keys', action='store_true', help='List only the keys of all non-user spaces to the console and exit.') # NEW ARGUMENT
     parser.add_argument('--download-attachments', action='store_true',
                            help='Download attachments for processed spaces during full pickle modes. Attachments are saved into a subfolder named after the space key, within the full pickle output directory.')
+    parser.add_argument('--prune-retired', action='store_true',
+                           help='When used with --compare-spaces, automatically delete pickle files for spaces that no longer exist in the live instance (no confirmation prompt).')
     args = parser.parse_args()
 
     # Handle --list-spaces mode first as it's a simple informational command
@@ -831,6 +1060,20 @@ def main():
             print(f"Logging to: {log_file}")
         
         update_existing_pickles(OUTPUT_DIR, log_file)
+        sys.exit(0)
+    
+    if args.compare_spaces:
+        print("Mode: Comparing pickled spaces with live instance")
+        print(f"Target directory: {OUTPUT_DIR}")
+        if args.prune_retired:
+            print("Auto-prune mode: ENABLED - will delete retired spaces without confirmation")
+        
+        # Setup logging for comparison process
+        log_file = setup_simple_logging('.')
+        if log_file:
+            print(f"Logging to: {log_file}")
+        
+        compare_and_suggest_pruning(OUTPUT_DIR, log_file, auto_prune=args.prune_retired)
         sys.exit(0)
 
     # Handle --update-pickles-reverse mode
@@ -1112,6 +1355,8 @@ def main():
         print("  --resume-from-pickles         : Resume work based on scanning existing pickle files in output directory.") # NEW help line
         print("  --update-pickles              : Update existing pickle files with latest page versions based on timestamp comparison.") # NEW help line
         print("  --update-pickles-reverse      : Update existing pickle files with latest page versions in Z-A order.") # NEW help line
+        print("  --compare-spaces              : Compare pickled spaces with live instance and suggest which should be pruned.") # NEW help line
+        print("  --prune-retired               : When used with --compare-spaces, auto-delete retired spaces without confirmation.") # NEW help line
         print(f"  --pickle-space-full SPACE_KEY : Pickles all pages for a single space. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}.") # Updated help
         print(f"  --pickle-all-spaces-full      : Pickles all pages for ALL non-user spaces. Saves to {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}.") # New help line
         print(f"                                  Uses its own checkpoint ({FULL_PICKLE_CHECKPOINT_FILENAME}) and bypasses sampling and this interactive menu.") # Updated help
@@ -1132,8 +1377,9 @@ def main():
                            "  9: Resume from existing pickle files (SCANS FOLDER for completed spaces)\n"
                            "  10: List all non-user spaces (Key, Name, Description)\n"
                            "  11: List all non-user space KEYS only\n"
+                           "  12: Compare pickled spaces with live instance (suggest pruning)\n"
                            "  q: Quit\n"
-                           "Enter choice (1-11 or q): ").strip().lower() # UPDATED PROMPT
+                           "Enter choice (1-12 or q): ").strip().lower() # UPDATED PROMPT
             if choice == '1':
                 # Defunct option - file checkpoint deprecated
                 print("This option has been deprecated. File checkpoints are no longer used.")
@@ -1221,6 +1467,18 @@ def main():
                 print("Action: Listing all non-user space KEYS only from Confluence...")
                 all_spaces_interactive_keys = fetch_all_spaces_with_details(auth_details=(USERNAME, PASSWORD), verify_ssl_cert=VERIFY_SSL)
                 print_space_keys_only(all_spaces_interactive_keys)
+                print("\nReturning to menu...")
+                continue
+            elif choice == '12':
+                # Compare pickled spaces with live instance
+                print("Action: Comparing pickled spaces with live instance...")
+                
+                # Setup logging for comparison
+                log_file = setup_simple_logging('.')
+                if log_file:
+                    print(f"Logging to: {log_file}")
+                
+                compare_and_suggest_pruning(OUTPUT_DIR, log_file)
                 print("\nReturning to menu...")
                 continue
             elif choice == 'q':
@@ -1490,7 +1748,7 @@ def main():
                 print("Exiting script.")
                 sys.exit(0) # Exit gracefully
             else:
-                print("Invalid choice. Please enter 1-11 or q.")
+                print("Invalid choice. Please enter 1-12 or q.")
     
     # Capture start time for runtime tracking
     option_start_time = time.time()
