@@ -545,9 +545,10 @@ def main():
         print("  4. Upload path information only")
         print("  5. Upload HTML format only")
         print("  6. Upload text format only")
+        print("  7. Clear checkpoint and start fresh")
         print("  q. Quit")
         
-        choice = input("\nSelect mode (1-6 or q): ").strip().lower()
+        choice = input("\nSelect mode (1-7 or q): ").strip().lower()
         
         if choice == 'q':
             print("Exiting...")
@@ -604,6 +605,33 @@ def main():
             args.inspect = False
             args.interactive = False
             args.format = 'txt'
+        elif choice == '7':
+            clear_checkpoint()
+            print("\n✓ Checkpoint cleared - will start from beginning")
+            print("Now select an upload mode:")
+            print("  1. Standard upload (both HTML and text)")
+            print("  2. Upload with document inspection")
+            print("  3. Interactive upload (inspect and choose per document)")
+            print("  4. Upload path information only")
+            print("  5. Upload HTML format only")
+            print("  6. Upload text format only")
+            mode_choice = input("\nSelect upload mode (1-6): ").strip()
+            if mode_choice == '2':
+                args.inspect = True
+                args.interactive = False
+                args.format = 'both'
+            elif mode_choice == '3':
+                args.inspect = True
+                args.interactive = True
+                args.format = 'both'
+            elif mode_choice == '4':
+                args.format = 'path'
+            elif mode_choice == '5':
+                args.format = 'html'
+            elif mode_choice == '6':
+                args.format = 'txt'
+            else:
+                args.format = 'both'
         else:
             print("Invalid choice, using standard upload mode")
             args.inspect = False
