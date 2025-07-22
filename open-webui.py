@@ -713,15 +713,20 @@ def main():
         logger.info("Checkpoint cleared - starting from beginning")
     
     # Validate pickle directory
+    print(f"\n📁 Checking pickle directory: {args.pickle_dir}")
     if not os.path.exists(args.pickle_dir):
         logger.error(f"Pickle directory does not exist: {args.pickle_dir}")
+        print(f"❌ ERROR: Pickle directory does not exist: {args.pickle_dir}")
         return 1
     
     # Find all pickle files
+    print(f"🔍 Searching for pickle files in {args.pickle_dir}...")
     pickle_files = find_pickle_files(args.pickle_dir)
     if not pickle_files:
         logger.error("No pickle files found")
+        print(f"❌ ERROR: No pickle files found in {args.pickle_dir}")
         return 1
+    print(f"✅ Found {len(pickle_files)} pickle file(s)")
     
     # Initialize Open-WebUI client
     client = OpenWebUIClient(
@@ -754,13 +759,20 @@ def main():
     print(f"   - Text: {args.text_collection}")
     
     # Load checkpoint to resume from last successful upload
+    print("\n📋 Checking for checkpoint file...")
     last_uploaded_space = load_checkpoint()
     resume_mode = last_uploaded_space is not None
+    if resume_mode:
+        print(f"✅ Found checkpoint - will resume after space: {last_uploaded_space}")
+    else:
+        print("📝 No checkpoint found - will start from beginning")
     
     # Filter pickle files based on checkpoint
     files_to_process = []
     
-    for pickle_file in pickle_files:
+    print(f"\n🔄 Processing {len(pickle_files)} pickle file(s) to determine upload order...")
+    for i, pickle_file in enumerate(pickle_files, 1):
+        print(f"   Loading {i}/{len(pickle_files)}: {pickle_file.name}...", end='\r')
         pickle_data = load_confluence_pickle(pickle_file)
         if not pickle_data:
             logger.warning(f"Skipping invalid pickle file: {pickle_file.name}")
@@ -783,8 +795,10 @@ def main():
     
     if not files_to_process:
         logger.info("No files to process")
+        print("\n✅ All spaces have already been processed!")
         return 0
     
+    print(f"\n✅ Ready to upload {len(files_to_process)} space(s)")
     logger.info(f"🚀 Starting upload: {len(files_to_process)} spaces")
     logger.info(f"📋 Upload settings: format={args.format}, inspect={args.inspect}, interactive={args.interactive}")
     
