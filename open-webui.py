@@ -589,11 +589,6 @@ def main():
         help="Ollama server URL (default: http://localhost:11434)"
     )
     parser.add_argument(
-        "--openwebui-server", 
-        default=settings.get('base_url', "http://localhost:8080"),
-        help=f"Open-WebUI server URL (default: {settings.get('base_url', 'http://localhost:8080')})"
-    )
-    parser.add_argument(
         "--html-collection", 
         default="CONF-HTML",
         help="Knowledge collection name for HTML versions (default: CONF-HTML)"
@@ -607,16 +602,6 @@ def main():
         "--path-collection", 
         default=None,
         help="Knowledge collection name for path/index information (default: uses text collection)"
-    )
-    parser.add_argument(
-        "--username",
-        default=settings.get('username'),
-        help=f"Username for Open-WebUI authentication (default from settings: {settings.get('username', 'None')})"
-    )
-    parser.add_argument(
-        "--password",
-        default=settings.get('password'),
-        help="Password for Open-WebUI authentication (default from settings.ini)"
     )
     parser.add_argument(
         "--verbose", "-v",
@@ -759,9 +744,9 @@ def main():
             
             # Create a temporary client to list collections
             temp_client = OpenWebUIClient(
-                args.openwebui_server,
-                args.username,
-                args.password
+                settings.get('base_url', 'http://localhost:8080'),
+                settings.get('username'),
+                settings.get('password')
             )
             if temp_client.authenticate():
                 collections = temp_client.list_knowledge_collections()
@@ -820,14 +805,14 @@ def main():
         elif choice == '8':
             # Test authentication only
             safe_print("\n🔧 Testing authentication...")
-            safe_print(f"   Server: {args.openwebui_server}")
-            safe_print(f"   Username: {args.username or 'Not provided'}")
-            safe_print(f"   Password: {'***' if args.password else 'Not provided'}")
+            safe_print(f"   Server: {settings.get('base_url', 'http://localhost:8080')}")
+            safe_print(f"   Username: {settings.get('username') or 'Not provided'}")
+            safe_print(f"   Password: {'***' if settings.get('password') else 'Not provided'}")
             
             test_client = OpenWebUIClient(
-                args.openwebui_server,
-                args.username,
-                args.password
+                settings.get('base_url', 'http://localhost:8080'),
+                settings.get('username'),
+                settings.get('password')
             )
             
             if test_client.authenticate():
@@ -896,9 +881,9 @@ def main():
     
     # Initialize Open-WebUI client
     client = OpenWebUIClient(
-        args.openwebui_server,
-        args.username,
-        args.password
+        settings.get('base_url', 'http://localhost:8080'),
+        settings.get('username'),
+        settings.get('password')
     )
     
     # Authenticate if credentials provided
