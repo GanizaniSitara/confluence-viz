@@ -24,7 +24,7 @@ def setup_logging(log_file='openwebui_upload.log'):
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler(log_file),
+            logging.FileHandler(log_file, encoding='utf-8'),
             logging.StreamHandler()
         ]
     )
@@ -35,7 +35,7 @@ logger = setup_logging()
 def save_checkpoint(space_key: str, checkpoint_file: str = 'openwebui_checkpoint.txt'):
     """Save the last successfully uploaded space to checkpoint file"""
     try:
-        with open(checkpoint_file, 'w') as f:
+        with open(checkpoint_file, 'w', encoding='utf-8') as f:
             f.write(space_key)
         logger.info(f"Checkpoint saved: {space_key}")
     except Exception as e:
@@ -45,7 +45,7 @@ def load_checkpoint(checkpoint_file: str = 'openwebui_checkpoint.txt') -> Option
     """Load the last successfully uploaded space from checkpoint file"""
     try:
         if os.path.exists(checkpoint_file):
-            with open(checkpoint_file, 'r') as f:
+            with open(checkpoint_file, 'r', encoding='utf-8') as f:
                 space_key = f.read().strip()
             logger.info(f"Checkpoint loaded: resuming after {space_key}")
             return space_key
