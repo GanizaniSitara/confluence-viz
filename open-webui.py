@@ -125,11 +125,11 @@ class OpenWebUIClient:
             response = self.session.post(auth_url, json={
                 "email": self.username,
                 "password": self.password
-            }, timeout=10)  # 10 second timeout
+            }, timeout=30)  # 30 second timeout
             logger.debug(f"AUTH RESPONSE [{response.status_code}]: {response.text}")
         except requests.exceptions.Timeout:
-            logger.error(f"Authentication timeout - server did not respond within 10 seconds")
-            safe_print("❌ Authentication failed: Server timeout")
+            logger.error(f"Authentication timeout - server did not respond within 30 seconds")
+            safe_print("❌ Authentication failed: Server timeout (30s)")
             return False
         except Exception as e:
             logger.error(f"Exception during authentication: {e}")
@@ -249,7 +249,7 @@ class OpenWebUIClient:
         collections_url = f"{self.base_url}/api/v1/knowledge/"
         safe_print(f"📚 Fetching knowledge collections from {self.base_url}...")
         try:
-            response = self.session.get(collections_url, timeout=10)
+            response = self.session.get(collections_url, timeout=30)
             if response.status_code == 200:
                 collections = response.json()
                 collection_dict = {}
