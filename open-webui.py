@@ -573,7 +573,13 @@ def main():
         logger.info("Enabling document inspection for interactive mode")
     
     # Show interactive menu if no specific mode is selected
-    if not args.inspect and not any([args.clear_checkpoint]):
+    # Skip menu if format is explicitly set via command line
+    format_set_explicitly = args.format != parser.get_default('format') if hasattr(parser, 'get_default') else False
+    if not format_set_explicitly:
+        # Check if --format was passed on command line
+        format_set_explicitly = any(arg in sys.argv for arg in ['--format', '-f'])
+    
+    if not args.inspect and not any([args.clear_checkpoint]) and not format_set_explicitly:
         print("\n" + "="*60)
         print("OPEN-WEBUI CONFLUENCE UPLOADER")
         print("="*60)
