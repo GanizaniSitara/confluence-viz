@@ -17,6 +17,29 @@ from requests.auth import HTTPBasicAuth
 import logging
 from utils.html_cleaner import clean_confluence_html
 
+# Helper function to safely print text with emojis
+def safe_print(text: str):
+    """Print text, replacing emojis if the terminal doesn't support UTF-8"""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        # Replace common emojis with ASCII equivalents
+        replacements = {
+            '✅': '[OK]',
+            '❌': '[X]',
+            '⚠️': '[!]',
+            '📁': '[DIR]',
+            '📋': '[DOC]',
+            '🚀': '[>>]',
+            '🔄': '[~]',
+            '📊': '[=]',
+            'ℹ️': '[i]',
+            '⏭️': '[>>]'
+        }
+        for emoji, ascii_text in replacements.items():
+            text = text.replace(emoji, ascii_text)
+        print(text.encode('ascii', 'replace').decode('ascii'))
+
 # Set up logging
 def setup_logging(log_file='openwebui_upload.log'):
     """Setup logging to both console and file"""
@@ -81,13 +104,13 @@ class OpenWebUIClient:
         """Authenticate with Open-WebUI if credentials provided"""
         if not self.username or not self.password:
             logger.info("No credentials provided, skipping authentication")
-            print("ℹ️  No credentials provided - proceeding without authentication")
-            print("   (Some Open-WebUI instances don't require authentication)")
+            safe_print("ℹ️  No credentials provided - proceeding without authentication")
+            safe_print("   (Some Open-WebUI instances don't require authentication)")
             return True
             
         auth_url = f"{self.base_url}/api/v1/auths/signin"
         logger.debug(f"AUTH: POST {auth_url}")
-        print(f"🔐 Authenticating with {self.base_url}...")
+        safe_print(f"🔐 Authenticating with {self.base_url}...")
         try:
             response = self.session.post(auth_url, json={
                 "email": self.username,
@@ -96,25 +119,25 @@ class OpenWebUIClient:
             logger.debug(f"AUTH RESPONSE [{response.status_code}]: {response.text}")
         except requests.exceptions.Timeout:
             logger.error(f"Authentication timeout - server did not respond within 10 seconds")
-            print("❌ Authentication failed: Server timeout")
+            safe_print("❌ Authentication failed: Server timeout")
             return False
         except Exception as e:
             logger.error(f"Exception during authentication: {e}")
-            print(f"❌ Authentication failed: {str(e)}")
+            safe_print(f"❌ Authentication failed: {str(e)}")
             return False
 
         if response.status_code != 200:
             logger.error(f"Authentication failed: HTTP {response.status_code}")
-            print(f"❌ Authentication failed: HTTP {response.status_code}")
+            safe_print(f"❌ Authentication failed: HTTP {response.status_code}")
             if response.status_code == 401:
-                print("   Unauthorized - check your username/password")
+                safe_print("   Unauthorized - check your username/password")
             elif response.status_code == 404:
-                print("   Auth endpoint not found - check the server URL")
-                print(f"   Tried: {auth_url}")
+                safe_print("   Auth endpoint not found - check the server URL")
+                safe_print(f"   Tried: {auth_url}")
             try:
                 error_data = response.json()
                 if 'detail' in error_data:
-                    print(f"   Server message: {error_data['detail']}")
+                    safe_print(f"   Server message: {error_data['detail']}")
             except:
                 pass
             return False
@@ -132,7 +155,7 @@ class OpenWebUIClient:
 
         self.session.headers.update({"Authorization": f"Bearer {self.auth_token}"})
         logger.info("Authentication successful")
-        print("✅ Authentication successful!")
+        safe_print("✅ Authentication successful!")
         return True
 
     def upload_document(self, title: str, content: str, collection_name: str = "default", is_html: bool = False) -> bool:
@@ -214,7 +237,7 @@ class OpenWebUIClient:
     def list_knowledge_collections(self) -> Dict[str, str]:
         """List all knowledge collections and return as dict {name: id}"""
         collections_url = f"{self.base_url}/api/v1/knowledge/"
-        print(f"📚 Fetching knowledge collections from {self.base_url}...")
+        safe_print(f"📚 Fetching knowledge collections from {self.base_url}...")
         try:
             response = self.session.get(collections_url, timeout=10)
             if response.status_code == 200:
@@ -229,15 +252,15 @@ class OpenWebUIClient:
                 return collection_dict
             else:
                 logger.warning(f"Failed to list collections: HTTP {response.status_code}")
-                print(f"❌ Failed to fetch collections: HTTP {response.status_code}")
+                safe_print(f"❌ Failed to fetch collections: HTTP {response.status_code}")
                 return {}
         except requests.exceptions.Timeout:
             logger.error("Timeout while fetching collections - server did not respond within 10 seconds")
-            print("❌ Failed to fetch collections: Server timeout")
+            safe_print("❌ Failed to fetch collections: Server timeout")
             return {}
         except Exception as e:
             logger.error(f"Exception listing collections: {e}")
-            print(f"❌ Failed to fetch collections: {str(e)}")
+            safe_print(f"❌ Failed to fetch collections: {str(e)}")
             return {}
 
     def find_existing_collection(self, name: str) -> Optional[str]:
@@ -327,32 +350,32 @@ def inspect_document(page: Dict, space_key: str, space_name: str, format_choice:
     
     path_content, html_content, text_content = process_confluence_page(page, space_key, space_name)
     
-    print("\n" + "="*80)
-    print(f"DOCUMENT INSPECTION: {title}")
-    print("="*80)
-    print(f"Page ID: {page_id}")
-    print(f"Space: {space_name} ({space_key})")
-    print("-"*80)
+    safe_print("\n" + "="*80)
+    safe_print(f"DOCUMENT INSPECTION: {title}")
+    safe_print("="*80)
+    safe_print(f"Page ID: {page_id}")
+    safe_print(f"Space: {space_name} ({space_key})")
+    safe_print("-"*80)
     
     if format_choice in ['path', 'both']:
-        print("\n📁 PATH VERSION:")
-        print(path_content)
-        print("-"*40)
+        safe_print("\n📁 PATH VERSION:")
+        safe_print(path_content)
+        safe_print("-"*40)
     
     if format_choice in ['html', 'both']:
-        print("\n🌐 HTML VERSION (first 2000 chars):")
-        print(html_content[:2000])
+        safe_print("\n🌐 HTML VERSION (first 2000 chars):")
+        safe_print(html_content[:2000])
         if len(html_content) > 2000:
-            print(f"... (truncated, total {len(html_content)} chars)")
-        print("-"*40)
+            safe_print(f"... (truncated, total {len(html_content)} chars)")
+        safe_print("-"*40)
     
     if format_choice in ['txt', 'both']:
-        print("\n📝 TEXT VERSION (first 2000 chars):")
-        print(text_content[:2000])
+        safe_print("\n📝 TEXT VERSION (first 2000 chars):")
+        safe_print(text_content[:2000])
         if len(text_content) > 2000:
-            print(f"... (truncated, total {len(text_content)} chars)")
+            safe_print(f"... (truncated, total {len(text_content)} chars)")
     
-    print("="*80)
+    safe_print("="*80)
 
 def upload_confluence_space(client: OpenWebUIClient, pickle_data: Dict, 
                           html_collection: str, text_collection: str,
@@ -387,11 +410,11 @@ def upload_confluence_space(client: OpenWebUIClient, pickle_data: Dict,
             
             if interactive:
                 # Interactive mode - ask user what to do
-                print("\nOptions:")
-                print("  u - Upload this document")
-                print("  s - Skip this document")
-                print("  a - Upload all remaining documents without inspection")
-                print("  q - Quit")
+                safe_print("\nOptions:")
+                safe_print("  u - Upload this document")
+                safe_print("  s - Skip this document")
+                safe_print("  a - Upload all remaining documents without inspection")
+                safe_print("  q - Quit")
                 
                 choice = input("\nEnter choice (u/s/a/q): ").strip().lower()
                 
@@ -580,24 +603,24 @@ def main():
         format_set_explicitly = any(arg in sys.argv for arg in ['--format', '-f'])
     
     if not args.inspect and not any([args.clear_checkpoint]) and not format_set_explicitly:
-        print("\n" + "="*60)
-        print("OPEN-WEBUI CONFLUENCE UPLOADER")
-        print("="*60)
-        print("\nUpload Modes:")
-        print("  1. Standard upload (both HTML and text)")
-        print("  2. Preview & upload all (shows 2000 chars, uploads automatically)")
-        print("  3. Interactive upload (preview each, then choose: upload/skip/quit)")
-        print("  4. Upload path information only")
-        print("  5. Upload HTML format only")
-        print("  6. Upload text format only")
-        print("  7. Clear checkpoint and start fresh")
-        print("  8. Test authentication only")
-        print("  q. Quit")
+        safe_print("\n" + "="*60)
+        safe_print("OPEN-WEBUI CONFLUENCE UPLOADER")
+        safe_print("="*60)
+        safe_print("\nUpload Modes:")
+        safe_print("  1. Standard upload (both HTML and text)")
+        safe_print("  2. Preview & upload all (shows 2000 chars, uploads automatically)")
+        safe_print("  3. Interactive upload (preview each, then choose: upload/skip/quit)")
+        safe_print("  4. Upload path information only")
+        safe_print("  5. Upload HTML format only")
+        safe_print("  6. Upload text format only")
+        safe_print("  7. Clear checkpoint and start fresh")
+        safe_print("  8. Test authentication only")
+        safe_print("  q. Quit")
         
         choice = input("\nSelect mode (1-8 or q): ").strip().lower()
         
         if choice == 'q':
-            print("Exiting...")
+            safe_print("Exiting...")
             return 0
         elif choice == '1':
             args.inspect = False
@@ -606,15 +629,15 @@ def main():
         elif choice == '2':
             args.inspect = True
             args.interactive = False
-            print("\n📋 Preview Mode Selected")
-            print("   Each document will show 2000 characters before upload.")
-            print("   All documents upload automatically (no waiting for input).")
+            safe_print("\n📋 Preview Mode Selected")
+            safe_print("   Each document will show 2000 characters before upload.")
+            safe_print("   All documents upload automatically (no waiting for input).")
             # Ask for format
-            print("\nSelect format to upload:")
-            print("  1. Both HTML and text (default)")
-            print("  2. HTML only")
-            print("  3. Text only")
-            print("  4. Path information only")
+            safe_print("\nSelect format to upload:")
+            safe_print("  1. Both HTML and text (default)")
+            safe_print("  2. HTML only")
+            safe_print("  3. Text only")
+            safe_print("  4. Path information only")
             format_choice = input("\nSelect format (1-4): ").strip()
             if format_choice == '2':
                 args.format = 'html'
@@ -628,11 +651,11 @@ def main():
             args.inspect = True
             args.interactive = True
             # Ask for format
-            print("\nSelect format to upload:")
-            print("  1. Both HTML and text (default)")
-            print("  2. HTML only")
-            print("  3. Text only")
-            print("  4. Path information only")
+            safe_print("\nSelect format to upload:")
+            safe_print("  1. Both HTML and text (default)")
+            safe_print("  2. HTML only")
+            safe_print("  3. Text only")
+            safe_print("  4. Path information only")
             format_choice = input("\nSelect format (1-4): ").strip()
             if format_choice == '2':
                 args.format = 'html'
@@ -646,9 +669,9 @@ def main():
             args.inspect = False
             args.interactive = False
             args.format = 'path'
-            print("\n📁 Path Information Upload Selected")
-            print("   This uploads only the navigation path for each page.")
-            print("\n🔍 Checking available knowledge collections...")
+            safe_print("\n📁 Path Information Upload Selected")
+            safe_print("   This uploads only the navigation path for each page.")
+            safe_print("\n🔍 Checking available knowledge collections...")
             
             # Create a temporary client to list collections
             temp_client = OpenWebUIClient(
@@ -659,22 +682,22 @@ def main():
             if temp_client.authenticate():
                 collections = temp_client.list_knowledge_collections()
                 if collections:
-                    print(f"\n📚 Available collections:")
+                    safe_print(f"\n📚 Available collections:")
                     collection_list = list(collections.keys())
                     for i, name in enumerate(collection_list, 1):
-                        print(f"   {i}. {name}")
-                    print(f"   {len(collection_list) + 1}. Create new collection (not supported yet)")
+                        safe_print(f"   {i}. {name}")
+                    safe_print(f"   {len(collection_list) + 1}. Create new collection (not supported yet)")
                     
                     choice_num = input(f"\nSelect collection for path index (1-{len(collection_list)}): ").strip()
                     try:
                         idx = int(choice_num) - 1
                         if 0 <= idx < len(collection_list):
                             args.path_collection = collection_list[idx]
-                            print(f"✅ Selected: {args.path_collection}")
+                            safe_print(f"✅ Selected: {args.path_collection}")
                         else:
-                            print(f"⚠️  Invalid choice, using default text collection: {args.text_collection}")
+                            safe_print(f"⚠️  Invalid choice, using default text collection: {args.text_collection}")
                     except:
-                        print(f"⚠️  Invalid input, using default text collection: {args.text_collection}")
+                        safe_print(f"⚠️  Invalid input, using default text collection: {args.text_collection}")
         elif choice == '5':
             args.inspect = False
             args.interactive = False
@@ -685,14 +708,14 @@ def main():
             args.format = 'txt'
         elif choice == '7':
             clear_checkpoint()
-            print("\n✓ Checkpoint cleared - will start from beginning")
-            print("Now select an upload mode:")
-            print("  1. Standard upload (both HTML and text)")
-            print("  2. Upload with document inspection")
-            print("  3. Interactive upload (inspect and choose per document)")
-            print("  4. Upload path information only")
-            print("  5. Upload HTML format only")
-            print("  6. Upload text format only")
+            safe_print("\n✓ Checkpoint cleared - will start from beginning")
+            safe_print("Now select an upload mode:")
+            safe_print("  1. Standard upload (both HTML and text)")
+            safe_print("  2. Upload with document inspection")
+            safe_print("  3. Interactive upload (inspect and choose per document)")
+            safe_print("  4. Upload path information only")
+            safe_print("  5. Upload HTML format only")
+            safe_print("  6. Upload text format only")
             mode_choice = input("\nSelect upload mode (1-6): ").strip()
             if mode_choice == '2':
                 args.inspect = True
@@ -712,10 +735,10 @@ def main():
                 args.format = 'both'
         elif choice == '8':
             # Test authentication only
-            print("\n🔧 Testing authentication...")
-            print(f"   Server: {args.openwebui_server}")
-            print(f"   Username: {args.username or 'Not provided'}")
-            print(f"   Password: {'***' if args.password else 'Not provided'}")
+            safe_print("\n🔧 Testing authentication...")
+            safe_print(f"   Server: {args.openwebui_server}")
+            safe_print(f"   Username: {args.username or 'Not provided'}")
+            safe_print(f"   Password: {'***' if args.password else 'Not provided'}")
             
             test_client = OpenWebUIClient(
                 args.openwebui_server,
@@ -724,34 +747,34 @@ def main():
             )
             
             if test_client.authenticate():
-                print("\n✅ Authentication test successful!")
-                print("   You can now proceed with uploads.")
+                safe_print("\n✅ Authentication test successful!")
+                safe_print("   You can now proceed with uploads.")
                 
                 # Also test listing collections
-                print("\n📚 Testing collection access...")
+                safe_print("\n📚 Testing collection access...")
                 collections = test_client.list_knowledge_collections()
                 if collections:
-                    print(f"✅ Found {len(collections)} collection(s):")
+                    safe_print(f"✅ Found {len(collections)} collection(s):")
                     for name in collections.keys():
-                        print(f"   - {name}")
+                        safe_print(f"   - {name}")
                 else:
-                    print("❌ No collections found or unable to list collections")
+                    safe_print("❌ No collections found or unable to list collections")
             else:
-                print("\n❌ Authentication test failed!")
-                print("\nTroubleshooting tips:")
-                print("1. Check if you're using email (not username) for login")
-                print("2. Verify the server URL (should be like http://localhost:8080)")
-                print("3. Try logging into the web UI to confirm credentials work")
-                print("4. Some Open-WebUI instances may have API authentication disabled")
+                safe_print("\n❌ Authentication test failed!")
+                safe_print("\nTroubleshooting tips:")
+                safe_print("1. Check if you're using email (not username) for login")
+                safe_print("2. Verify the server URL (should be like http://localhost:8080)")
+                safe_print("3. Try logging into the web UI to confirm credentials work")
+                safe_print("4. Some Open-WebUI instances may have API authentication disabled")
             
             return 0
         else:
-            print("Invalid choice, using standard upload mode")
+            safe_print("Invalid choice, using standard upload mode")
             args.inspect = False
             args.interactive = False
             args.format = 'both'
         
-        print(f"\nSelected: inspect={args.inspect}, interactive={args.interactive}, format={args.format}")
+        safe_print(f"\nSelected: inspect={args.inspect}, interactive={args.interactive}, format={args.format}")
     
     # Clear checkpoint if requested
     if args.clear_checkpoint:
@@ -759,20 +782,20 @@ def main():
         logger.info("Checkpoint cleared - starting from beginning")
     
     # Validate pickle directory
-    print(f"\n📁 Checking pickle directory: {args.pickle_dir}")
+    safe_print(f"\n📁 Checking pickle directory: {args.pickle_dir}")
     if not os.path.exists(args.pickle_dir):
         logger.error(f"Pickle directory does not exist: {args.pickle_dir}")
-        print(f"❌ ERROR: Pickle directory does not exist: {args.pickle_dir}")
+        safe_print(f"❌ ERROR: Pickle directory does not exist: {args.pickle_dir}")
         return 1
     
     # Find all pickle files
-    print(f"🔍 Searching for pickle files in {args.pickle_dir}...")
+    safe_print(f"🔍 Searching for pickle files in {args.pickle_dir}...")
     pickle_files = find_pickle_files(args.pickle_dir)
     if not pickle_files:
         logger.error("No pickle files found")
-        print(f"❌ ERROR: No pickle files found in {args.pickle_dir}")
+        safe_print(f"❌ ERROR: No pickle files found in {args.pickle_dir}")
         return 1
-    print(f"✅ Found {len(pickle_files)} pickle file(s)")
+    safe_print(f"✅ Found {len(pickle_files)} pickle file(s)")
     
     # Initialize Open-WebUI client
     client = OpenWebUIClient(
@@ -788,7 +811,7 @@ def main():
     
     # Find existing knowledge collections
     logger.info("Finding existing knowledge collections...")
-    print(f"\n🔍 Looking for knowledge collections...")
+    safe_print(f"\n🔍 Looking for knowledge collections...")
     html_collection_id = client.find_existing_collection(args.html_collection)
     text_collection_id = client.find_existing_collection(args.text_collection)
     
@@ -797,39 +820,39 @@ def main():
     if args.format == 'path' and hasattr(args, 'path_collection') and args.path_collection:
         path_collection_id = client.find_existing_collection(args.path_collection)
         if not path_collection_id:
-            print(f"⚠️  Path collection '{args.path_collection}' not found, will use text collection")
+            safe_print(f"⚠️  Path collection '{args.path_collection}' not found, will use text collection")
             path_collection_id = text_collection_id
     else:
         path_collection_id = text_collection_id
     
     if not html_collection_id or not text_collection_id:
         logger.error("Required knowledge collections not found!")
-        print("\n❌ ERROR: Required knowledge collections not found!")
-        print(f"   Please ensure these collections exist in Open-WebUI:")
-        print(f"   - HTML collection: {args.html_collection}")
-        print(f"   - Text collection: {args.text_collection}")
+        safe_print("\n❌ ERROR: Required knowledge collections not found!")
+        safe_print(f"   Please ensure these collections exist in Open-WebUI:")
+        safe_print(f"   - HTML collection: {args.html_collection}")
+        safe_print(f"   - Text collection: {args.text_collection}")
         return 1
     
-    print(f"✅ Found required collections:")
-    print(f"   - HTML: {args.html_collection}")
-    print(f"   - Text: {args.text_collection}")
+    safe_print(f"✅ Found required collections:")
+    safe_print(f"   - HTML: {args.html_collection}")
+    safe_print(f"   - Text: {args.text_collection}")
     if args.format == 'path' and hasattr(args, 'path_collection') and args.path_collection:
-        print(f"   - Path: {args.path_collection}")
+        safe_print(f"   - Path: {args.path_collection}")
     
     # Load checkpoint to resume from last successful upload
-    print("\n📋 Checking for checkpoint file...")
+    safe_print("\n📋 Checking for checkpoint file...")
     last_uploaded_space = load_checkpoint()
     resume_mode = last_uploaded_space is not None
     if resume_mode:
-        print(f"✅ Found checkpoint - will resume after space: {last_uploaded_space}")
+        safe_print(f"✅ Found checkpoint - will resume after space: {last_uploaded_space}")
     else:
-        print("📝 No checkpoint found - will start from beginning")
+        safe_print("📝 No checkpoint found - will start from beginning")
     
     # Filter pickle files based on checkpoint
     files_to_process = []
     
     if resume_mode:
-        print(f"\n⏭️  Looking for checkpoint space: {last_uploaded_space}")
+        safe_print(f"\n⏭️  Looking for checkpoint space: {last_uploaded_space}")
         # We need to find where we left off, but we'll only load files as needed
         found_checkpoint = False
         for pickle_file in pickle_files:
@@ -840,7 +863,7 @@ def main():
                 filename = filename[:-5]  # Remove _full suffix
             
             if filename == last_uploaded_space:
-                print(f"✅ Found checkpoint at: {pickle_file.name}")
+                safe_print(f"✅ Found checkpoint at: {pickle_file.name}")
                 found_checkpoint = True
                 continue  # Skip this one, start from next
             
@@ -848,8 +871,8 @@ def main():
                 files_to_process.append(pickle_file)
         
         if not found_checkpoint:
-            print(f"⚠️  Checkpoint space '{last_uploaded_space}' not found in pickle files")
-            print("   Starting from beginning instead...")
+            safe_print(f"⚠️  Checkpoint space '{last_uploaded_space}' not found in pickle files")
+            safe_print("   Starting from beginning instead...")
             files_to_process = pickle_files
     else:
         # No checkpoint, process all files
@@ -857,10 +880,10 @@ def main():
     
     if not files_to_process:
         logger.info("No files to process")
-        print("\n✅ All spaces have already been processed!")
+        safe_print("\n✅ All spaces have already been processed!")
         return 0
     
-    print(f"\n✅ Ready to upload {len(files_to_process)} space(s)")
+    safe_print(f"\n✅ Ready to upload {len(files_to_process)} space(s)")
     logger.info(f"🚀 Starting upload: {len(files_to_process)} spaces")
     logger.info(f"📋 Upload settings: format={args.format}, inspect={args.inspect}, interactive={args.interactive}")
     
@@ -896,7 +919,7 @@ def main():
             # Check if user quit
             if user_quit:
                 logger.info("User requested quit - exiting upload process")
-                print("\n❌ Upload process terminated by user")
+                safe_print("\n❌ Upload process terminated by user")
                 break
             
             # Save checkpoint after successful upload
