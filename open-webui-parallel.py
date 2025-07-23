@@ -641,6 +641,9 @@ Performance Tips:
     # Handle test mode
     if args.test_mode:
         args.format = 'txt'  # Force text format
+        # Set default test limit if not specified
+        if args.test_limit == 0:
+            args.test_limit = 500
         safe_print("\n🧪 Test Mode: Creating temporary collection...")
         timestamp = int(time.time())
         test_collection_name = f"test_confluence_parallel_{timestamp}"
