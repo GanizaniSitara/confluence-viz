@@ -262,6 +262,24 @@ class OpenWebUIClient:
         
         logger.info(f"Creating new collection: {name}")
         return self.create_collection(name, description)
+    
+    def delete_collection(self, collection_id: str) -> bool:
+        """Delete a knowledge collection"""
+        url = f"{self.base_url}/api/v1/knowledge/{collection_id}/delete"
+        
+        try:
+            response = self.session.delete(url)
+            if response.status_code in [200, 204]:
+                logger.info(f"Deleted collection ID: {collection_id}")
+                return True
+            else:
+                logger.error(f"Failed to delete collection: HTTP {response.status_code}")
+                if response.text:
+                    logger.error(f"Response: {response.text}")
+                return False
+        except Exception as e:
+            logger.error(f"Error deleting collection: {e}")
+            return False
 
 def load_confluence_pickle(pickle_path: Path) -> Optional[Dict]:
     """Load a Confluence pickle file"""
@@ -526,6 +544,8 @@ Examples:
                        help='Number of parallel upload workers (default: 4)')
     parser.add_argument('--path-collection', 
                        help='Separate collection name for path information (used with --format path)')
+    parser.add_argument('--test-mode', action='store_true',
+                       help='Test mode: create temporary collection, upload TXT, delete (forces --format txt)')
     
     args = parser.parse_args()
     
@@ -570,40 +590,61 @@ Examples:
             print(f"  ... and {len(collections) - 10} more")
         return 0
     
-    # Setup collections based on format
-    html_collection_id = None
-    text_collection_id = None
-    path_collection_id = None
-    
-    if args.format in ['html', 'both']:
-        html_collection_name = settings.get('html_collection', 'confluence_html')
-        html_collection_id = client.ensure_collection_exists(
-            html_collection_name, 
-            "Confluence pages in HTML format"
+    # Handle test mode
+    if args.test_mode:
+        args.format = 'txt'  # Force text format
+        print("\n🧪 Test Mode: Creating temporary collection...")
+        import time
+        timestamp = int(time.time())
+        test_collection_name = f"test_confluence_parallel_{timestamp}"
+        test_collection_id = client.create_collection(
+            test_collection_name,
+            "Temporary collection for testing parallel Confluence upload"
         )
-        if not html_collection_id:
-            print(f"❌ Failed to setup HTML collection: {html_collection_name}")
+        if not test_collection_id:
+            print("❌ Failed to create test collection")
             return 1
-    
-    if args.format in ['txt', 'both']:
-        text_collection_name = settings.get('text_collection', 'confluence_text')
-        text_collection_id = client.ensure_collection_exists(
-            text_collection_name, 
-            "Confluence pages in plain text format"
-        )
-        if not text_collection_id:
-            print(f"❌ Failed to setup text collection: {text_collection_name}")
-            return 1
-    
-    if args.format == 'path':
-        if args.path_collection:
-            path_collection_id = client.ensure_collection_exists(
-                args.path_collection,
-                "Confluence page navigation paths"
+        print(f"✅ Created test collection: {test_collection_name}")
+        
+        # For test mode, use the temporary collection
+        html_collection_id = test_collection_id
+        text_collection_id = test_collection_id
+        path_collection_id = test_collection_id
+    else:
+        # Setup collections based on format
+        html_collection_id = None
+        text_collection_id = None
+        path_collection_id = None
+        
+        if args.format in ['html', 'both']:
+            html_collection_name = settings.get('html_collection', 'confluence_html')
+            html_collection_id = client.ensure_collection_exists(
+                html_collection_name, 
+                "Confluence pages in HTML format"
             )
-        else:
-            print("❌ --path-collection is required when using --format path")
-            return 1
+            if not html_collection_id:
+                print(f"❌ Failed to setup HTML collection: {html_collection_name}")
+                return 1
+        
+        if args.format in ['txt', 'both']:
+            text_collection_name = settings.get('text_collection', 'confluence_text')
+            text_collection_id = client.ensure_collection_exists(
+                text_collection_name, 
+                "Confluence pages in plain text format"
+            )
+            if not text_collection_id:
+                print(f"❌ Failed to setup text collection: {text_collection_name}")
+                return 1
+        
+        if args.format == 'path':
+            if args.path_collection:
+                path_collection_id = client.ensure_collection_exists(
+                    args.path_collection,
+                    "Confluence page navigation paths"
+                )
+            else:
+                print("❌ --path-collection is required when using --format path")
+                return 1
     
     # Find pickle files
     pickle_dir = Path(args.pickle_dir)
@@ -708,6 +749,14 @@ Examples:
     print(f"Total time: {overall_elapsed:.2f} seconds")
     print(f"Average speed: {overall_pages_per_second:.2f} pages/second")
     print(f"Parallel workers used: {args.workers}")
+    
+    # Clean up test collection if in test mode
+    if args.test_mode and 'test_collection_id' in locals():
+        print("\n🧹 Cleaning up test collection...")
+        if client.delete_collection(test_collection_id):
+            print("✅ Test collection deleted successfully")
+        else:
+            print("⚠️  Failed to delete test collection - please clean up manually")
     
     if total_success < total_pages:
         logger.warning(f"⚠️ Some uploads failed. Check the log for details.")
