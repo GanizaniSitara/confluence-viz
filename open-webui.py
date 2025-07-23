@@ -358,10 +358,10 @@ def upload_confluence_space(client: OpenWebUIClient, pickle_data: Dict,
                           html_collection: str, text_collection: str,
                           path_collection: str = None,
                           inspect: bool = False, format_choice: str = 'both',
-                          interactive: bool = False) -> int:
+                          interactive: bool = False) -> tuple:
     """
     Upload all pages from a Confluence space to Open-WebUI
-    Returns number of successfully uploaded pages
+    Returns tuple of (number of successfully uploaded pages, user_quit)
     """
     space_key = pickle_data.get('space_key', 'UNKNOWN')
     space_name = pickle_data.get('name', 'Unknown Space')
@@ -369,7 +369,7 @@ def upload_confluence_space(client: OpenWebUIClient, pickle_data: Dict,
     
     if not sampled_pages:
         logger.warning(f"No pages found in space {space_key}")
-        return 0
+        return 0, False
     
     logger.info(f"Processing {len(sampled_pages)} pages from space '{space_name}' ({space_key})")
     
@@ -397,7 +397,7 @@ def upload_confluence_space(client: OpenWebUIClient, pickle_data: Dict,
                 
                 if choice == 'q':
                     logger.info("User quit inspection mode")
-                    return success_count
+                    return success_count, True
                 elif choice == 's':
                     logger.info(f"Skipped page '{title}' by user request")
                     continue
@@ -443,7 +443,7 @@ def upload_confluence_space(client: OpenWebUIClient, pickle_data: Dict,
             logger.error(f"Error processing page '{title}': {e}")
     
     logger.info(f"Successfully uploaded {success_count}/{len(sampled_pages)} pages from space {space_key}")
-    return success_count
+    return success_count, False
 
 
 def load_openwebui_settings():
@@ -878,7 +878,7 @@ def main():
             
             logger.info(f"🔄 Processing space '{space_name}' ({space_key}) with {page_count} pages")
             
-            success_count = upload_confluence_space(
+            success_count, user_quit = upload_confluence_space(
                 client, pickle_data, html_collection_id, text_collection_id,
                 path_collection=path_collection_id,
                 inspect=args.inspect, format_choice=args.format, interactive=args.interactive
@@ -886,6 +886,12 @@ def main():
             
             total_success += success_count
             total_pages += page_count
+            
+            # Check if user quit
+            if user_quit:
+                logger.info("User requested quit - exiting upload process")
+                print("\n❌ Upload process terminated by user")
+                break
             
             # Save checkpoint after successful upload
             if success_count > 0:
