@@ -524,15 +524,23 @@ def load_openwebui_settings():
     
     # Handle both 'openwebui' and 'OpenWebUI' section names
     if 'openwebui' in config:
-        settings = config['openwebui']
+        openwebui_section = config['openwebui']
     elif 'OpenWebUI' in config:
-        settings = config['OpenWebUI']
+        openwebui_section = config['OpenWebUI']
     else:
         raise ValueError("No [openwebui] or [OpenWebUI] section found in settings.ini")
-    required_fields = ['base_url', 'username', 'password']
     
+    # Create settings dict
+    settings = {}
+    settings['base_url'] = openwebui_section.get('base_url')
+    settings['username'] = openwebui_section.get('username')
+    settings['password'] = openwebui_section.get('password')
+    settings['upload_dir'] = openwebui_section.get('upload_dir', 'temp')
+    
+    # Check required fields
+    required_fields = ['base_url', 'username', 'password']
     for field in required_fields:
-        if field not in settings:
+        if field not in settings or not settings[field]:
             raise ValueError(f"Missing required field '{field}' in [openwebui] section")
     
     return settings
@@ -578,8 +586,9 @@ Performance Tips:
     
     parser.add_argument('--format', choices=['html', 'txt', 'both', 'path'], default='both',
                        help='Format to upload (default: both)')
-    parser.add_argument('--pickle-dir', default='temp', 
-                       help='Directory containing pickle files (default: temp)')
+    parser.add_argument('--pickle-dir', 
+                       default=settings.get('upload_dir', 'temp'), 
+                       help=f"Directory containing pickle files (default: {settings.get('upload_dir', 'temp')})")
     parser.add_argument('--resume', action='store_true',
                        help='Resume from last checkpoint')
     parser.add_argument('--clear-checkpoint', action='store_true',
@@ -708,7 +717,6 @@ Performance Tips:
         return 1
     
     safe_print(f"\n📁 Found {len(pickle_files)} pickle files in {pickle_dir}")
-    logger.info(f"Pickle files found: {[pf.name for pf in pickle_files[:5]]}...")  # Log first 5 files
     
     # Handle resume
     last_processed = None
@@ -738,12 +746,9 @@ Performance Tips:
         return 0
     
     safe_print(f"\n✅ Ready to upload {len(files_to_process)} space(s) using {args.workers} parallel workers")
-    logger.info(f"Files to process: {[f.name for f in files_to_process]}")
     test_limit = args.test_limit if (hasattr(args, 'test_limit') and args.test_mode) else 0
     if test_limit > 0:
         safe_print(f"🧪 Test mode: Limited to {test_limit} pages total")
-    else:
-        safe_print(f"📚 Normal mode: Processing ALL pages from ALL spaces")
     logger.info(f"🚀 Starting parallel upload: {len(files_to_process)} spaces with {args.workers} workers")
     logger.info(f"📋 Upload settings: format={args.format}, workers={args.workers}")
     
@@ -771,9 +776,6 @@ Performance Tips:
             space_key = pickle_data.get('space_key', 'UNKNOWN')
             space_name = pickle_data.get('name', 'Unknown Space')
             page_count = len(pickle_data.get('sampled_pages', []))
-            
-            logger.info(f"Space {space_name} has {page_count} pages in sampled_pages")
-            safe_print(f"📄 Space '{space_name}' contains {page_count} pages")
             
             # Check test limit
             if test_limit > 0 and pages_uploaded_so_far >= test_limit:
