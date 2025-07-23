@@ -15,9 +15,8 @@ from config_loader import load_confluence_settings, load_data_settings, load_vis
 from utils.html_cleaner import clean_confluence_html
 
 # Load configurable pickle directory from settings
-data_settings = load_data_settings()
-OUTPUT_DIR = data_settings.get('pickle_dir', 'temp')
-FULL_PICKLE_SUBDIR = 'full_pickles' # New line
+viz_settings = load_visualization_settings()
+SPACES_DIR = viz_settings.get('spaces_dir', 'temp/full_pickles')
 SNIPPET_LINES = 10 # Number of lines for snippets
 
 def clear_console():
@@ -540,27 +539,14 @@ def print_content_size_list_sorted(pickle_data, smallest_first=True):
 def list_and_select_pickled_space():
     """Lists available .pkl files and allows user to select one by number or space key."""
     clear_console() # ADDED: Clear console before displaying menu
-    # Determine the directory to scan for pickles
-    pickle_dir_to_scan = os.path.join(OUTPUT_DIR, FULL_PICKLE_SUBDIR) # Default local path
-    remote_pickle_dir = None
-    try:
-        viz_settings = load_visualization_settings()
-        remote_pickle_dir = viz_settings.get('remote_full_pickle_dir')
-    except Exception as e:
-        print(f"Warning: Could not load remote_full_pickle_dir from settings: {e}")
-
-    if remote_pickle_dir and os.path.exists(remote_pickle_dir) and os.path.isdir(remote_pickle_dir):
-        print(f"Using remote pickle directory from settings: {remote_pickle_dir}")
-        pickle_dir_to_scan = remote_pickle_dir
-    elif remote_pickle_dir:
-        print(f"Warning: remote_full_pickle_dir '{remote_pickle_dir}' not found or not a directory. Falling back to local path: {pickle_dir_to_scan}")
-    else:
-        print(f"Using local pickle directory: {pickle_dir_to_scan}")
+    # Use spaces_dir from visualization settings
+    pickle_dir_to_scan = SPACES_DIR
+    print(f"Using pickle directory from settings: {pickle_dir_to_scan}")
 
     if not os.path.exists(pickle_dir_to_scan):
         print(f"Directory not found: {pickle_dir_to_scan}")
         print("Please ensure spaces have been pickled using the '--pickle-space-full' or '--pickle-all-spaces-full' options")
-        print("in the sample_and_pickle_spaces.py script, or check your remote_full_pickle_dir setting.")
+        print("in the sample_and_pickle_spaces.py script, or check your spaces_dir setting in the [visualization] section.")
         return None
 
     pickle_files = [f for f in os.listdir(pickle_dir_to_scan) if f.endswith(".pkl")]
@@ -719,19 +705,8 @@ def main():
     parser.add_argument("space_key", nargs='?', help="Optional space key to load directly.")
     args = parser.parse_args()
 
-    settings = load_visualization_settings()
-    # Ensure pickle_dir is correctly determined (local 'temp' or from settings)
-    # The list_and_select_pickled_space function handles remote_full_pickle_dir,
-    # but direct loading via CLI arg needs a consistent base path.
-    # For simplicity, direct CLI load will use the local 'temp' or settings-defined 'pickle_dir'.
-    # If remote_full_pickle_dir is the primary source, this might need adjustment
-    # or ensure CLI-passed keys are expected in the local/default pickle_dir.
-    
-    # Default to 'temp' if not in settings, then join with FULL_PICKLE_SUBDIR for CLI loading.
-    local_base_pickle_dir = settings.get('pickle_dir', 'temp')
-    # This is the directory where .pkl files are expected for direct CLI loading.
-    # list_and_select_pickled_space has its own logic to check remote_full_pickle_dir.
-    cli_load_pickle_dir = os.path.join(local_base_pickle_dir, FULL_PICKLE_SUBDIR)
+    # Use spaces_dir for CLI loading
+    cli_load_pickle_dir = SPACES_DIR
 
 
     confluence_settings = load_confluence_settings()
@@ -743,22 +718,13 @@ def main():
 
     if args.space_key:
         space_key_upper = args.space_key.upper()
-        # Try loading from the path derived for CLI arguments first
-        pickle_file_path_cli = os.path.join(cli_load_pickle_dir, f"{space_key_upper}.pkl")
+        # Try loading from the spaces_dir
+        pickle_file_path = os.path.join(cli_load_pickle_dir, f"{space_key_upper}.pkl")
         
-        # Fallback: Check remote_full_pickle_dir if specified and file not in cli_load_pickle_dir
-        remote_full_pickle_dir = settings.get('remote_full_pickle_dir')
-        pickle_file_path_remote = None
-        if remote_full_pickle_dir and os.path.isdir(remote_full_pickle_dir):
-            pickle_file_path_remote = os.path.join(remote_full_pickle_dir, f"{space_key_upper}.pkl")
-
         actual_pickle_file_path = None
-        if os.path.exists(pickle_file_path_cli):
-            actual_pickle_file_path = pickle_file_path_cli
-            print(f"Found pickle for '{space_key_upper}' in local/default directory: {cli_load_pickle_dir}")
-        elif pickle_file_path_remote and os.path.exists(pickle_file_path_remote):
-            actual_pickle_file_path = pickle_file_path_remote
-            print(f"Found pickle for '{space_key_upper}' in remote directory: {remote_full_pickle_dir}")
+        if os.path.exists(pickle_file_path):
+            actual_pickle_file_path = pickle_file_path
+            print(f"Found pickle for '{space_key_upper}' in directory: {cli_load_pickle_dir}")
         
         if actual_pickle_file_path:
             try:
@@ -773,7 +739,7 @@ def main():
                 print(f"Error loading pickle file {actual_pickle_file_path}: {e}")
                 sys.exit(1)
         else:
-            print(f"Pickle file for space key '{space_key_upper}' not found in specified local ('{cli_load_pickle_dir}') or remote ('{remote_full_pickle_dir or 'Not configured'}') directories.")
+            print(f"Pickle file for space key '{space_key_upper}' not found in directory: {cli_load_pickle_dir}")
             # Fall through to listing available spaces - this part of the logic might need review
             # if we want to exit or force selection. For now, it will proceed to list.
 
