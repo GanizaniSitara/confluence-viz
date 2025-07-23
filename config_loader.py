@@ -60,8 +60,12 @@ def load_visualization_settings(config_path='settings.ini'):
             for key, value in temp_config['visualization'].items():
                 config['visualization'][key] = value
     
-    # Return as dictionary
-    return {
-        'default_clusters': int(config['visualization'].get('default_clusters')),
-        'default_min_pages': int(config['visualization'].get('default_min_pages'))
-    }
+    # Return as dictionary with all settings
+    result = {}
+    for key, value in config['visualization'].items():
+        # Convert numeric values to int
+        if key in ['default_clusters', 'default_min_pages']:
+            result[key] = int(value)
+        else:
+            result[key] = value
+    return result
