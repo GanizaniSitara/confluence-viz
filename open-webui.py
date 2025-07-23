@@ -10,6 +10,7 @@ import argparse
 import pickle
 import json
 import configparser
+import time
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 import requests
@@ -891,7 +892,6 @@ def main():
     test_collection_id = None
     if hasattr(args, 'test_mode') and args.test_mode:
         safe_print("\n🧪 Test Mode: Creating temporary collection...")
-        import time
         timestamp = int(time.time())
         test_collection_name = f"test_confluence_{timestamp}"
         test_collection_id = client.create_collection(
