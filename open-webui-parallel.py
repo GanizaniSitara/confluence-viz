@@ -116,19 +116,35 @@ class OpenWebUIClient:
         """Authenticate with Open-WebUI and get auth token"""
         if not self.username or not self.password:
             logger.info("No credentials provided, skipping authentication")
+            safe_print("ℹ️  No credentials provided - proceeding without authentication")
+            safe_print("   (Some Open-WebUI instances don't require authentication)")
             return True
             
         auth_url = f"{self.base_url}/api/v1/auths/signin"
-        logger.debug(f"Authenticating with {auth_url}")
+        logger.debug(f"AUTH: POST {auth_url}")
+        safe_print(f"🔐 Authenticating with {self.base_url}...")
         
         try:
             response = self.session.post(auth_url, json={
                 "email": self.username,
                 "password": self.password
             }, timeout=10)
+            logger.debug(f"AUTH RESPONSE [{response.status_code}]: {response.text}")
             
             if response.status_code != 200:
                 logger.error(f"Authentication failed: HTTP {response.status_code}")
+                safe_print(f"❌ Authentication failed: HTTP {response.status_code}")
+                if response.status_code == 401:
+                    safe_print("   Unauthorized - check your username/password")
+                elif response.status_code == 404:
+                    safe_print("   Auth endpoint not found - check the server URL")
+                    safe_print(f"   Tried: {auth_url}")
+                try:
+                    error_data = response.json()
+                    if 'detail' in error_data:
+                        safe_print(f"   Server message: {error_data['detail']}")
+                except:
+                    pass
                 return False
             
             data = response.json()
@@ -136,15 +152,22 @@ class OpenWebUIClient:
             
             if not self.auth_token:
                 logger.error("No auth token received")
+                safe_print("❌ No auth token received from server")
                 return False
             
             # Update session headers with auth token
             self.session.headers.update({"Authorization": f"Bearer {self.auth_token}"})
             logger.info("Authentication successful")
+            safe_print("✅ Authentication successful")
             return True
             
+        except requests.exceptions.Timeout:
+            logger.error("Authentication timeout - server did not respond within 10 seconds")
+            safe_print("❌ Authentication failed: Server timeout")
+            return False
         except Exception as e:
             logger.error(f"Authentication error: {e}")
+            safe_print(f"❌ Authentication failed: {str(e)}")
             return False
     
     def test_auth(self) -> bool:
@@ -550,6 +573,13 @@ def main():
     # Load settings first
     settings = load_openwebui_settings()
     
+    # Log loaded settings (mask password)
+    logger.info("Loaded settings from settings.ini:")
+    logger.info(f"  base_url: {settings.get('base_url')}")
+    logger.info(f"  username: {settings.get('username')}")
+    logger.info(f"  password: {'*' * len(settings.get('password', '')) if settings.get('password') else 'None'}")
+    logger.info(f"  upload_dir: {settings.get('upload_dir')}")
+    
     parser = argparse.ArgumentParser(
         description="Upload Confluence spaces to Open-WebUI Knowledge Base (Parallel Version)\n\n"
                     "This parallel version can achieve 40x+ speedup compared to sequential upload\n"
@@ -605,6 +635,18 @@ Performance Tips:
                        help='Limit total pages to upload in test mode (0 = no limit)')
     
     args = parser.parse_args()
+    
+    # Log all parameters
+    logger.info("Script parameters:")
+    logger.info(f"  format: {args.format}")
+    logger.info(f"  pickle_dir: {args.pickle_dir}")
+    logger.info(f"  resume: {args.resume}")
+    logger.info(f"  clear_checkpoint: {args.clear_checkpoint}")
+    logger.info(f"  test_auth: {args.test_auth}")
+    logger.info(f"  workers: {args.workers}")
+    logger.info(f"  path_collection: {args.path_collection}")
+    logger.info(f"  test_mode: {args.test_mode}")
+    logger.info(f"  test_limit: {args.test_limit if hasattr(args, 'test_limit') else 'N/A'}")
     
     # Validate workers
     if args.workers < 1:
