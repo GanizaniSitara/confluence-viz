@@ -49,6 +49,27 @@ def test_authentication(base_url, username, password):
     print(f"   Username: {username if username else 'Not provided'}")
     print(f"   Password: {'*' * len(password) if password else 'Not provided'}")
     
+    # First, check if the base URL is reachable
+    print(f"\n🌐 Checking base URL: {base_url}")
+    try:
+        response = requests.get(base_url, timeout=10)
+        print(f"   Status: {response.status_code}")
+        print(f"   Headers: {dict(response.headers)}")
+        
+        # Try to detect what kind of server this is
+        if 'text/html' in response.headers.get('Content-Type', ''):
+            print("   Response appears to be HTML (web interface)")
+        elif 'application/json' in response.headers.get('Content-Type', ''):
+            print("   Response appears to be JSON (API)")
+            try:
+                data = response.json()
+                print(f"   JSON Response: {json.dumps(data, indent=2)[:500]}...")
+            except:
+                pass
+                
+    except Exception as e:
+        print(f"   Error accessing base URL: {str(e)}")
+    
     if not username or not password:
         print("\n⚠️  No credentials provided - some Open-WebUI instances don't require auth")
         print("   Attempting to access API without authentication...")
@@ -67,8 +88,41 @@ def test_authentication(base_url, username, password):
             print(f"❌ Failed to connect: {str(e)}")
             return False
     
-    # Try authentication
-    auth_url = f"{base_url}/api/v1/auths/signin"
+    # Try to find the correct authentication endpoint
+    print("\n🔍 Searching for authentication endpoint...")
+    
+    possible_auth_endpoints = [
+        "/api/v1/auths/signin",
+        "/api/v1/auth/signin",
+        "/api/auth/signin",
+        "/api/signin",
+        "/auth/signin",
+        "/api/v1/login",
+        "/api/login",
+        "/login",
+    ]
+    
+    auth_url = None
+    for endpoint in possible_auth_endpoints:
+        test_url = f"{base_url}{endpoint}"
+        try:
+            # Try POST with empty data to see if endpoint exists
+            test_response = requests.post(test_url, json={}, timeout=5)
+            if test_response.status_code in [400, 401, 422]:  # Bad request, unauthorized, or validation error means endpoint exists
+                print(f"   ✓ Found possible auth endpoint: {endpoint}")
+                auth_url = test_url
+                break
+            elif test_response.status_code == 200:
+                print(f"   ✓ Found auth endpoint (accepts empty data?): {endpoint}")
+                auth_url = test_url
+                break
+        except:
+            pass
+    
+    if not auth_url:
+        print("   ⚠️  Could not find auth endpoint, using default: /api/v1/auths/signin")
+        auth_url = f"{base_url}/api/v1/auths/signin"
+    
     print(f"\n🌐 POST {auth_url}")
     
     try:
@@ -141,22 +195,33 @@ def test_api_endpoints(base_url, token=None):
     if token:
         headers['Authorization'] = f"Bearer {token}"
     
-    endpoints = [
-        ("/api/v1/auths/", "Auth check"),
-        ("/api/v1/knowledge/", "Knowledge collections"),
-        ("/api/v1/models/", "Models"),
+    # Try different API path patterns
+    endpoint_patterns = [
+        # Pattern: (paths to try, description)
+        (["/api/v1/auths/", "/api/v1/auth/", "/api/auth/", "/auth/"], "Auth check"),
+        (["/api/v1/knowledge/", "/api/knowledge/", "/knowledge/"], "Knowledge collections"),
+        (["/api/v1/models/", "/api/models/", "/models/"], "Models"),
     ]
     
-    for endpoint, description in endpoints:
-        url = f"{base_url}{endpoint}"
-        try:
-            response = requests.get(url, headers=headers, timeout=10)
-            if response.status_code == 200:
-                print(f"✅ {description}: OK")
-            else:
-                print(f"❌ {description}: {response.status_code}")
-        except Exception as e:
-            print(f"❌ {description}: {str(e)}")
+    for path_options, description in endpoint_patterns:
+        found = False
+        for path in path_options:
+            url = f"{base_url}{path}"
+            try:
+                response = requests.get(url, headers=headers, timeout=5)
+                if response.status_code == 200:
+                    print(f"✅ {description}: OK (at {path})")
+                    found = True
+                    break
+                elif response.status_code == 401:
+                    print(f"⚠️  {description}: Unauthorized (at {path})")
+                    found = True
+                    break
+            except:
+                pass
+        
+        if not found:
+            print(f"❌ {description}: Not found at any standard path")
 
 def main():
     """Main test function"""
