@@ -11,11 +11,11 @@ def test_upload(workers=None):
     """Test upload with timing"""
     print(f"\n{'='*60}")
     if workers:
-        print(f"Testing PARALLEL upload with {workers} workers...")
-        cmd = [sys.executable, 'open-webui-parallel.py', '--format', 'txt', '--workers', str(workers)]
+        print(f"Testing PARALLEL upload with {workers} workers (test mode)...")
+        cmd = [sys.executable, 'open-webui-parallel.py', '--test-mode', '--workers', str(workers)]
     else:
-        print("Testing SEQUENTIAL upload...")
-        cmd = [sys.executable, 'open-webui.py', '--format', 'txt']
+        print("Testing SEQUENTIAL upload (test mode)...")
+        cmd = [sys.executable, 'open-webui.py', '--test-mode']
     
     print(f"Command: {' '.join(cmd)}")
     print(f"{'='*60}")

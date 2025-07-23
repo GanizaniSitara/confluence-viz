@@ -18,7 +18,7 @@ def run_benchmark(script: str, workers: int = None, spaces_limit: int = 2):
     if os.path.exists('openwebui_checkpoint.txt'):
         os.remove('openwebui_checkpoint.txt')
     
-    cmd = [sys.executable, script, '--format', 'txt']  # Text only for faster testing
+    cmd = [sys.executable, script, '--test-mode']  # Test mode automatically uses txt format
     if workers:
         cmd.extend(['--workers', str(workers)])
     
@@ -71,7 +71,8 @@ def main():
     # Make parallel script executable
     os.chmod('open-webui-parallel.py', 0o755)
     
-    print("\nThis benchmark will upload text format only for speed comparison")
+    print("\nThis benchmark will use test mode - creates temporary collections")
+    print("Each test run creates its own collection and cleans up afterward")
     print("Make sure your Open-WebUI instance is running and configured in settings.ini")
     
     input("\nPress Enter to start benchmark...")
