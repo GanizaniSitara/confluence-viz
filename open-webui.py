@@ -532,13 +532,16 @@ def load_openwebui_settings():
     
     config.read('settings.ini')
     
-    # Get Open-WebUI settings
-    if 'OpenWebUI' not in config:
-        logger.warning("No [OpenWebUI] section found in settings.ini")
+    # Handle both 'openwebui' and 'OpenWebUI' section names
+    if 'openwebui' in config:
+        openwebui_section = config['openwebui']
+    elif 'OpenWebUI' in config:
+        openwebui_section = config['OpenWebUI']
+    else:
+        logger.warning("No [openwebui] or [OpenWebUI] section found in settings.ini")
         return {}
     
     settings = {}
-    openwebui_section = config['OpenWebUI']
     
     # Load settings with fallbacks
     settings['base_url'] = openwebui_section.get('base_url', 'http://localhost:8080')
@@ -548,7 +551,7 @@ def load_openwebui_settings():
     settings['txt_collection'] = openwebui_section.get('txt_collection', None)
     
     # Don't use placeholder values
-    if settings['username'] == 'your_username':
+    if settings['username'] == 'your_username' or settings['username'] == 'your_email@example.com':
         settings['username'] = None
     if settings['password'] == 'your_password':
         settings['password'] = None
