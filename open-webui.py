@@ -985,7 +985,7 @@ def main():
     # Process files sequentially
     total_success = 0
     total_pages = 0
-    test_limit = args.test_limit if hasattr(args, 'test_limit') else 0
+    test_limit = args.test_limit if (hasattr(args, 'test_limit') and hasattr(args, 'test_mode') and args.test_mode) else 0
     pages_uploaded_so_far = 0
     
     safe_print(f"\n✅ Ready to upload {len(files_to_process)} space(s)")
