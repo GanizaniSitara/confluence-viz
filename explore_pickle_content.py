@@ -11,7 +11,7 @@ import numpy as np # Added import for numpy
 import sys # Added import for sys
 import re # ADDED
 from bs4 import BeautifulSoup # Ensured bs4 is imported
-from config_loader import load_confluence_settings, load_data_settings
+from config_loader import load_confluence_settings, load_data_settings, load_visualization_settings
 from utils.html_cleaner import clean_confluence_html
 
 # Load configurable pickle directory from settings
