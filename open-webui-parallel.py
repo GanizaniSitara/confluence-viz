@@ -416,10 +416,13 @@ def load_openwebui_settings():
     
     config.read(config_path)
     
-    if 'openwebui' not in config:
-        raise ValueError("No [openwebui] section found in settings.ini")
-    
-    settings = config['openwebui']
+    # Handle both 'openwebui' and 'OpenWebUI' section names
+    if 'openwebui' in config:
+        settings = config['openwebui']
+    elif 'OpenWebUI' in config:
+        settings = config['OpenWebUI']
+    else:
+        raise ValueError("No [openwebui] or [OpenWebUI] section found in settings.ini")
     required_fields = ['base_url', 'username', 'password']
     
     for field in required_fields:
