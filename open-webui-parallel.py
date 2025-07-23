@@ -627,6 +627,15 @@ Performance Tips:
     parser.add_argument('--pickle-dir', 
                        default=settings.get('upload_dir', 'temp'), 
                        help=f"Directory containing pickle files (default: {settings.get('upload_dir', 'temp')})")
+    parser.add_argument('--openwebui-server',
+                       default=settings.get('base_url', 'http://localhost:8080'),
+                       help=f"Open-WebUI server URL (default: {settings.get('base_url', 'http://localhost:8080')})")
+    parser.add_argument('--username',
+                       default=settings.get('username'),
+                       help=f"Username for authentication (default from settings: {settings.get('username', 'None')})")
+    parser.add_argument('--password',
+                       default=settings.get('password'),
+                       help='Password for authentication (default from settings.ini)')
     parser.add_argument('--resume', action='store_true',
                        help='Resume from last checkpoint')
     parser.add_argument('--clear-checkpoint', action='store_true',
@@ -677,9 +686,9 @@ Performance Tips:
     
     # Initialize client
     client = OpenWebUIClient(
-        settings['base_url'],
-        settings['username'],
-        settings['password']
+        args.openwebui_server,
+        args.username,
+        args.password
     )
     
     # Authenticate
