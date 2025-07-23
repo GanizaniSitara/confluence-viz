@@ -561,6 +561,12 @@ def load_openwebui_settings():
     settings['upload_dir'] = openwebui_section.get('upload_dir', 'temp')
     settings['txt_collection'] = openwebui_section.get('txt_collection', None)
     
+    # Don't use placeholder values
+    if settings['username'] == 'your_username' or settings['username'] == 'your_email@example.com':
+        settings['username'] = None
+    if settings['password'] == 'your_password':
+        settings['password'] = None
+    
     # Check required fields
     required_fields = ['base_url', 'username', 'password']
     for field in required_fields:
