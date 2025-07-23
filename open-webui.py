@@ -34,7 +34,16 @@ def safe_print(text: str):
             '🔄': '[~]',
             '📊': '[=]',
             'ℹ️': '[i]',
-            '⏭️': '[>>]'
+            '⏭️': '[>>]',
+            '🚪': '[DOOR]',
+            '🛪': '[HUT]',
+            '🏠': '[HOME]',
+            '🔍': '[SEARCH]',
+            '💾': '[SAVE]',
+            '🧪': '[TEST]',
+            '🧹': '[CLEAN]',
+            '📌': '[PIN]',
+            '🎉': '[PARTY]'
         }
         for emoji, ascii_text in replacements.items():
             text = text.replace(emoji, ascii_text)

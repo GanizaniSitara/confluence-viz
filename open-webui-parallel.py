@@ -46,6 +46,37 @@ def setup_logging(log_file='openwebui_upload_parallel.log'):
 
 logger = setup_logging()
 
+def safe_print(text: str):
+    """Print text, replacing emojis if the terminal doesn't support UTF-8"""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        # Replace common emojis with ASCII equivalents
+        replacements = {
+            '✅': '[OK]',
+            '❌': '[X]',
+            '⚠️': '[!]',
+            '📁': '[DIR]',
+            '📋': '[DOC]',
+            '🚀': '[>>]',
+            '🔄': '[~]',
+            '📊': '[=]',
+            'ℹ️': '[i]',
+            '⏭️': '[>>]',
+            '🚪': '[DOOR]',
+            '🛪': '[HUT]',
+            '🏠': '[HOME]',
+            '🔍': '[SEARCH]',
+            '💾': '[SAVE]',
+            '🧪': '[TEST]',
+            '🧹': '[CLEAN]',
+            '📌': '[PIN]',
+            '🎉': '[PARTY]'
+        }
+        for emoji, ascii_text in replacements.items():
+            text = text.replace(emoji, ascii_text)
+        print(text.encode('ascii', 'replace').decode('ascii'))
+
 def save_checkpoint(space_key: str, checkpoint_file: str = 'openwebui_checkpoint.txt'):
     """Save the last successfully uploaded space to checkpoint file"""
     try:
@@ -553,10 +584,10 @@ Examples:
     
     # Validate workers
     if args.workers < 1:
-        print("Error: --workers must be at least 1")
+        safe_print("Error: --workers must be at least 1")
         return 1
     if args.workers > 20:
-        print("Warning: Using more than 20 workers may overload the server")
+        safe_print("Warning: Using more than 20 workers may overload the server")
         response = input("Continue anyway? (y/n): ").strip().lower()
         if response != 'y':
             return 0
@@ -565,9 +596,9 @@ Examples:
     if args.clear_checkpoint:
         if os.path.exists('openwebui_checkpoint.txt'):
             os.remove('openwebui_checkpoint.txt')
-            print("✅ Checkpoint cleared")
+            safe_print("✅ Checkpoint cleared")
         else:
-            print("ℹ️ No checkpoint file found")
+            safe_print("ℹ️ No checkpoint file found")
         return 0
     
     # Initialize client
@@ -579,23 +610,23 @@ Examples:
     
     # Authenticate
     if not client.authenticate():
-        print("\n❌ Authentication failed. Please check your credentials in settings.ini")
+        safe_print("\n❌ Authentication failed. Please check your credentials in settings.ini")
         return 1
     
     if args.test_auth:
-        print("\n✅ Authentication successful!")
+        safe_print("\n✅ Authentication successful!")
         collections = client.get_knowledge_collections()
-        print(f"\nFound {len(collections)} knowledge collections:")
+        safe_print(f"\nFound {len(collections)} knowledge collections:")
         for coll in collections[:10]:  # Show first 10
-            print(f"  - {coll.get('name', 'Unnamed')} (ID: {coll.get('id', 'Unknown')})")
+            safe_print(f"  - {coll.get('name', 'Unnamed')} (ID: {coll.get('id', 'Unknown')})")
         if len(collections) > 10:
-            print(f"  ... and {len(collections) - 10} more")
+            safe_print(f"  ... and {len(collections) - 10} more")
         return 0
     
     # Handle test mode
     if args.test_mode:
         args.format = 'txt'  # Force text format
-        print("\n🧪 Test Mode: Creating temporary collection...")
+        safe_print("\n🧪 Test Mode: Creating temporary collection...")
         import time
         timestamp = int(time.time())
         test_collection_name = f"test_confluence_parallel_{timestamp}"
@@ -604,9 +635,9 @@ Examples:
             "Temporary collection for testing parallel Confluence upload"
         )
         if not test_collection_id:
-            print("❌ Failed to create test collection")
+            safe_print("❌ Failed to create test collection")
             return 1
-        print(f"✅ Created test collection: {test_collection_name}")
+        safe_print(f"✅ Created test collection: {test_collection_name}")
         
         # For test mode, use the temporary collection
         html_collection_id = test_collection_id
@@ -625,7 +656,7 @@ Examples:
                 "Confluence pages in HTML format"
             )
             if not html_collection_id:
-                print(f"❌ Failed to setup HTML collection: {html_collection_name}")
+                safe_print(f"❌ Failed to setup HTML collection: {html_collection_name}")
                 return 1
         
         if args.format in ['txt', 'both']:
@@ -635,7 +666,7 @@ Examples:
                 "Confluence pages in plain text format"
             )
             if not text_collection_id:
-                print(f"❌ Failed to setup text collection: {text_collection_name}")
+                safe_print(f"❌ Failed to setup text collection: {text_collection_name}")
                 return 1
         
         if args.format == 'path':
@@ -645,21 +676,21 @@ Examples:
                     "Confluence page navigation paths"
                 )
             else:
-                print("❌ --path-collection is required when using --format path")
+                safe_print("❌ --path-collection is required when using --format path")
                 return 1
     
     # Find pickle files
     pickle_dir = Path(args.pickle_dir)
     if not pickle_dir.exists():
-        print(f"❌ Pickle directory not found: {pickle_dir}")
+        safe_print(f"❌ Pickle directory not found: {pickle_dir}")
         return 1
     
     pickle_files = sorted(pickle_dir.glob("*.pkl"))
     if not pickle_files:
-        print(f"❌ No pickle files found in {pickle_dir}")
+        safe_print(f"❌ No pickle files found in {pickle_dir}")
         return 1
     
-    print(f"\n📁 Found {len(pickle_files)} pickle files in {pickle_dir}")
+    safe_print(f"\n📁 Found {len(pickle_files)} pickle files in {pickle_dir}")
     
     # Handle resume
     last_processed = None
@@ -675,23 +706,23 @@ Examples:
                 files_to_process.append(pf)
             elif pf.stem == last_processed or pf.stem == f"{last_processed}_full":
                 found = True
-                print(f"📌 Resuming after {last_processed}")
+                safe_print(f"📌 Resuming after {last_processed}")
         
         if not found:
-            print(f"⚠️ Checkpoint space '{last_processed}' not found, starting from beginning")
+            safe_print(f"⚠️ Checkpoint space '{last_processed}' not found, starting from beginning")
             files_to_process = pickle_files
     else:
         files_to_process = pickle_files
     
     if not files_to_process:
         logger.info("No files to process")
-        print("\n✅ All spaces have already been processed!")
+        safe_print("\n✅ All spaces have already been processed!")
         return 0
     
-    print(f"\n✅ Ready to upload {len(files_to_process)} space(s) using {args.workers} parallel workers")
+    safe_print(f"\n✅ Ready to upload {len(files_to_process)} space(s) using {args.workers} parallel workers")
     test_limit = args.test_limit if hasattr(args, 'test_limit') else 0
     if test_limit > 0:
-        print(f"🧪 Test mode: Limited to {test_limit} pages total")
+        safe_print(f"🧪 Test mode: Limited to {test_limit} pages total")
     logger.info(f"🚀 Starting parallel upload: {len(files_to_process)} spaces with {args.workers} workers")
     logger.info(f"📋 Upload settings: format={args.format}, workers={args.workers}")
     
@@ -723,7 +754,7 @@ Examples:
             # Check test limit
             if test_limit > 0 and pages_uploaded_so_far >= test_limit:
                 logger.info(f"Test limit reached ({test_limit} pages). Stopping.")
-                print(f"\n✅ Test limit reached ({test_limit} pages uploaded)")
+                safe_print(f"\n✅ Test limit reached ({test_limit} pages uploaded)")
                 break
             
             # If test limit is set, adjust pickle data to only include pages up to the limit
@@ -762,23 +793,23 @@ Examples:
     overall_elapsed = time.time() - overall_start
     overall_pages_per_second = total_success / overall_elapsed if overall_elapsed > 0 else 0
     
-    print("\n" + "="*60)
-    print("📊 UPLOAD COMPLETE - STATISTICS")
-    print("="*60)
-    print(f"Total spaces processed: {len(files_to_process)}")
-    print(f"Total pages uploaded: {total_success}/{total_pages}")
-    print(f"Failed uploads: {upload_stats['failed']}")
-    print(f"Total time: {overall_elapsed:.2f} seconds")
-    print(f"Average speed: {overall_pages_per_second:.2f} pages/second")
-    print(f"Parallel workers used: {args.workers}")
+    safe_print("\n" + "="*60)
+    safe_print("📊 UPLOAD COMPLETE - STATISTICS")
+    safe_print("="*60)
+    safe_print(f"Total spaces processed: {len(files_to_process)}")
+    safe_print(f"Total pages uploaded: {total_success}/{total_pages}")
+    safe_print(f"Failed uploads: {upload_stats['failed']}")
+    safe_print(f"Total time: {overall_elapsed:.2f} seconds")
+    safe_print(f"Average speed: {overall_pages_per_second:.2f} pages/second")
+    safe_print(f"Parallel workers used: {args.workers}")
     
     # Clean up test collection if in test mode
     if args.test_mode and 'test_collection_id' in locals():
-        print("\n🧹 Cleaning up test collection...")
+        safe_print("\n🧹 Cleaning up test collection...")
         if client.delete_collection(test_collection_id):
-            print("✅ Test collection deleted successfully")
+            safe_print("✅ Test collection deleted successfully")
         else:
-            print("⚠️  Failed to delete test collection - please clean up manually")
+            safe_print("⚠️  Failed to delete test collection - please clean up manually")
     
     if total_success < total_pages:
         logger.warning(f"⚠️ Some uploads failed. Check the log for details.")
