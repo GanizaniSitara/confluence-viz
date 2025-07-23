@@ -128,7 +128,7 @@ class OpenWebUIClient:
             response = self.session.post(auth_url, json={
                 "email": self.username,
                 "password": self.password
-            }, timeout=10)
+            }, timeout=30)
             logger.debug(f"AUTH RESPONSE [{response.status_code}]: {response.text}")
             
             if response.status_code != 200:
@@ -162,8 +162,8 @@ class OpenWebUIClient:
             return True
             
         except requests.exceptions.Timeout:
-            logger.error("Authentication timeout - server did not respond within 10 seconds")
-            safe_print("❌ Authentication failed: Server timeout")
+            logger.error("Authentication timeout - server did not respond within 30 seconds")
+            safe_print("❌ Authentication failed: Server timeout (30s)")
             return False
         except Exception as e:
             logger.error(f"Authentication error: {e}")
@@ -179,7 +179,7 @@ class OpenWebUIClient:
         # Then test with a simple API call
         test_url = f"{self.base_url}/api/v1/auths/"
         try:
-            response = self.session.get(test_url, timeout=10)
+            response = self.session.get(test_url, timeout=30)
             return response.status_code == 200
         except Exception as e:
             logger.error(f"Auth test failed: {e}")
