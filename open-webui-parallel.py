@@ -642,7 +642,6 @@ Performance Tips:
     if args.test_mode:
         args.format = 'txt'  # Force text format
         safe_print("\n🧪 Test Mode: Creating temporary collection...")
-        import time
         timestamp = int(time.time())
         test_collection_name = f"test_confluence_parallel_{timestamp}"
         test_collection_id = client.create_collection(
