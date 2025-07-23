@@ -708,6 +708,7 @@ Performance Tips:
         return 1
     
     safe_print(f"\n📁 Found {len(pickle_files)} pickle files in {pickle_dir}")
+    logger.info(f"Pickle files found: {[pf.name for pf in pickle_files[:5]]}...")  # Log first 5 files
     
     # Handle resume
     last_processed = None
@@ -737,9 +738,12 @@ Performance Tips:
         return 0
     
     safe_print(f"\n✅ Ready to upload {len(files_to_process)} space(s) using {args.workers} parallel workers")
+    logger.info(f"Files to process: {[f.name for f in files_to_process]}")
     test_limit = args.test_limit if (hasattr(args, 'test_limit') and args.test_mode) else 0
     if test_limit > 0:
         safe_print(f"🧪 Test mode: Limited to {test_limit} pages total")
+    else:
+        safe_print(f"📚 Normal mode: Processing ALL pages from ALL spaces")
     logger.info(f"🚀 Starting parallel upload: {len(files_to_process)} spaces with {args.workers} workers")
     logger.info(f"📋 Upload settings: format={args.format}, workers={args.workers}")
     
@@ -767,6 +771,9 @@ Performance Tips:
             space_key = pickle_data.get('space_key', 'UNKNOWN')
             space_name = pickle_data.get('name', 'Unknown Space')
             page_count = len(pickle_data.get('sampled_pages', []))
+            
+            logger.info(f"Space {space_name} has {page_count} pages in sampled_pages")
+            safe_print(f"📄 Space '{space_name}' contains {page_count} pages")
             
             # Check test limit
             if test_limit > 0 and pages_uploaded_so_far >= test_limit:
