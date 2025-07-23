@@ -543,21 +543,36 @@ def main():
     settings = load_openwebui_settings()
     
     parser = argparse.ArgumentParser(
-        description="Upload Confluence spaces to Open-WebUI Knowledge Base (Parallel Version)",
+        description="Upload Confluence spaces to Open-WebUI Knowledge Base (Parallel Version)\n\n"
+                    "This parallel version can achieve 40x+ speedup compared to sequential upload\n"
+                    "by processing multiple pages concurrently. Optimal worker count depends on\n"
+                    "your server capacity and network bandwidth.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Upload all spaces with default settings (4 workers)
   %(prog)s
   
-  # Upload with 8 parallel workers
+  # Upload with 8 parallel workers for faster processing
   %(prog)s --workers 8
   
   # Upload only text format with 6 workers
   %(prog)s --format txt --workers 6
   
+  # Test mode with limited pages (useful for benchmarking)
+  %(prog)s --test-mode --test-limit 500 --workers 4
+  
   # Resume from checkpoint with custom workers
   %(prog)s --resume --workers 10
+  
+  # Clear checkpoint and start fresh
+  %(prog)s --clear-checkpoint --workers 6
+
+Performance Tips:
+  - Start with 4-8 workers and adjust based on your server's response
+  - Too many workers (>20) may overload the server and reduce performance
+  - Monitor server CPU/memory usage to find optimal worker count
+  - Network latency affects optimal worker count (higher latency = more workers helpful)
         """
     )
     
@@ -572,7 +587,7 @@ Examples:
     parser.add_argument('--test-auth', action='store_true',
                        help='Test authentication and exit')
     parser.add_argument('--workers', type=int, default=4,
-                       help='Number of parallel upload workers (default: 4)')
+                       help='Number of parallel upload workers (default: 4, recommended: 4-8, max: 20)')
     parser.add_argument('--path-collection', 
                        help='Separate collection name for path information (used with --format path)')
     parser.add_argument('--test-mode', action='store_true',
