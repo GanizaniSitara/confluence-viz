@@ -982,17 +982,17 @@ def main():
         safe_print("\n✅ All spaces have already been processed!")
         return 0
     
-    safe_print(f"\n✅ Ready to upload {len(files_to_process)} space(s)")
-    if test_limit > 0:
-        safe_print(f"🧪 Test mode: Limited to {test_limit} pages total")
-    logger.info(f"🚀 Starting upload: {len(files_to_process)} spaces")
-    logger.info(f"📋 Upload settings: format={args.format}, inspect={args.inspect}, interactive={args.interactive}")
-    
     # Process files sequentially
     total_success = 0
     total_pages = 0
     test_limit = args.test_limit if hasattr(args, 'test_limit') else 0
     pages_uploaded_so_far = 0
+    
+    safe_print(f"\n✅ Ready to upload {len(files_to_process)} space(s)")
+    if test_limit > 0:
+        safe_print(f"🧪 Test mode: Limited to {test_limit} pages total")
+    logger.info(f"🚀 Starting upload: {len(files_to_process)} spaces")
+    logger.info(f"📋 Upload settings: format={args.format}, inspect={args.inspect}, interactive={args.interactive}")
     
     for i, pickle_file in enumerate(files_to_process, 1):
         logger.info(f"Processing space {i}/{len(files_to_process)}: {pickle_file.name}")
