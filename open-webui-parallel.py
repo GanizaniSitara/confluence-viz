@@ -72,29 +72,63 @@ class OpenWebUIClient:
     
     def __init__(self, base_url: str, username: str, password: str):
         self.base_url = base_url.rstrip('/')
+        self.username = username
+        self.password = password
         self.session = requests.Session()
-        self.session.auth = HTTPBasicAuth(username, password)
         self.session.headers.update({
             'User-Agent': 'Confluence-WebUI-Uploader/1.0'
         })
+        self.auth_token = None
         logger.info(f"Initialized Open-WebUI client for {self.base_url}")
     
+    def authenticate(self) -> bool:
+        """Authenticate with Open-WebUI and get auth token"""
+        if not self.username or not self.password:
+            logger.info("No credentials provided, skipping authentication")
+            return True
+            
+        auth_url = f"{self.base_url}/api/v1/auths/signin"
+        logger.debug(f"Authenticating with {auth_url}")
+        
+        try:
+            response = self.session.post(auth_url, json={
+                "email": self.username,
+                "password": self.password
+            }, timeout=10)
+            
+            if response.status_code != 200:
+                logger.error(f"Authentication failed: HTTP {response.status_code}")
+                return False
+            
+            data = response.json()
+            self.auth_token = data.get("token")
+            
+            if not self.auth_token:
+                logger.error("No auth token received")
+                return False
+            
+            # Update session headers with auth token
+            self.session.headers.update({"Authorization": f"Bearer {self.auth_token}"})
+            logger.info("Authentication successful")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Authentication error: {e}")
+            return False
+    
     def test_auth(self) -> bool:
-        """Test authentication with a simple API call"""
+        """Test if authentication is working"""
+        # First authenticate if we haven't already
+        if not self.auth_token and not self.authenticate():
+            return False
+        
+        # Then test with a simple API call
         test_url = f"{self.base_url}/api/v1/auths/"
         try:
             response = self.session.get(test_url, timeout=10)
-            if response.status_code == 401:
-                logger.error("Authentication failed - check username/password")
-                return False
-            elif response.status_code == 200:
-                logger.info("Authentication successful")
-                return True
-            else:
-                logger.warning(f"Unexpected status code: {response.status_code}")
-                return True  # Proceed anyway
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to connect to Open-WebUI: {e}")
+            return response.status_code == 200
+        except Exception as e:
+            logger.error(f"Auth test failed: {e}")
             return False
     
     def get_knowledge_collections(self) -> List[Dict[str, Any]]:
@@ -278,12 +312,28 @@ def process_confluence_page(page: Dict, space_key: str, space_name: str) -> Tupl
     
     return path_content, html_content, text_content
 
-def upload_page_worker(args: Tuple[Dict, str, str, OpenWebUIClient, str, str, str, str]) -> Dict:
+def upload_page_worker(args: Tuple[Dict, str, str, str, str, str, str, str, Dict]) -> Dict:
     """
     Worker function to upload a single page
     Returns dict with upload results
     """
-    page, space_key, space_name, client, html_collection_id, text_collection_id, path_collection_id, format_choice = args
+    page, space_key, space_name, html_collection_id, text_collection_id, path_collection_id, format_choice, client_config = args
+    
+    # Create a new client instance for this worker thread
+    client = OpenWebUIClient(
+        client_config['base_url'],
+        client_config['username'],
+        client_config['password']
+    )
+    
+    # Authenticate the client
+    if not client.authenticate():
+        return {
+            'page_id': page.get('id', 'unknown'),
+            'title': page.get('title', 'Untitled'),
+            'success': False,
+            'errors': ['Authentication failed']
+        }
     
     page_id = page.get('id', 'unknown')
     title = page.get('title', 'Untitled')
@@ -362,9 +412,16 @@ def upload_confluence_space_parallel(client: OpenWebUIClient, pickle_data: Dict,
     
     logger.info(f"Processing {len(sampled_pages)} pages from space '{space_name}' ({space_key}) with {max_workers} workers")
     
+    # Create client config to pass to workers
+    client_config = {
+        'base_url': client.base_url,
+        'username': client.username,
+        'password': client.password
+    }
+    
     # Prepare work items
     work_items = [
-        (page, space_key, space_name, client, html_collection, text_collection, path_collection, format_choice)
+        (page, space_key, space_name, html_collection, text_collection, path_collection, format_choice, client_config)
         for page in sampled_pages
     ]
     
@@ -498,8 +555,8 @@ Examples:
         settings['password']
     )
     
-    # Test authentication
-    if not client.test_auth():
+    # Authenticate
+    if not client.authenticate():
         print("\n❌ Authentication failed. Please check your credentials in settings.ini")
         return 1
     
