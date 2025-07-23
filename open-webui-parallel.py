@@ -734,7 +734,7 @@ Performance Tips:
         return 0
     
     safe_print(f"\n✅ Ready to upload {len(files_to_process)} space(s) using {args.workers} parallel workers")
-    test_limit = args.test_limit if hasattr(args, 'test_limit') else 0
+    test_limit = args.test_limit if (hasattr(args, 'test_limit') and args.test_mode) else 0
     if test_limit > 0:
         safe_print(f"🧪 Test mode: Limited to {test_limit} pages total")
     logger.info(f"🚀 Starting parallel upload: {len(files_to_process)} spaces with {args.workers} workers")
