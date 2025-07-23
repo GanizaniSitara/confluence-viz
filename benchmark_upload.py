@@ -22,14 +22,25 @@ def run_benchmark(script: str, workers: int = None, spaces_limit: int = 2):
     if workers:
         cmd.extend(['--workers', str(workers)])
     
+    print(f"Running command: {' '.join(cmd)}")
     start_time = time.time()
     
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # 5 min timeout
         elapsed = time.time() - start_time
         
         print(f"Exit code: {result.returncode}")
         print(f"Total time: {elapsed:.2f} seconds")
+        
+        # Show stderr if there are errors
+        if result.stderr:
+            print(f"STDERR: {result.stderr[:500]}...")
+        
+        # Show last part of stdout for debugging
+        if not result.stdout:
+            print("No stdout output received!")
+        else:
+            print(f"Output preview (last 500 chars): ...{result.stdout[-500:]}")
         
         # Extract statistics from output
         output_lines = result.stdout.split('\n')
