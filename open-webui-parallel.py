@@ -546,6 +546,8 @@ Examples:
                        help='Separate collection name for path information (used with --format path)')
     parser.add_argument('--test-mode', action='store_true',
                        help='Test mode: create temporary collection, upload TXT, delete (forces --format txt)')
+    parser.add_argument('--test-limit', type=int, default=0,
+                       help='Limit total pages to upload in test mode (0 = no limit)')
     
     args = parser.parse_args()
     
@@ -687,6 +689,9 @@ Examples:
         return 0
     
     print(f"\n✅ Ready to upload {len(files_to_process)} space(s) using {args.workers} parallel workers")
+    test_limit = args.test_limit if hasattr(args, 'test_limit') else 0
+    if test_limit > 0:
+        print(f"🧪 Test mode: Limited to {test_limit} pages total")
     logger.info(f"🚀 Starting parallel upload: {len(files_to_process)} spaces with {args.workers} workers")
     logger.info(f"📋 Upload settings: format={args.format}, workers={args.workers}")
     
@@ -698,6 +703,7 @@ Examples:
     # Process files
     total_success = 0
     total_pages = 0
+    pages_uploaded_so_far = 0
     overall_start = time.time()
     
     for i, pickle_file in enumerate(files_to_process, 1):
@@ -714,6 +720,20 @@ Examples:
             space_name = pickle_data.get('name', 'Unknown Space')
             page_count = len(pickle_data.get('sampled_pages', []))
             
+            # Check test limit
+            if test_limit > 0 and pages_uploaded_so_far >= test_limit:
+                logger.info(f"Test limit reached ({test_limit} pages). Stopping.")
+                print(f"\n✅ Test limit reached ({test_limit} pages uploaded)")
+                break
+            
+            # If test limit is set, adjust pickle data to only include pages up to the limit
+            if test_limit > 0:
+                remaining_pages = test_limit - pages_uploaded_so_far
+                if remaining_pages < page_count:
+                    logger.info(f"Limiting pages in this space to {remaining_pages} (test limit)")
+                    pickle_data['sampled_pages'] = pickle_data['sampled_pages'][:remaining_pages]
+                    page_count = remaining_pages
+            
             logger.info(f"🔄 Processing space '{space_name}' ({space_key}) with {page_count} pages")
             
             success_count, user_quit = upload_confluence_space_parallel(
@@ -721,6 +741,8 @@ Examples:
                 path_collection=path_collection_id,
                 format_choice=args.format, max_workers=args.workers
             )
+            
+            pages_uploaded_so_far += success_count
             
             total_success += success_count
             total_pages += page_count
