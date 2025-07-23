@@ -563,6 +563,13 @@ def main():
     # Load settings first
     settings = load_openwebui_settings()
     
+    # Log loaded settings (mask password)
+    logger.info("Loaded settings from settings.ini:")
+    logger.info(f"  base_url: {settings.get('base_url')}")
+    logger.info(f"  username: {settings.get('username')}")
+    logger.info(f"  password: {'*' * len(settings.get('password', '')) if settings.get('password') else 'None'}")
+    logger.info(f"  upload_dir: {settings.get('upload_dir')}")
+    
     parser = argparse.ArgumentParser(
         description="Upload Confluence pickles to Open-WebUI knowledge spaces"
     )
