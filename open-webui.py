@@ -661,6 +661,9 @@ def main():
     # Handle test mode from command line
     if hasattr(args, 'test_mode') and args.test_mode:
         args.format = 'txt'  # Force text format for test mode
+        # Set default test limit if not specified
+        if not hasattr(args, 'test_limit') or args.test_limit == 0:
+            args.test_limit = 500
         logger.info("Test mode enabled - forcing text format")
     
     # Show interactive menu if no specific mode is selected
@@ -843,6 +846,9 @@ def main():
             args.format = 'txt'  # Force text format for test mode
             args.inspect = False
             args.interactive = False
+            # Set default test limit if not specified
+            if not hasattr(args, 'test_limit') or args.test_limit == 0:
+                args.test_limit = 500
             safe_print("\n🧪 Test Mode Selected")
             safe_print("   Will create temporary collection for testing")
             safe_print("   Upload text format only")
