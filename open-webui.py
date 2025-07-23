@@ -545,6 +545,7 @@ def load_openwebui_settings():
     settings['username'] = openwebui_section.get('username', None)
     settings['password'] = openwebui_section.get('password', None)
     settings['upload_dir'] = openwebui_section.get('upload_dir', None)
+    settings['txt_collection'] = openwebui_section.get('txt_collection', None)
     
     # Don't use placeholder values
     if settings['username'] == 'your_username':
@@ -569,6 +570,7 @@ def main():
     logger.info(f"  username: {settings.get('username')}")
     logger.info(f"  password: {'*' * len(settings.get('password', '')) if settings.get('password') else 'None'}")
     logger.info(f"  upload_dir: {settings.get('upload_dir')}")
+    logger.info(f"  txt_collection: {settings.get('txt_collection')}")
     
     parser = argparse.ArgumentParser(
         description="Upload Confluence pickles to Open-WebUI knowledge spaces"
@@ -595,8 +597,8 @@ def main():
     )
     parser.add_argument(
         "--text-collection", 
-        default="CONF-TXT",
-        help="Knowledge collection name for text versions (default: CONF-TXT)"
+        default=settings.get('txt_collection', 'CONF-TXT'),
+        help=f"Knowledge collection name for text versions (default: {settings.get('txt_collection', 'CONF-TXT')})"
     )
     parser.add_argument(
         "--path-collection", 

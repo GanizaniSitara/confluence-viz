@@ -559,6 +559,7 @@ def load_openwebui_settings():
     settings['username'] = openwebui_section.get('username')
     settings['password'] = openwebui_section.get('password')
     settings['upload_dir'] = openwebui_section.get('upload_dir', 'temp')
+    settings['txt_collection'] = openwebui_section.get('txt_collection', None)
     
     # Check required fields
     required_fields = ['base_url', 'username', 'password']
@@ -579,6 +580,7 @@ def main():
     logger.info(f"  username: {settings.get('username')}")
     logger.info(f"  password: {'*' * len(settings.get('password', '')) if settings.get('password') else 'None'}")
     logger.info(f"  upload_dir: {settings.get('upload_dir')}")
+    logger.info(f"  txt_collection: {settings.get('txt_collection')}")
     
     parser = argparse.ArgumentParser(
         description="Upload Confluence spaces to Open-WebUI Knowledge Base (Parallel Version)\n\n"
@@ -728,7 +730,7 @@ Performance Tips:
                 return 1
         
         if args.format in ['txt', 'both']:
-            text_collection_name = settings.get('text_collection', 'confluence_text')
+            text_collection_name = settings.get('txt_collection', 'CONF-TXT')
             text_collection_id = client.ensure_collection_exists(
                 text_collection_name, 
                 "Confluence pages in plain text format"
