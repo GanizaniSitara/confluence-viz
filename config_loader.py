@@ -48,7 +48,8 @@ def load_visualization_settings(config_path='settings.ini'):
     #Set default values for visualization section only
     config['visualization'] = {
         'default_clusters': '20',
-        'default_min_pages': '5'
+        'default_min_pages': '5',
+        'spaces_dir': 'temp/full_pickles'
     }
     
     # Override with values from config file if it exists
