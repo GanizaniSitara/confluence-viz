@@ -7,15 +7,15 @@ import sys
 import time
 import os
 
-def test_upload(workers=None):
+def test_upload(workers=None, pages_limit=500):
     """Test upload with timing"""
     print(f"\n{'='*60}")
     if workers:
-        print(f"Testing PARALLEL upload with {workers} workers (test mode)...")
-        cmd = [sys.executable, 'open-webui-parallel.py', '--test-mode', '--workers', str(workers)]
+        print(f"Testing PARALLEL upload with {workers} workers (test mode, limit: {pages_limit} pages)...")
+        cmd = [sys.executable, 'open-webui-parallel.py', '--test-mode', '--test-limit', str(pages_limit), '--workers', str(workers)]
     else:
-        print("Testing SEQUENTIAL upload (test mode)...")
-        cmd = [sys.executable, 'open-webui.py', '--test-mode']
+        print(f"Testing SEQUENTIAL upload (test mode, limit: {pages_limit} pages)...")
+        cmd = [sys.executable, 'open-webui.py', '--test-mode', '--test-limit', str(pages_limit)]
     
     print(f"Command: {' '.join(cmd)}")
     print(f"{'='*60}")
@@ -52,6 +52,7 @@ def main():
     print("Upload Speed Test")
     print("=" * 60)
     print("\nThis will upload text format to Open-WebUI")
+    print("LIMITED TO 500 PAGES PER TEST for reasonable runtime")
     print("Make sure your settings.ini is configured correctly")
     
     # Test sequential first
