@@ -273,6 +273,48 @@ class OpenWebUIClient:
         else:
             logger.error(f"Collection '{name}' not found! Available collections: {list(collections.keys())}")
             return None
+    
+    def create_collection(self, name: str, description: str = "") -> Optional[str]:
+        """Create a new knowledge collection"""
+        url = f"{self.base_url}/api/v1/knowledge/create"
+        data = {
+            "name": name,
+            "description": description
+        }
+        
+        try:
+            response = self.session.post(url, json=data)
+            if response.status_code in [200, 201]:
+                result = response.json()
+                collection_id = result.get('id')
+                logger.info(f"Created collection '{name}' with ID: {collection_id}")
+                return collection_id
+            else:
+                logger.error(f"Failed to create collection: HTTP {response.status_code}")
+                if response.text:
+                    logger.error(f"Response: {response.text}")
+                return None
+        except Exception as e:
+            logger.error(f"Error creating collection: {e}")
+            return None
+    
+    def delete_collection(self, collection_id: str) -> bool:
+        """Delete a knowledge collection"""
+        url = f"{self.base_url}/api/v1/knowledge/{collection_id}/delete"
+        
+        try:
+            response = self.session.delete(url)
+            if response.status_code in [200, 204]:
+                logger.info(f"Deleted collection ID: {collection_id}")
+                return True
+            else:
+                logger.error(f"Failed to delete collection: HTTP {response.status_code}")
+                if response.text:
+                    logger.error(f"Response: {response.text}")
+                return False
+        except Exception as e:
+            logger.error(f"Error deleting collection: {e}")
+            return False
 
 def find_pickle_files(pickle_dir: str) -> List[Path]:
     """
@@ -580,6 +622,11 @@ def main():
         default='both',
         help="Format to upload: path (location info only), html, txt, or both (default: both)"
     )
+    parser.add_argument(
+        "--test-mode",
+        action="store_true",
+        help="Test mode: create temporary collection, upload, then delete collection (TXT format only)"
+    )
     
     args = parser.parse_args()
     
@@ -594,6 +641,11 @@ def main():
     if args.interactive and not args.inspect:
         args.inspect = True
         logger.info("Enabling document inspection for interactive mode")
+    
+    # Handle test mode from command line
+    if hasattr(args, 'test_mode') and args.test_mode:
+        args.format = 'txt'  # Force text format for test mode
+        logger.info("Test mode enabled - forcing text format")
     
     # Show interactive menu if no specific mode is selected
     # Skip menu if format is explicitly set via command line
@@ -615,9 +667,10 @@ def main():
         safe_print("  6. Upload text format only")
         safe_print("  7. Clear checkpoint and start fresh")
         safe_print("  8. Test authentication only")
+        safe_print("  9. Test mode (create temp collection, upload TXT, delete)")
         safe_print("  q. Quit")
         
-        choice = input("\nSelect mode (1-8 or q): ").strip().lower()
+        choice = input("\nSelect mode (1-9 or q): ").strip().lower()
         
         if choice == 'q':
             safe_print("Exiting...")
@@ -768,6 +821,16 @@ def main():
                 safe_print("4. Some Open-WebUI instances may have API authentication disabled")
             
             return 0
+        elif choice == '9':
+            # Test mode
+            args.test_mode = True
+            args.format = 'txt'  # Force text format for test mode
+            args.inspect = False
+            args.interactive = False
+            safe_print("\n🧪 Test Mode Selected")
+            safe_print("   Will create temporary collection for testing")
+            safe_print("   Upload text format only")
+            safe_print("   Collection will be deleted after upload")
         else:
             safe_print("Invalid choice, using standard upload mode")
             args.inspect = False
@@ -809,29 +872,50 @@ def main():
         logger.error("Authentication failed")
         return 1
     
-    # Find existing knowledge collections
-    logger.info("Finding existing knowledge collections...")
-    safe_print(f"\n🔍 Looking for knowledge collections...")
-    html_collection_id = client.find_existing_collection(args.html_collection)
-    text_collection_id = client.find_existing_collection(args.text_collection)
-    
-    # Handle path collection if specified
-    path_collection_id = None
-    if args.format == 'path' and hasattr(args, 'path_collection') and args.path_collection:
-        path_collection_id = client.find_existing_collection(args.path_collection)
-        if not path_collection_id:
-            safe_print(f"⚠️  Path collection '{args.path_collection}' not found, will use text collection")
-            path_collection_id = text_collection_id
+    # Handle test mode - create temporary collection
+    test_collection_id = None
+    if hasattr(args, 'test_mode') and args.test_mode:
+        safe_print("\n🧪 Test Mode: Creating temporary collection...")
+        import time
+        timestamp = int(time.time())
+        test_collection_name = f"test_confluence_{timestamp}"
+        test_collection_id = client.create_collection(
+            test_collection_name,
+            "Temporary collection for testing Confluence upload"
+        )
+        if not test_collection_id:
+            safe_print("❌ Failed to create test collection")
+            return 1
+        safe_print(f"✅ Created test collection: {test_collection_name}")
+        
+        # For test mode, use the temporary collection for text uploads
+        html_collection_id = test_collection_id  # Won't be used since we force txt format
+        text_collection_id = test_collection_id
+        path_collection_id = test_collection_id
     else:
-        path_collection_id = text_collection_id
-    
-    if not html_collection_id or not text_collection_id:
-        logger.error("Required knowledge collections not found!")
-        safe_print("\n❌ ERROR: Required knowledge collections not found!")
-        safe_print(f"   Please ensure these collections exist in Open-WebUI:")
-        safe_print(f"   - HTML collection: {args.html_collection}")
-        safe_print(f"   - Text collection: {args.text_collection}")
-        return 1
+        # Find existing knowledge collections
+        logger.info("Finding existing knowledge collections...")
+        safe_print(f"\n🔍 Looking for knowledge collections...")
+        html_collection_id = client.find_existing_collection(args.html_collection)
+        text_collection_id = client.find_existing_collection(args.text_collection)
+        
+        # Handle path collection if specified
+        path_collection_id = None
+        if args.format == 'path' and hasattr(args, 'path_collection') and args.path_collection:
+            path_collection_id = client.find_existing_collection(args.path_collection)
+            if not path_collection_id:
+                safe_print(f"⚠️  Path collection '{args.path_collection}' not found, will use text collection")
+                path_collection_id = text_collection_id
+        else:
+            path_collection_id = text_collection_id
+        
+        if not html_collection_id or not text_collection_id:
+            logger.error("Required knowledge collections not found!")
+            safe_print("\n❌ ERROR: Required knowledge collections not found!")
+            safe_print(f"   Please ensure these collections exist in Open-WebUI:")
+            safe_print(f"   - HTML collection: {args.html_collection}")
+            safe_print(f"   - Text collection: {args.text_collection}")
+            return 1
     
     safe_print(f"✅ Found required collections:")
     safe_print(f"   - HTML: {args.html_collection}")
@@ -920,6 +1004,13 @@ def main():
             if user_quit:
                 logger.info("User requested quit - exiting upload process")
                 safe_print("\n❌ Upload process terminated by user")
+                # Clean up test collection if in test mode
+                if hasattr(args, 'test_mode') and args.test_mode and test_collection_id:
+                    safe_print("\n🧹 Cleaning up test collection before exit...")
+                    if client.delete_collection(test_collection_id):
+                        safe_print("✅ Test collection deleted successfully")
+                    else:
+                        safe_print("⚠️  Failed to delete test collection - please clean up manually")
                 break
             
             # Save checkpoint after successful upload
@@ -937,6 +1028,14 @@ def main():
     # Clear checkpoint on successful completion
     if total_success == total_pages:
         clear_checkpoint()
+    
+    # Clean up test collection if in test mode
+    if hasattr(args, 'test_mode') and args.test_mode and test_collection_id:
+        safe_print("\n🧹 Cleaning up test collection...")
+        if client.delete_collection(test_collection_id):
+            safe_print("✅ Test collection deleted successfully")
+        else:
+            safe_print("⚠️  Failed to delete test collection - please clean up manually")
     
     if total_success < total_pages:
         logger.warning(f"{total_pages - total_success} pages failed to upload")
