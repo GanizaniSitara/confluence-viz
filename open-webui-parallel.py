@@ -381,7 +381,7 @@ def process_confluence_page(page: Dict, space_key: str, space_name: str) -> Tupl
     
     # Text content - clean HTML
     text_content = f"{title}\n{'=' * len(title)}\n\n"
-    text_content += f"Space: {space_name}\n"
+    text_content += f"Space: {space_name}\n\n"  # Double newline to ensure line break persists
     text_content += f"Path: {' > '.join(path_parts)}\n"
     text_content += "\n" + "-" * 60 + "\n\n"  # Add separator line before body
     
