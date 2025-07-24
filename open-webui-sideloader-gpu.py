@@ -24,6 +24,7 @@ from utils.html_cleaner import clean_confluence_html
 
 # ------ DEFAULT CONFIGURATION ------
 DEFAULT_PICKLE_DIR = "./temp"  # e.g. /mnt/data/pickles
+DEFAULT_OLLAMA_HOST = "http://localhost:11434"  # e.g. http://192.168.1.100:11434
 DEFAULT_KNOWLEDGE_ID = "d357bd23-5eee-46c1-b09a-488cd90e4ba2"
 DEFAULT_DB_HOST = "localhost"
 DEFAULT_DB_PORT = 5432
@@ -201,6 +202,8 @@ def main():
                         help="Ollama model name for embedding (e.g. nomic-embed-text)")
     parser.add_argument("--pad-embeddings", type=bool, default=DEFAULT_PAD_EMBEDDINGS,
                         help="Pad embeddings with zeros if dimension mismatch")
+    parser.add_argument("--ollama-host", default=DEFAULT_OLLAMA_HOST,
+                        help=f"Ollama API host URL (default: {DEFAULT_OLLAMA_HOST})")
     args = parser.parse_args()
 
     # Connect to DB and check vector dimension
@@ -208,11 +211,14 @@ def main():
     db_dim = get_db_vector_dim(conn)
     print(f"PGVector expects {db_dim}-dim vectors.")
 
+    # Configure Ollama client with the specified host
+    ollama_client = ollama.Client(host=args.ollama_host)
+    
     # Check if Ollama model is available
-    print(f"Checking Ollama model '{args.embed_model}'...")
+    print(f"Checking Ollama model '{args.embed_model}' at {args.ollama_host}...")
     try:
         # Test with a simple embedding
-        test_resp = ollama.embeddings(model=args.embed_model, prompt="test")
+        test_resp = ollama_client.embeddings(model=args.embed_model, prompt="test")
         
         # Handle EmbeddingsResponse object
         test_vec = None
@@ -276,7 +282,7 @@ def main():
             embeddings = []
             for chunk_idx, chunk in enumerate(chunks):
                 try:
-                    resp = ollama.embeddings(model=args.embed_model, prompt=chunk)
+                    resp = ollama_client.embeddings(model=args.embed_model, prompt=chunk)
                     
                     # Handle EmbeddingsResponse object
                     vec = None
