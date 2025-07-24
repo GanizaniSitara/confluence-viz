@@ -30,7 +30,7 @@ DEFAULT_DB_HOST = "localhost"
 DEFAULT_DB_PORT = 5432
 DEFAULT_DB_NAME = "openwebui"
 DEFAULT_DB_USER = "postgres"
-DEFAULT_DB_PASSWORD = ""
+DEFAULT_DB_PASSWORD = "Password1!"
 DEFAULT_CHUNK_SIZE = 500
 DEFAULT_OVERLAP = 50
 DEFAULT_BATCH_SIZE = 64
@@ -68,7 +68,7 @@ def pad_or_truncate_embedding(embedding, target_dim):
         return embedding[:target_dim]
 
 
-def process_page_content(page):
+def process_page_content(page, space_key, space_name):
     """
     Convert a Confluence page dict to cleaned plaintext for embedding.
     """
@@ -76,7 +76,23 @@ def process_page_content(page):
     body = page.get('body', '')
     storage_body = body if isinstance(body, str) else ''
     cleaned = clean_confluence_html(storage_body) if storage_body else ''
-    return f"{title}\n{'='*len(title)}\n\n" + cleaned
+    
+    # Build hierarchical path like in the parallel script
+    ancestors = page.get('ancestors', [])
+    path_parts = [space_name]
+    for ancestor in ancestors:
+        path_parts.append(ancestor.get('title', 'Unknown'))
+    path_parts.append(title)
+    breadcrumb = ' > '.join(path_parts)
+    
+    # Format content with space and path info at the top
+    content = f"{title}\n{'='*len(title)}\n\n"
+    content += f"Space: {space_name}\n\n"
+    content += f"Path: {breadcrumb}\n"
+    content += "\n" + "-" * 60 + "\n\n"
+    content += cleaned
+    
+    return content, breadcrumb
 
 
 def connect_db(args):
@@ -114,13 +130,25 @@ def get_db_vector_dim(conn):
     return result[0]
 
 
-def insert_file(conn, file_id, title, content, user_id):
+def insert_file(conn, file_id, title, content, user_id, space_info, page, breadcrumb):
     """
-    Insert a file record into the `file` table.
+    Insert a file record into the `file` table with complete metadata.
     """
     cur = conn.cursor()
     now_ms = int(time.time() * 1000)
-    meta = {"name": title}
+    
+    # Create rich metadata like in the other scripts
+    meta = {
+        "name": title,
+        "source": f"confluence:{space_info['name']}",
+        "space_key": space_info["key"],
+        "space_name": space_info["name"],
+        "page_id": page.get("id", ""),
+        "confluence_url": page.get("url", ""),
+        "title": title,
+        "path": breadcrumb
+    }
+    
     data = {"content": content}
     hash_value = hashlib.sha256(content.encode('utf-8')).hexdigest()
     cur.execute(
@@ -263,15 +291,24 @@ def main():
     for pkl_idx, pkl in enumerate(pickle_files, 1):
         data = pickle.load(open(pkl, "rb"))
         pages = data.get("sampled_pages", [])
-        print(f"\n[{pkl_idx}/{len(pickle_files)}] {pkl.name}: {len(pages)} pages")
+        
+        # Get space information from pickle data
+        space_info = data.get("space_info", {})
+        if not space_info:
+            # Fallback - try to extract from filename
+            space_key = pkl.stem.replace("_sampled", "").upper()
+            space_name = space_key
+            space_info = {"key": space_key, "name": space_name}
+        
+        print(f"\n[{pkl_idx}/{len(pickle_files)}] {pkl.name}: {len(pages)} pages from space {space_info.get('name', 'Unknown')}")
         
         for page_idx, page in enumerate(tqdm(pages, desc=f"Processing {pkl.name}"), 1):
             page_title = page.get("title", "Untitled")
-            text = process_page_content(page)
+            text, breadcrumb = process_page_content(page, space_info.get("key", ""), space_info.get("name", ""))
             file_id = uuid.uuid4()
             
-            # Insert file record
-            insert_file(conn, file_id, page_title, text, user_id)
+            # Insert file record with full metadata
+            insert_file(conn, file_id, page_title, text, user_id, space_info, page, breadcrumb)
             
             # Chunk text
             chunks = chunk_text(text, args.chunk_size, args.overlap)

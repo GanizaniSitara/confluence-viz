@@ -34,6 +34,9 @@ settings.ini
 # Log files
 *.log
 
+# Backup files
+*.bak
+
 # OS specific files
 .DS_Store
 Thumbs.db
