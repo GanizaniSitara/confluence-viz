@@ -354,7 +354,14 @@ def process_confluence_page(page: Dict, space_key: str, space_name: str) -> Tupl
     page_id = page.get('id', 'unknown')
     title = page.get('title', 'Untitled')
     body = page.get('body', {})
+    
+    # Debug logging
+    logger.debug(f"Processing page {title} - body type: {type(body)}")
+    logger.debug(f"Body keys: {body.keys() if isinstance(body, dict) else 'Not a dict'}")
+    
     storage_body = body.get('storage', {}).get('value', '') if isinstance(body, dict) else ''
+    logger.debug(f"Storage body length: {len(storage_body)}")
+    logger.debug(f"Storage body preview: {storage_body[:200]}...")
     
     # Build hierarchical path
     ancestors = page.get('ancestors', [])
@@ -419,6 +426,8 @@ def upload_page_worker(args: Tuple[Dict, str, str, str, str, str, str, Dict]) ->
         if format_choice in ['txt', 'both']:
             # Upload text version
             text_title = f"{space_key}-{page_id}-TEXT"
+            logger.info(f"Uploading text content for {title} (length: {len(text_content)} chars)")
+            logger.debug(f"Text content preview (first 500 chars): {text_content[:500]}")
             if not client.upload_document(text_title, text_content, text_collection_id, is_html=False):
                 result['success'] = False
                 result['errors'].append("Failed to upload text version")
