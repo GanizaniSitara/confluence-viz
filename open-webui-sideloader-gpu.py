@@ -30,7 +30,7 @@ DEFAULT_DB_HOST = "localhost"
 DEFAULT_DB_PORT = 5432
 DEFAULT_DB_NAME = "openwebui"
 DEFAULT_DB_USER = "postgres"
-DEFAULT_DB_PASSWORD = "Password1!"
+DEFAULT_DB_PASSWORD = ""
 DEFAULT_CHUNK_SIZE = 500
 DEFAULT_OVERLAP = 50
 DEFAULT_BATCH_SIZE = 64
@@ -304,11 +304,17 @@ def main():
         
         for page_idx, page in enumerate(tqdm(pages, desc=f"Processing {pkl.name}"), 1):
             page_title = page.get("title", "Untitled")
-            text, breadcrumb = process_page_content(page, space_info.get("key", ""), space_info.get("name", ""))
+            page_id = page.get("id", "unknown")
+            space_key = space_info.get("key", "")
+            
+            # Use consistent naming format like in open-webui-parallel.py
+            filename = f"{space_key}-{page_id}-TEXT"
+            
+            text, breadcrumb = process_page_content(page, space_key, space_info.get("name", ""))
             file_id = uuid.uuid4()
             
             # Insert file record with full metadata
-            insert_file(conn, file_id, page_title, text, user_id, space_info, page, breadcrumb)
+            insert_file(conn, file_id, filename, text, user_id, space_info, page, breadcrumb)
             
             # Chunk text
             chunks = chunk_text(text, args.chunk_size, args.overlap)
