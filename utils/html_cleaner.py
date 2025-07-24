@@ -166,8 +166,8 @@ def clean_confluence_html(html_content: str) -> str:
     for hr_tag in soup.find_all('hr'):
         hr_tag.replace_with(soup.new_string(' ---HR_PLACEHOLDER--- '))
 
-    # Extract text using newline as a separator. strip=False is the default.
-    text = soup.get_text(separator='\n')
+    # Extract text, using space as default separator but handling block elements properly
+    text = soup.get_text(separator=' ')
 
     # Replace the HR_PLACEHOLDER with a visual line, surrounded by newlines.
     text = text.replace('---HR_PLACEHOLDER---', '\n-----\n')
