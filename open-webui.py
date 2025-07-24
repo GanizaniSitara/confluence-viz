@@ -168,7 +168,7 @@ class OpenWebUIClient:
         safe_print("✅ Authentication successful!")
         return True
 
-    def upload_document(self, title: str, content: str, collection_name: str = "default", is_html: bool = False) -> bool:
+    def upload_document(self, title: str, content: str, collection_id: str, is_html: bool = False) -> bool:
         """
         Upload a document to Open-WebUI knowledge base using the correct two-step process
         """
@@ -226,10 +226,10 @@ class OpenWebUIClient:
             return False
 
         # Step 2: Add file to knowledge collection
-        knowledge_url = f"{self.base_url}/api/v1/knowledge/{collection_name}/file/add"
+        knowledge_url = f"{self.base_url}/api/v1/knowledge/{collection_id}/file/add"
         knowledge_payload = {"file_id": new_file_id}
         
-        logger.debug(f"Adding file '{title}' (ID: {new_file_id}) to collection '{collection_name}'")
+        logger.debug(f"Adding file '{title}' (ID: {new_file_id}) to collection ID '{collection_id}'")
         try:
             response = self.session.post(knowledge_url, json=knowledge_payload)
             logger.debug(f"KNOWLEDGE ADD [{response.status_code}]: {response.text}")
@@ -238,10 +238,10 @@ class OpenWebUIClient:
             return False
 
         if response.status_code not in [200, 201]:
-            logger.error(f"Failed to add file '{title}' to collection '{collection_name}': HTTP {response.status_code}")
+            logger.error(f"Failed to add file '{title}' to collection ID '{collection_id}': HTTP {response.status_code}")
             return False
 
-        logger.info(f"Successfully uploaded document '{title}' to collection '{collection_name}' (file_id={new_file_id})")
+        logger.info(f"Successfully uploaded document '{title}' to collection ID '{collection_id}' (file_id={new_file_id})")
         return True
 
     def list_knowledge_collections(self) -> Dict[str, str]:
@@ -367,7 +367,14 @@ def process_confluence_page(page: Dict, space_key: str, space_name: str) -> tupl
     page_id = page.get('id', 'unknown')
     title = page.get('title', 'Untitled')
     body = page.get('body', {})
+    
+    # Debug logging
+    logger.debug(f"Processing page {title} - body type: {type(body)}")
+    logger.debug(f"Body keys: {body.keys() if isinstance(body, dict) else 'Not a dict'}")
+    
     storage_body = body.get('storage', {}).get('value', '') if isinstance(body, dict) else ''
+    logger.debug(f"Storage body length: {len(storage_body)}")
+    logger.debug(f"Storage body preview: {storage_body[:200]}...")
     
     # Build hierarchical path
     ancestors = page.get('ancestors', [])
@@ -482,6 +489,8 @@ def upload_confluence_space(client: OpenWebUIClient, pickle_data: Dict,
             if format_choice == 'txt':
                 # Upload text version
                 text_title = f"{space_key}-{page_id}-TEXT"
+                logger.info(f"Uploading text content for {title} (length: {len(text_content)} chars)")
+                logger.debug(f"Text content preview (first 500 chars): {text_content[:500]}")
                 text_success = client.upload_document(text_title, text_content, text_collection, is_html=False)
                 upload_success = upload_success and text_success
             
