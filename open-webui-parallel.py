@@ -264,6 +264,11 @@ class OpenWebUIClient:
 
         if response.status_code != 200:
             logger.error(f"Failed to upload '{title}': HTTP {response.status_code}")
+            try:
+                error_detail = response.json()
+                logger.error(f"Server response: {error_detail}")
+            except:
+                logger.error(f"Server response: {response.text}")
             return False
 
         try:
@@ -293,6 +298,13 @@ class OpenWebUIClient:
                 return True
             else:
                 logger.error(f"Failed to add '{title}' to collection: HTTP {response.status_code}")
+                try:
+                    error_detail = response.json()
+                    logger.error(f"Server response: {error_detail}")
+                    if 'detail' in error_detail:
+                        logger.error(f"Error detail: {error_detail['detail']}")
+                except:
+                    logger.error(f"Server response: {response.text}")
                 return False
             
         except Exception as e:
