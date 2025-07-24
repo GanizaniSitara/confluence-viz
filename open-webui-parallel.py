@@ -346,10 +346,10 @@ def load_confluence_pickle(pickle_path: Path) -> Optional[Dict]:
         logger.error(f"Failed to load pickle {pickle_path}: {e}")
         return None
 
-def process_confluence_page(page: Dict, space_key: str, space_name: str) -> Tuple[str, str, str]:
+def process_confluence_page(page: Dict, space_key: str, space_name: str) -> Tuple[str, str]:
     """
-    Process a Confluence page and return path, HTML, and text content
-    Returns: (path_content, html_content, text_content)
+    Process a Confluence page and return path and text content
+    Returns: (path_content, text_content)
     """
     page_id = page.get('id', 'unknown')
     title = page.get('title', 'Untitled')
@@ -369,12 +369,6 @@ def process_confluence_page(page: Dict, space_key: str, space_name: str) -> Tupl
     path_content += f"**Path:** {' > '.join(path_parts)}\n"
     path_content += f"**Page ID:** {page_id}\n"
     
-    # HTML content
-    html_content = f"<h1>{title}</h1>\n"
-    html_content += f"<p><strong>Space:</strong> {space_name}</p>\n"
-    html_content += f"<p><strong>Path:</strong> {' > '.join(path_parts)}</p>\n"
-    html_content += storage_body
-    
     # Text content - clean HTML
     text_content = f"{title}\n{'=' * len(title)}\n\n"
     text_content += f"Space: {space_name}\n"
@@ -382,14 +376,14 @@ def process_confluence_page(page: Dict, space_key: str, space_name: str) -> Tupl
     if storage_body:
         text_content += clean_confluence_html(storage_body)
     
-    return path_content, html_content, text_content
+    return path_content, text_content
 
-def upload_page_worker(args: Tuple[Dict, str, str, str, str, str, str, str, Dict]) -> Dict:
+def upload_page_worker(args: Tuple[Dict, str, str, str, str, str, str, Dict]) -> Dict:
     """
     Worker function to upload a single page
     Returns dict with upload results
     """
-    page, space_key, space_name, html_collection_id, text_collection_id, path_collection_id, format_choice, client_config = args
+    page, space_key, space_name, text_collection_id, path_collection_id, format_choice, client_config = args
     
     # Create a new client instance for this worker thread
     client = OpenWebUIClient(
@@ -419,16 +413,9 @@ def upload_page_worker(args: Tuple[Dict, str, str, str, str, str, str, str, Dict
     }
     
     try:
-        path_content, html_content, text_content = process_confluence_page(page, space_key, space_name)
+        path_content, text_content = process_confluence_page(page, space_key, space_name)
         
         # Upload based on format choice
-        if format_choice in ['html', 'both']:
-            # Upload HTML version
-            html_title = f"{space_key}-{page_id}-HTML"
-            if not client.upload_document(html_title, html_content, html_collection_id, is_html=True):
-                result['success'] = False
-                result['errors'].append("Failed to upload HTML version")
-        
         if format_choice in ['txt', 'both']:
             # Upload text version
             text_title = f"{space_key}-{page_id}-TEXT"
@@ -466,9 +453,9 @@ def upload_page_worker(args: Tuple[Dict, str, str, str, str, str, str, str, Dict
     return result
 
 def upload_confluence_space_parallel(client: OpenWebUIClient, pickle_data: Dict, 
-                                   html_collection: str, text_collection: str,
+                                   text_collection: str,
                                    path_collection: str = None,
-                                   format_choice: str = 'both',
+                                   format_choice: str = 'txt',
                                    max_workers: int = 4) -> tuple:
     """
     Upload all pages from a Confluence space to Open-WebUI using parallel processing
@@ -493,7 +480,7 @@ def upload_confluence_space_parallel(client: OpenWebUIClient, pickle_data: Dict,
     
     # Prepare work items
     work_items = [
-        (page, space_key, space_name, html_collection, text_collection, path_collection, format_choice, client_config)
+        (page, space_key, space_name, text_collection, path_collection, format_choice, client_config)
         for page in sampled_pages
     ]
     
@@ -622,8 +609,8 @@ Performance Tips:
         """
     )
     
-    parser.add_argument('--format', choices=['html', 'txt', 'both', 'path'], default='both',
-                       help='Format to upload (default: both)')
+    parser.add_argument('--format', choices=['txt', 'path'], default='txt',
+                       help='Format to upload (default: txt)')
     parser.add_argument('--pickle-dir', 
                        default=settings.get('upload_dir', 'temp'), 
                        help=f"Directory containing pickle files (default: {settings.get('upload_dir', 'temp')})")
@@ -716,26 +703,14 @@ Performance Tips:
         safe_print(f"✅ Created test collection: {test_collection_name}")
         
         # For test mode, use the temporary collection
-        html_collection_id = test_collection_id
         text_collection_id = test_collection_id
         path_collection_id = test_collection_id
     else:
         # Setup collections based on format
-        html_collection_id = None
         text_collection_id = None
         path_collection_id = None
         
-        if args.format in ['html', 'both']:
-            html_collection_name = settings.get('html_collection', 'confluence_html')
-            html_collection_id = client.ensure_collection_exists(
-                html_collection_name, 
-                "Confluence pages in HTML format"
-            )
-            if not html_collection_id:
-                safe_print(f"❌ Failed to setup HTML collection: {html_collection_name}")
-                return 1
-        
-        if args.format in ['txt', 'both']:
+        if args.format in ['txt']:
             text_collection_name = settings.get('txt_collection', 'CONF-TXT')
             text_collection_id = client.ensure_collection_exists(
                 text_collection_name, 
@@ -844,7 +819,7 @@ Performance Tips:
             logger.info(f"🔄 Processing space '{space_name}' ({space_key}) with {page_count} pages")
             
             success_count, user_quit = upload_confluence_space_parallel(
-                client, pickle_data, html_collection_id, text_collection_id,
+                client, pickle_data, text_collection_id,
                 path_collection=path_collection_id,
                 format_choice=args.format, max_workers=args.workers
             )
