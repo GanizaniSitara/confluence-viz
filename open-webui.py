@@ -397,10 +397,10 @@ def process_confluence_page(page: Dict, space_key: str, space_name: str) -> tupl
     # Text version - clean HTML using proper Confluence HTML cleaner
     text_content = f"{title}\n{'=' * len(title)}\n\n"
     text_content += f"Space: {space_name}\n"
-    text_content += f"Path: {' > '.join(path_parts)}\n\n"
+    text_content += f"Path: {' > '.join(path_parts)}\n"
+    text_content += "\n" + "-" * 60 + "\n\n"  # Add separator line before body
     
-    # Add body markers
-    text_content += "###BODY START###\n"
+    # Add body content
     if storage_body:
         cleaned_body = clean_confluence_html(storage_body)
         logger.debug(f"Cleaned body length: {len(cleaned_body)}")
@@ -409,7 +409,6 @@ def process_confluence_page(page: Dict, space_key: str, space_name: str) -> tupl
     else:
         text_content += "[NO BODY CONTENT FOUND]"
         logger.warning(f"No body content found for page {title}")
-    text_content += "\n###BODY END###"
     
     logger.info(f"Final text_content length for {title}: {len(text_content)} chars")
     
