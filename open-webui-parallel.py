@@ -782,6 +782,8 @@ Performance Tips:
     last_processed = None
     if args.resume:
         last_processed = load_checkpoint()
+        if last_processed:
+            safe_print(f"\n📌 Found checkpoint: Last processed space was {last_processed}")
     
     files_to_process = []
     if last_processed:
@@ -790,7 +792,7 @@ Performance Tips:
         for pf in pickle_files:
             if found:
                 files_to_process.append(pf)
-            elif pf.stem == last_processed or pf.stem == f"{last_processed}_full":
+            elif pf.stem == last_processed or pf.stem.startswith(f"{last_processed}.") or pf.stem == f"{last_processed}_full":
                 found = True
                 safe_print(f"📌 Resuming after {last_processed}")
         
@@ -864,9 +866,9 @@ Performance Tips:
             total_success += success_count
             total_pages += page_count
             
-            # Save checkpoint after successful upload
-            if success_count > 0:
-                save_checkpoint(space_key)
+            # Always save checkpoint after processing a space, even if uploads failed
+            # This prevents re-processing spaces where all documents already exist
+            save_checkpoint(space_key)
             
             logger.info(f"✅ Completed space '{space_name}' ({space_key}): {success_count}/{page_count} pages uploaded")
             logger.info(f"📊 Overall progress: {i}/{len(files_to_process)} spaces, {total_success}/{total_pages} pages uploaded")
