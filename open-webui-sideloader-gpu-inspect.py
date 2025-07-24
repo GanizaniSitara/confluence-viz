@@ -283,10 +283,14 @@ def main():
                         help="Pad embeddings with zeros if dimension mismatch")
     parser.add_argument("--ollama-host", default=DEFAULT_OLLAMA_HOST,
                         help=f"Ollama API host URL (default: {DEFAULT_OLLAMA_HOST})")
-    parser.add_argument("--inspect", action="store_true",
-                        help="Inspect documents before processing")
-    parser.add_argument("--interactive", action="store_true",
-                        help="Prompt for each page when inspecting")
+    parser.add_argument("--inspect", action="store_true", default=True,
+                        help="Inspect documents before processing (default: True)")
+    parser.add_argument("--interactive", action="store_true", default=True,
+                        help="Prompt for each page when inspecting (default: True)")
+    parser.add_argument("--no-inspect", dest="inspect", action="store_false",
+                        help="Disable inspection mode")
+    parser.add_argument("--no-interactive", dest="interactive", action="store_false",
+                        help="Disable interactive prompts")
     args = parser.parse_args()
 
     # Connect to DB and check vector dimension
