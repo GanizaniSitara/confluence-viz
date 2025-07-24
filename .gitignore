@@ -43,3 +43,8 @@ Thumbs.db
 
 # Local testing directories
 local_instance_testing/
+
+# Secret keys and credentials
+.webui_secret_key
+*_secret_key
+*.key
