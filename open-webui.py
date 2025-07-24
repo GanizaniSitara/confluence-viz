@@ -360,47 +360,45 @@ def load_confluence_pickle(pickle_path: Path) -> Optional[Dict]:
         logger.error(f"Error loading pickle file '{pickle_path}': {e}")
         return None
 
-def process_confluence_page(page: Dict, space_key: str, space_name: str) -> tuple[str, str, str]:
+def process_confluence_page(page: Dict, space_key: str, space_name: str) -> tuple[str, str]:
     """
-    Process a single Confluence page and return path, HTML and text versions
+    Process a single Confluence page and return path and text versions
     """
     page_id = page.get('id', 'unknown')
     title = page.get('title', 'Untitled')
-    body = page.get('body', '')
-    updated = page.get('updated', 'Unknown')
+    body = page.get('body', {})
+    storage_body = body.get('storage', {}).get('value', '') if isinstance(body, dict) else ''
+    
+    # Build hierarchical path
+    ancestors = page.get('ancestors', [])
+    path_parts = [space_name]
+    for ancestor in ancestors:
+        path_parts.append(ancestor.get('title', 'Unknown'))
+    path_parts.append(title)
     
     # Path version - just the page location info
-    path_content = f"Space: {space_name} ({space_key}) > Page: {title} (ID: {page_id})"
+    path_content = f"# {title}\n\n"
+    path_content += f"**Space:** {space_name}\n"
+    path_content += f"**Path:** {' > '.join(path_parts)}\n"
+    path_content += f"**Page ID:** {page_id}\n"
     
-    # HTML version - keep content completely INTACT, no changes whatsoever
-    html_content = body
+    # Text version - clean HTML using proper Confluence HTML cleaner
+    text_content = f"{title}\n{'=' * len(title)}\n\n"
+    text_content += f"Space: {space_name}\n"
+    text_content += f"Path: {' > '.join(path_parts)}\n\n"
+    if storage_body:
+        text_content += clean_confluence_html(storage_body)
     
-    # Text version - strip ALL tags (Confluence and standard HTML) using BeautifulSoup
-    from bs4 import BeautifulSoup
-    
-    # Use BeautifulSoup to strip all HTML and XML tags
-    soup = BeautifulSoup(body, 'html.parser')
-    cleaned_text = soup.get_text(separator='\n', strip=True)
-    
-    # Create text version with metadata
-    text_content = f"""Title: {title}
-Page ID: {page_id}
-Space: {space_name} ({space_key})
-Last Updated: {updated}
-{'='*60}
+    return path_content, text_content
 
-{cleaned_text}"""
-    
-    return path_content, html_content, text_content
-
-def inspect_document(page: Dict, space_key: str, space_name: str, format_choice: str = 'both') -> None:
+def inspect_document(page: Dict, space_key: str, space_name: str, format_choice: str = 'txt') -> None:
     """
     Display document content for inspection before upload
     """
     page_id = page.get('id', 'unknown')
     title = page.get('title', 'Untitled')
     
-    path_content, html_content, text_content = process_confluence_page(page, space_key, space_name)
+    path_content, text_content = process_confluence_page(page, space_key, space_name)
     
     safe_print("\n" + "="*80)
     safe_print(f"DOCUMENT INSPECTION: {title}")
@@ -409,19 +407,12 @@ def inspect_document(page: Dict, space_key: str, space_name: str, format_choice:
     safe_print(f"Space: {space_name} ({space_key})")
     safe_print("-"*80)
     
-    if format_choice in ['path', 'both']:
+    if format_choice == 'path':
         safe_print("\n📁 PATH VERSION:")
         safe_print(path_content)
         safe_print("-"*40)
     
-    if format_choice in ['html', 'both']:
-        safe_print("\n🌐 HTML VERSION (first 2000 chars):")
-        safe_print(html_content[:2000])
-        if len(html_content) > 2000:
-            safe_print(f"... (truncated, total {len(html_content)} chars)")
-        safe_print("-"*40)
-    
-    if format_choice in ['txt', 'both']:
+    if format_choice == 'txt':
         safe_print("\n📝 TEXT VERSION (first 2000 chars):")
         safe_print(text_content[:2000])
         if len(text_content) > 2000:
@@ -430,8 +421,7 @@ def inspect_document(page: Dict, space_key: str, space_name: str, format_choice:
     safe_print("="*80)
 
 def upload_confluence_space(client: OpenWebUIClient, pickle_data: Dict, 
-                          html_collection: str, text_collection: str,
-                          path_collection: str = None,
+                          text_collection: str, path_collection: str = None,
                           inspect: bool = False, format_choice: str = 'both',
                           interactive: bool = False) -> tuple:
     """
@@ -484,18 +474,12 @@ def upload_confluence_space(client: OpenWebUIClient, pickle_data: Dict,
                     continue
         
         try:
-            path_content, html_content, text_content = process_confluence_page(page, space_key, space_name)
+            path_content, text_content = process_confluence_page(page, space_key, space_name)
             
             upload_success = True
             
             # Upload based on format choice
-            if format_choice in ['html', 'both']:
-                # Upload HTML version
-                html_title = f"{space_key}-{page_id}-HTML"
-                html_success = client.upload_document(html_title, html_content, html_collection, is_html=True)
-                upload_success = upload_success and html_success
-            
-            if format_choice in ['txt', 'both']:
+            if format_choice == 'txt':
                 # Upload text version
                 text_title = f"{space_key}-{page_id}-TEXT"
                 text_success = client.upload_document(text_title, text_content, text_collection, is_html=False)
@@ -589,11 +573,6 @@ def main():
         help="Ollama server URL (default: http://localhost:11434)"
     )
     parser.add_argument(
-        "--html-collection", 
-        default="CONF-HTML",
-        help="Knowledge collection name for HTML versions (default: CONF-HTML)"
-    )
-    parser.add_argument(
         "--text-collection", 
         default=settings.get('txt_collection', 'CONF-TXT'),
         help=f"Knowledge collection name for text versions (default: {settings.get('txt_collection', 'CONF-TXT')})"
@@ -625,9 +604,9 @@ def main():
     )
     parser.add_argument(
         "--format",
-        choices=['path', 'html', 'txt', 'both'],
-        default='both',
-        help="Format to upload: path (location info only), html, txt, or both (default: both)"
+        choices=['path', 'txt'],
+        default='txt',
+        help="Format to upload: path (location info only) or txt (default: txt)"
     )
     parser.add_argument(
         "--test-mode",
@@ -907,14 +886,12 @@ def main():
         safe_print(f"✅ Created test collection: {test_collection_name}")
         
         # For test mode, use the temporary collection for text uploads
-        html_collection_id = test_collection_id  # Won't be used since we force txt format
         text_collection_id = test_collection_id
         path_collection_id = test_collection_id
     else:
         # Find existing knowledge collections
         logger.info("Finding existing knowledge collections...")
         safe_print(f"\n🔍 Looking for knowledge collections...")
-        html_collection_id = client.find_existing_collection(args.html_collection)
         text_collection_id = client.find_existing_collection(args.text_collection)
         
         # Handle path collection if specified
@@ -927,16 +904,14 @@ def main():
         else:
             path_collection_id = text_collection_id
         
-        if not html_collection_id or not text_collection_id:
-            logger.error("Required knowledge collections not found!")
-            safe_print("\n❌ ERROR: Required knowledge collections not found!")
-            safe_print(f"   Please ensure these collections exist in Open-WebUI:")
-            safe_print(f"   - HTML collection: {args.html_collection}")
+        if not text_collection_id:
+            logger.error("Required knowledge collection not found!")
+            safe_print("\n❌ ERROR: Required knowledge collection not found!")
+            safe_print(f"   Please ensure this collection exists in Open-WebUI:")
             safe_print(f"   - Text collection: {args.text_collection}")
             return 1
     
-    safe_print(f"✅ Found required collections:")
-    safe_print(f"   - HTML: {args.html_collection}")
+    safe_print(f"✅ Found required collection:")
     safe_print(f"   - Text: {args.text_collection}")
     if args.format == 'path' and hasattr(args, 'path_collection') and args.path_collection:
         safe_print(f"   - Path: {args.path_collection}")
@@ -1028,7 +1003,7 @@ def main():
             logger.info(f"🔄 Processing space '{space_name}' ({space_key}) with {page_count} pages")
             
             success_count, user_quit = upload_confluence_space(
-                client, pickle_data, html_collection_id, text_collection_id,
+                client, pickle_data, text_collection_id,
                 path_collection=path_collection_id,
                 inspect=args.inspect, format_choice=args.format, interactive=args.interactive
             )
