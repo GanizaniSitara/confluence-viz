@@ -1,3 +1,13 @@
+# Screenshots and images
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.webp
+Screenshot*
+screenshot*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
