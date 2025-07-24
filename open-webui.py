@@ -368,13 +368,16 @@ def process_confluence_page(page: Dict, space_key: str, space_name: str) -> tupl
     """
     page_id = page.get('id', 'unknown')
     title = page.get('title', 'Untitled')
-    body = page.get('body', {})
+    
+    # The body is stored directly as a string in the pickle, not as body.storage.value
+    body = page.get('body', '')
     
     # Debug logging
     logger.debug(f"Processing page {title} - body type: {type(body)}")
-    logger.debug(f"Body keys: {body.keys() if isinstance(body, dict) else 'Not a dict'}")
+    logger.debug(f"Body is string: {isinstance(body, str)}")
     
-    storage_body = body.get('storage', {}).get('value', '') if isinstance(body, dict) else ''
+    # Body is already the HTML content string
+    storage_body = body if isinstance(body, str) else ''
     logger.debug(f"Storage body length: {len(storage_body)}")
     logger.debug(f"Storage body preview: {storage_body[:200]}...")
     
