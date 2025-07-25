@@ -141,8 +141,11 @@ def clean_confluence_html(html_content: str) -> str:
     for macro in macros:
         if not macro:  # Additional safety check
             continue
-        # Check if the object has attrs attribute (is a Tag)
-        if not hasattr(macro, 'attrs'):
+        # Ensure macro is a BeautifulSoup Tag object (not NavigableString or other types)
+        if not isinstance(macro, Tag):
+            continue
+        # Double-check the macro has the get method (should always be true for Tag objects)
+        if not hasattr(macro, 'get'):
             continue
         macro_name = macro.get('ac:name', '').lower()
 
