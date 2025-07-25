@@ -28,6 +28,7 @@ ENV/
 
 # Local configuration
 settings.ini
+settings_gpu_load.ini
 
 # Exclude HTML files - visualization outputs
 *.html
