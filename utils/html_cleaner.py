@@ -136,9 +136,11 @@ def clean_confluence_html(html_content: str) -> str:
             ul.decompose() # Remove empty lists
 
     # Find all structured macros
-    macros = soup.find_all(lambda tag: tag.has_attr('ac:name'))
+    macros = soup.find_all(lambda tag: tag and tag.has_attr('ac:name'))
 
     for macro in macros:
+        if not macro:  # Additional safety check
+            continue
         macro_name = macro.get('ac:name', '').lower()
 
         if macro_name in MACROS_TO_REMOVE:
