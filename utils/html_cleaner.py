@@ -136,46 +136,55 @@ def clean_confluence_html(html_content: str) -> str:
             ul.decompose() # Remove empty lists
 
     # Find all structured macros
-    macros = soup.find_all(lambda tag: tag and tag.has_attr('ac:name'))
+    try:
+        macros = soup.find_all(lambda tag: tag and hasattr(tag, 'has_attr') and tag.has_attr('ac:name'))
+    except Exception as e:
+        print(f"ERROR finding macros: {e}")
+        macros = []
 
     for macro in macros:
-        # Debug output to see what we're dealing with
+        # Wrap entire macro processing in try-except
         try:
-            macro_repr = repr(macro)[:100] if macro else "None"
+            if not macro:  # Additional safety check
+                continue
+            # Ensure macro is a BeautifulSoup Tag object (not NavigableString or other types)
+            if not isinstance(macro, Tag):
+                continue
+            # Double-check the macro has the get method (should always be true for Tag objects)
+            if not hasattr(macro, 'get'):
+                continue
+            macro_name = macro.get('ac:name', '').lower()
+        except AttributeError as e:
+            print(f"ERROR: AttributeError processing macro: {e}")
+            print(f"ERROR: Macro type: {type(macro)}")
+            try:
+                print(f"ERROR: Macro attrs: {getattr(macro, 'attrs', 'NO ATTRS')}")
+            except:
+                print("ERROR: Cannot access macro.attrs")
+            continue
         except Exception as e:
-            macro_repr = f"<repr failed: {e}>"
-        print(f"DEBUG: Processing macro - Type: {type(macro)}, Value: {macro_repr}")
-        
-        if not macro:  # Additional safety check
-            print("DEBUG: Macro is None/False, skipping")
+            print(f"ERROR: Unexpected error processing macro: {type(e).__name__}: {e}")
             continue
-        # Ensure macro is a BeautifulSoup Tag object (not NavigableString or other types)
-        if not isinstance(macro, Tag):
-            print(f"DEBUG: Macro is not a Tag, it's a {type(macro)}, skipping")
-            continue
-        # Double-check the macro has the get method (should always be true for Tag objects)
-        if not hasattr(macro, 'get'):
-            print(f"DEBUG: Macro has no 'get' method - attributes: {dir(macro)[:10]}")
-            continue
+
+        try:
+            if macro_name in MACROS_TO_REMOVE:
+                macro.decompose()
+                continue
+
+            placeholder_text = None
+            if macro_name in MACRO_PLACEHOLDERS:
+                placeholder_text = MACRO_PLACEHOLDERS[macro_name]
+            elif 'view-file' in macro_name or 'view-pdf' in macro_name or 'multimedia' in macro_name :
+                placeholder_text = get_attachment_placeholder(macro)
+            elif 'jira' in macro_name:
+                placeholder_text = get_jira_placeholder(macro)
             
-        print(f"DEBUG: About to call macro.get() on {type(macro)}")
-        macro_name = macro.get('ac:name', '').lower()
-
-        if macro_name in MACROS_TO_REMOVE:
-            macro.decompose()
-            continue
-
-        placeholder_text = None
-        if macro_name in MACRO_PLACEHOLDERS:
-            placeholder_text = MACRO_PLACEHOLDERS[macro_name]
-        elif 'view-file' in macro_name or 'view-pdf' in macro_name or 'multimedia' in macro_name :
-            placeholder_text = get_attachment_placeholder(macro)
-        elif 'jira' in macro_name:
-            placeholder_text = get_jira_placeholder(macro)
-        
-        if placeholder_text:
-            placeholder_tag = soup.new_string(placeholder_text)
-            macro.replace_with(placeholder_tag)
+            if placeholder_text:
+                placeholder_tag = soup.new_string(placeholder_text)
+                macro.replace_with(placeholder_tag)
+                continue
+        except Exception as e:
+            print(f"ERROR: Failed to process macro '{macro_name}': {type(e).__name__}: {e}")
             continue
 
     # Handle tables before general text extraction
