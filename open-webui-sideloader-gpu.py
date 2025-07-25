@@ -7,6 +7,7 @@ Edit the DEFAULT_* constants below for quick overrides in IDE (e.g. PyCharm).
 """
 
 import argparse
+import configparser
 import json
 import uuid
 import time
@@ -24,6 +25,7 @@ from tqdm import tqdm
 from utils.html_cleaner import clean_confluence_html
 
 # ------ DEFAULT CONFIGURATION ------
+# These defaults are used if settings_gpu_load.ini is not found
 DEFAULT_PICKLE_DIR = "./temp"  # e.g. /mnt/data/pickles
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"  # e.g. http://192.168.1.100:11434
 DEFAULT_KNOWLEDGE_ID = "d357bd23-5eee-46c1-b09a-488cd90e4ba2"
@@ -39,7 +41,46 @@ DEFAULT_PAD_EMBEDDINGS = True  # Pad embeddings to match DB dimension if needed
 CHECKPOINT_FILE = 'gpu_sideloader_checkpoint.json'
 
 
-def save_checkpoint(pickle_file: str, page_idx: int):
+def load_config():
+    """Load configuration from settings_gpu_load.ini if it exists"""
+    config = configparser.ConfigParser()
+    config_file = 'settings_gpu_load.ini'
+    
+    # Set defaults
+    defaults = {
+        'pickle_dir': DEFAULT_PICKLE_DIR,
+        'ollama_host': DEFAULT_OLLAMA_HOST,
+        'knowledge_id': DEFAULT_KNOWLEDGE_ID,
+        'db_host': DEFAULT_DB_HOST,
+        'db_port': str(DEFAULT_DB_PORT),
+        'db_name': DEFAULT_DB_NAME,
+        'db_user': DEFAULT_DB_USER,
+        'db_password': DEFAULT_DB_PASSWORD,
+        'chunk_size': str(DEFAULT_CHUNK_SIZE),
+        'overlap': str(DEFAULT_OVERLAP),
+        'embed_model': DEFAULT_EMBED_MODEL,
+        'pad_embeddings': str(DEFAULT_PAD_EMBEDDINGS),
+        'checkpoint_file': CHECKPOINT_FILE
+    }
+    
+    if os.path.exists(config_file):
+        config.read(config_file)
+        if 'gpu_sideloader' in config:
+            section = config['gpu_sideloader']
+            for key in defaults:
+                if key in section:
+                    defaults[key] = section[key]
+    
+    # Convert types
+    defaults['db_port'] = int(defaults['db_port'])
+    defaults['chunk_size'] = int(defaults['chunk_size'])
+    defaults['overlap'] = int(defaults['overlap'])
+    defaults['pad_embeddings'] = defaults['pad_embeddings'].lower() in ('true', '1', 'yes', 'on')
+    
+    return defaults
+
+
+def save_checkpoint(pickle_file: str, page_idx: int, checkpoint_file: str):
     """Save checkpoint to track progress within pickle files"""
     checkpoint = {
         'current_pickle': pickle_file,
@@ -47,28 +88,28 @@ def save_checkpoint(pickle_file: str, page_idx: int):
         'timestamp': time.time()
     }
     try:
-        with open(CHECKPOINT_FILE, 'w') as f:
+        with open(checkpoint_file, 'w') as f:
             json.dump(checkpoint, f, indent=2)
     except Exception as e:
         print(f"Warning: Failed to save checkpoint: {e}")
 
 
-def load_checkpoint():
+def load_checkpoint(checkpoint_file: str):
     """Load checkpoint if it exists"""
-    if os.path.exists(CHECKPOINT_FILE):
+    if os.path.exists(checkpoint_file):
         try:
-            with open(CHECKPOINT_FILE, 'r') as f:
+            with open(checkpoint_file, 'r') as f:
                 return json.load(f)
         except Exception as e:
             print(f"Warning: Failed to load checkpoint: {e}")
     return None
 
 
-def clear_checkpoint():
+def clear_checkpoint(checkpoint_file: str):
     """Clear checkpoint after successful completion"""
-    if os.path.exists(CHECKPOINT_FILE):
+    if os.path.exists(checkpoint_file):
         try:
-            os.remove(CHECKPOINT_FILE)
+            os.remove(checkpoint_file)
             print("Checkpoint cleared - processing completed successfully")
         except Exception as e:
             print(f"Warning: Failed to clear checkpoint: {e}")
@@ -247,33 +288,36 @@ def update_knowledge(conn, knowledge_id, file_id):
 
 
 def main():
+    # Load configuration from ini file
+    config = load_config()
+    
     parser = argparse.ArgumentParser(
         description="Pilot side-load with Ollama/Nomic embeddings"
     )
-    parser.add_argument("--pickle-dir", default=DEFAULT_PICKLE_DIR,
+    parser.add_argument("--pickle-dir", default=config['pickle_dir'],
                         help="Directory of Confluence pickle files")
-    parser.add_argument("--knowledge-id", default=DEFAULT_KNOWLEDGE_ID,
+    parser.add_argument("--knowledge-id", default=config['knowledge_id'],
                         help="Target knowledge base UUID")
-    parser.add_argument("--db-host", default=DEFAULT_DB_HOST)
-    parser.add_argument("--db-port", type=int, default=DEFAULT_DB_PORT)
-    parser.add_argument("--db-name", default=DEFAULT_DB_NAME)
-    parser.add_argument("--db-user", default=DEFAULT_DB_USER)
-    parser.add_argument("--db-password", default=DEFAULT_DB_PASSWORD)
-    parser.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE)
-    parser.add_argument("--overlap", type=int, default=DEFAULT_OVERLAP)
-    parser.add_argument("--embed-model", default=DEFAULT_EMBED_MODEL,
+    parser.add_argument("--db-host", default=config['db_host'])
+    parser.add_argument("--db-port", type=int, default=config['db_port'])
+    parser.add_argument("--db-name", default=config['db_name'])
+    parser.add_argument("--db-user", default=config['db_user'])
+    parser.add_argument("--db-password", default=config['db_password'])
+    parser.add_argument("--chunk-size", type=int, default=config['chunk_size'])
+    parser.add_argument("--overlap", type=int, default=config['overlap'])
+    parser.add_argument("--embed-model", default=config['embed_model'],
                         help="Ollama model name for embedding (e.g. nomic-embed-text)")
-    parser.add_argument("--pad-embeddings", type=bool, default=DEFAULT_PAD_EMBEDDINGS,
+    parser.add_argument("--pad-embeddings", type=bool, default=config['pad_embeddings'],
                         help="Pad embeddings with zeros if dimension mismatch")
-    parser.add_argument("--ollama-host", default=DEFAULT_OLLAMA_HOST,
-                        help=f"Ollama API host URL (default: {DEFAULT_OLLAMA_HOST})")
+    parser.add_argument("--ollama-host", default=config['ollama_host'],
+                        help=f"Ollama API host URL (default: {config['ollama_host']})")
     parser.add_argument("--clear-checkpoint", action="store_true",
                         help="Clear checkpoint and start fresh")
     args = parser.parse_args()
     
     # Clear checkpoint if requested
     if args.clear_checkpoint:
-        clear_checkpoint()
+        clear_checkpoint(config['checkpoint_file'])
         print("Checkpoint cleared - starting fresh")
 
     # Connect to DB and check vector dimension
@@ -330,7 +374,7 @@ def main():
     print(f"Found {len(pickle_files)} pickle files to process.")
     
     # Load checkpoint if exists
-    checkpoint = load_checkpoint()
+    checkpoint = load_checkpoint(config['checkpoint_file'])
     start_pickle_idx = 0
     start_page_idx = 0
     
@@ -431,10 +475,10 @@ def main():
             total_pages_processed += 1
             
             # Save checkpoint after each page
-            save_checkpoint(str(pkl), actual_page_idx)
+            save_checkpoint(str(pkl), actual_page_idx, config['checkpoint_file'])
     
     print(f"\n✓ Processing complete! Total pages: {total_pages_processed}")
-    clear_checkpoint()
+    clear_checkpoint(config['checkpoint_file'])
     conn.close()
 
 if __name__ == "__main__":
