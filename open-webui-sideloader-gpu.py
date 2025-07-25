@@ -12,6 +12,7 @@ import uuid
 import time
 import hashlib
 import pickle
+import os
 from pathlib import Path
 
 import psycopg2
@@ -37,6 +38,42 @@ DEFAULT_BATCH_SIZE = 64
 DEFAULT_DEVICE = "cuda:0"  # e.g. 'cuda:0', 'cuda:1' or 'cpu'
 DEFAULT_EMBED_MODEL = "nomic-embed-text:v1.5"
 DEFAULT_PAD_EMBEDDINGS = True  # Pad embeddings to match DB dimension if needed
+CHECKPOINT_FILE = 'gpu_sideloader_checkpoint.json'
+
+
+def save_checkpoint(pickle_file: str, page_idx: int):
+    """Save checkpoint to track progress within pickle files"""
+    checkpoint = {
+        'current_pickle': pickle_file,
+        'last_page_index': page_idx,
+        'timestamp': time.time()
+    }
+    try:
+        with open(CHECKPOINT_FILE, 'w') as f:
+            json.dump(checkpoint, f, indent=2)
+    except Exception as e:
+        print(f"Warning: Failed to save checkpoint: {e}")
+
+
+def load_checkpoint():
+    """Load checkpoint if it exists"""
+    if os.path.exists(CHECKPOINT_FILE):
+        try:
+            with open(CHECKPOINT_FILE, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Warning: Failed to load checkpoint: {e}")
+    return None
+
+
+def clear_checkpoint():
+    """Clear checkpoint after successful completion"""
+    if os.path.exists(CHECKPOINT_FILE):
+        try:
+            os.remove(CHECKPOINT_FILE)
+            print("Checkpoint cleared - processing completed successfully")
+        except Exception as e:
+            print(f"Warning: Failed to clear checkpoint: {e}")
 
 
 def chunk_text(text, chunk_size=DEFAULT_CHUNK_SIZE, overlap=DEFAULT_OVERLAP):
@@ -232,7 +269,14 @@ def main():
                         help="Pad embeddings with zeros if dimension mismatch")
     parser.add_argument("--ollama-host", default=DEFAULT_OLLAMA_HOST,
                         help=f"Ollama API host URL (default: {DEFAULT_OLLAMA_HOST})")
+    parser.add_argument("--clear-checkpoint", action="store_true",
+                        help="Clear checkpoint and start fresh")
     args = parser.parse_args()
+    
+    # Clear checkpoint if requested
+    if args.clear_checkpoint:
+        clear_checkpoint()
+        print("Checkpoint cleared - starting fresh")
 
     # Connect to DB and check vector dimension
     conn = connect_db(args)
@@ -286,9 +330,25 @@ def main():
     user_id = args.db_user
     pickle_files = sorted(Path(args.pickle_dir).glob("*.pkl"))
     print(f"Found {len(pickle_files)} pickle files to process.")
+    
+    # Load checkpoint if exists
+    checkpoint = load_checkpoint()
+    start_pickle_idx = 0
+    start_page_idx = 0
+    
+    if checkpoint:
+        # Find which pickle file to resume from
+        checkpoint_pickle = checkpoint.get('current_pickle')
+        if checkpoint_pickle:
+            for idx, pkl in enumerate(pickle_files):
+                if str(pkl) == checkpoint_pickle:
+                    start_pickle_idx = idx
+                    start_page_idx = checkpoint.get('last_page_index', 0)
+                    print(f"Resuming from pickle {pkl.name}, page index {start_page_idx}")
+                    break
 
     total_pages_processed = 0
-    for pkl_idx, pkl in enumerate(pickle_files, 1):
+    for pkl_idx, pkl in enumerate(pickle_files[start_pickle_idx:], start_pickle_idx + 1):
         data = pickle.load(open(pkl, "rb"))
         pages = data.get("sampled_pages", [])
         
@@ -302,7 +362,15 @@ def main():
         
         print(f"\n[{pkl_idx}/{len(pickle_files)}] {pkl.name}: {len(pages)} pages from space {space_info.get('name', 'Unknown')}")
         
-        for page_idx, page in enumerate(tqdm(pages, desc=f"Processing {pkl.name}"), 1):
+        # Skip to the right page if resuming
+        pages_to_process = pages
+        if pkl_idx == start_pickle_idx + 1 and start_page_idx > 0:
+            pages_to_process = pages[start_page_idx:]
+            print(f"Skipping first {start_page_idx} pages (already processed)")
+        
+        for page_enum_idx, page in enumerate(tqdm(pages_to_process, desc=f"Processing {pkl.name}"), 1):
+            # Calculate actual page index for checkpoint
+            actual_page_idx = page_enum_idx if pkl_idx > start_pickle_idx + 1 else page_enum_idx + start_page_idx
             page_title = page.get("title", "Untitled")
             page_id = page.get("id", "unknown")
             space_key = space_info.get("key", "")
@@ -318,8 +386,8 @@ def main():
             
             # Chunk text
             chunks = chunk_text(text, args.chunk_size, args.overlap)
-            if page_idx == 1 or page_idx % 10 == 0:
-                print(f"  Page {page_idx}: {page_title[:50]}... ({len(chunks)} chunks)")
+            if actual_page_idx == 1 or actual_page_idx % 10 == 0:
+                print(f"  Page {actual_page_idx}: {page_title[:50]}... ({len(chunks)} chunks)")
             
             # Generate embeddings via Ollama
             embeddings = []
@@ -363,8 +431,12 @@ def main():
             insert_chunks(conn, args.knowledge_id, file_id, chunks, embeddings)
             update_knowledge(conn, args.knowledge_id, file_id)
             total_pages_processed += 1
+            
+            # Save checkpoint after each page
+            save_checkpoint(str(pkl), actual_page_idx)
     
     print(f"\n✓ Processing complete! Total pages: {total_pages_processed}")
+    clear_checkpoint()
     conn.close()
 
 if __name__ == "__main__":
