@@ -140,7 +140,11 @@ def clean_confluence_html(html_content: str) -> str:
 
     for macro in macros:
         # Debug output to see what we're dealing with
-        print(f"DEBUG: Processing macro - Type: {type(macro)}, Value: {repr(macro)[:100]}")
+        try:
+            macro_repr = repr(macro)[:100] if macro else "None"
+        except Exception as e:
+            macro_repr = f"<repr failed: {e}>"
+        print(f"DEBUG: Processing macro - Type: {type(macro)}, Value: {macro_repr}")
         
         if not macro:  # Additional safety check
             print("DEBUG: Macro is None/False, skipping")
