@@ -141,6 +141,9 @@ def clean_confluence_html(html_content: str) -> str:
     for macro in macros:
         if not macro:  # Additional safety check
             continue
+        # Check if the object has attrs attribute (is a Tag)
+        if not hasattr(macro, 'attrs'):
+            continue
         macro_name = macro.get('ac:name', '').lower()
 
         if macro_name in MACROS_TO_REMOVE:
