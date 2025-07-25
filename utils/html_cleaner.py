@@ -139,14 +139,22 @@ def clean_confluence_html(html_content: str) -> str:
     macros = soup.find_all(lambda tag: tag and tag.has_attr('ac:name'))
 
     for macro in macros:
+        # Debug output to see what we're dealing with
+        print(f"DEBUG: Processing macro - Type: {type(macro)}, Value: {repr(macro)[:100]}")
+        
         if not macro:  # Additional safety check
+            print("DEBUG: Macro is None/False, skipping")
             continue
         # Ensure macro is a BeautifulSoup Tag object (not NavigableString or other types)
         if not isinstance(macro, Tag):
+            print(f"DEBUG: Macro is not a Tag, it's a {type(macro)}, skipping")
             continue
         # Double-check the macro has the get method (should always be true for Tag objects)
         if not hasattr(macro, 'get'):
+            print(f"DEBUG: Macro has no 'get' method - attributes: {dir(macro)[:10]}")
             continue
+            
+        print(f"DEBUG: About to call macro.get() on {type(macro)}")
         macro_name = macro.get('ac:name', '').lower()
 
         if macro_name in MACROS_TO_REMOVE:
