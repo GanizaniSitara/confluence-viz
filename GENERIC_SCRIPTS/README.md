@@ -41,9 +41,37 @@ docker run -p 9998:9998 apache/tika:latest
 python qdrant_tika_uploader.py --input-dir ./my-docs
 ```
 
+### 3. `qdrant_confluence_pickle_uploader.py`
+Uploads Confluence pages from pickle files to OpenWebUI with full integration.
+
+**Features:**
+- Reads pickle files created by `sample_and_pickle_spaces.py`
+- Converts Confluence HTML to Markdown for better readability
+- Preserves page metadata (space, title, ID, links)
+- Chunks content for optimal search performance
+- Generates embeddings using Ollama
+- Registers pages in PostgreSQL for UI visibility
+- Uploads vectors to Qdrant for semantic search
+- Checkpoint support for resuming interrupted uploads
+
+**Usage:**
+```bash
+# Process specific spaces
+python qdrant_confluence_pickle_uploader.py --space-keys SPACE1 SPACE2
+
+# Process all pickle files
+python qdrant_confluence_pickle_uploader.py --all-spaces
+
+# Keep original HTML format
+python qdrant_confluence_pickle_uploader.py --all-spaces --no-markdown
+
+# Specify Confluence base URL for page links
+python qdrant_confluence_pickle_uploader.py --all-spaces --base-url https://confluence.example.com
+```
+
 ## Configuration
 
-Edit `settings.ini` to configure both scripts:
+Edit `settings.ini` to configure all scripts:
 
 ### Required Settings
 
@@ -79,10 +107,10 @@ ollama pull nomic-embed-text:v1.5
 
 ## How It Works
 
-Both scripts follow the same pattern:
+All scripts follow the same pattern:
 
-1. **Read** documents from input directory
-2. **Extract** text (directly for markdown, via Tika for others)
+1. **Read** documents from input directory (or pickle files for Confluence)
+2. **Extract** text (directly for markdown, via Tika for others, or from pickle data)
 3. **Chunk** text into smaller segments
 4. **Generate** embeddings using Ollama
 5. **Register** file in PostgreSQL (OpenWebUI's database)
@@ -120,9 +148,10 @@ Services running in Docker should be accessible at:
 - Test connections individually
 
 ### Checkpoint/Resume
-Both scripts support resuming if interrupted:
+All scripts support resuming if interrupted:
 - Markdown: Uses `qdrant_markdown_checkpoint.json`
 - Tika: Uses `qdrant_tika_checkpoint.json` and `.tika_processed.json`
+- Confluence: Uses `qdrant_confluence_pickle_checkpoint.json`
 - To start fresh: Delete checkpoint files or use `--clear-checkpoint`
 
 ## Performance Tips
