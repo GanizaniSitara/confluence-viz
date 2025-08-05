@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Upload Markdown documents to OpenWebUI via Qdrant with full integration.
-This ensures files are visible in OpenWebUI's interface by:
+Upload Confluence pickle files to OpenWebUI via Qdrant with full integration.
+This ensures Confluence pages are visible in OpenWebUI's interface by:
 1. Registering files in PostgreSQL
 2. Uploading vectors to Qdrant
 3. Updating knowledge.data with file references
 
-This is a generic script that can be used with any markdown content.
+This script reads pickle files created by sample_and_pickle_spaces.py
+and processes them page by page into OpenWebUI.
 """
 import argparse
 import configparser
@@ -15,6 +16,7 @@ import uuid
 import time
 import hashlib
 import os
+import pickle
 import psycopg2
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
@@ -23,12 +25,14 @@ from qdrant_client.models import Distance, VectorParams, PointStruct
 import ollama
 from tqdm import tqdm
 from datetime import datetime
+from bs4 import BeautifulSoup
+import html2text
 
 # Detect if we're in WSL
 is_wsl = os.path.exists('/proc/version') and 'microsoft' in open('/proc/version').read().lower()
 
 # Default configuration
-DEFAULT_INPUT_DIR = "./documents"
+DEFAULT_PICKLE_DIR = "../temp"  # Default location of pickle files
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 DEFAULT_QDRANT_HOST = "localhost"
 DEFAULT_QDRANT_PORT = 6333
@@ -38,7 +42,7 @@ DEFAULT_CHUNK_SIZE = 500
 DEFAULT_OVERLAP = 50
 DEFAULT_EMBED_MODEL = "nomic-embed-text:v1.5"
 DEFAULT_VECTOR_SIZE = 768
-CHECKPOINT_FILE = 'qdrant_markdown_checkpoint.json'
+CHECKPOINT_FILE = 'qdrant_confluence_pickle_checkpoint.json'
 
 # OpenWebUI collection names
 FILES_COLLECTION = "open-webui_files"
@@ -54,7 +58,7 @@ def load_config():
     
     # Set defaults
     defaults = {
-        'input_dir': DEFAULT_INPUT_DIR,
+        'pickle_dir': DEFAULT_PICKLE_DIR,
         'ollama_host': DEFAULT_OLLAMA_HOST,
         'qdrant_host': DEFAULT_QDRANT_HOST,
         'qdrant_port': str(DEFAULT_QDRANT_PORT),
@@ -66,7 +70,9 @@ def load_config():
         'vector_size': str(DEFAULT_VECTOR_SIZE),
         'checkpoint_file': CHECKPOINT_FILE,
         'batch_points': '30',
-        'file_pattern': '*.md',
+        'process_all_spaces': 'false',
+        'space_keys': '',  # Comma-separated list of space keys to process
+        'html_to_markdown': 'true',  # Convert HTML to markdown for better readability
         # PostgreSQL settings
         'db_host': '172.17.112.1' if is_wsl else 'localhost',
         'db_port': '5432',
@@ -77,8 +83,8 @@ def load_config():
     
     if os.path.exists(config_file):
         config.read(config_file)
-        if 'qdrant_uploader' in config:
-            cfg = config['qdrant_uploader']
+        if 'confluence_pickle_uploader' in config:
+            cfg = config['confluence_pickle_uploader']
             for key in defaults:
                 if key in cfg:
                     defaults[key] = cfg[key]
@@ -90,18 +96,16 @@ def load_config():
     defaults['vector_size'] = int(defaults['vector_size'])
     defaults['batch_points'] = int(defaults['batch_points'])
     defaults['db_port'] = int(defaults['db_port'])
+    defaults['process_all_spaces'] = defaults['process_all_spaces'].lower() == 'true'
+    defaults['html_to_markdown'] = defaults['html_to_markdown'].lower() == 'true'
     
     return defaults
 
-def save_checkpoint(file_path: str, checkpoint_file: str, uploaded_files: List[Dict]):
-    """Save checkpoint to track progress including uploaded files list"""
-    checkpoint = {
-        'last_file': file_path,
-        'timestamp': time.time(),
-        'uploaded_files': uploaded_files  # Keep track of all uploaded files
-    }
+def save_checkpoint(checkpoint_data: Dict, checkpoint_file: str):
+    """Save checkpoint to track progress"""
+    checkpoint_data['timestamp'] = time.time()
     with open(checkpoint_file, 'w') as f:
-        json.dump(checkpoint, f, indent=2)
+        json.dump(checkpoint_data, f, indent=2)
 
 def load_checkpoint(checkpoint_file: str):
     """Load checkpoint if it exists"""
@@ -112,7 +116,10 @@ def load_checkpoint(checkpoint_file: str):
                 return json.load(f)
         except Exception as e:
             print(f"Warning: Failed to load checkpoint: {e}")
-    return None
+    return {
+        'processed_spaces': {},  # space_key -> {'pages': [page_ids], 'completed': bool}
+        'uploaded_files': []     # List of file metadata for knowledge.data
+    }
 
 def clear_checkpoint(checkpoint_file: str):
     """Clear checkpoint after successful completion"""
@@ -122,6 +129,53 @@ def clear_checkpoint(checkpoint_file: str):
             print(f"Checkpoint cleared: {checkpoint_file}")
         except Exception as e:
             print(f"Warning: Failed to clear checkpoint: {e}")
+
+def html_to_markdown_text(html_content: str) -> str:
+    """Convert Confluence HTML to markdown for better readability"""
+    if not html_content:
+        return ""
+    
+    # Configure html2text
+    h = html2text.HTML2Text()
+    h.ignore_links = False
+    h.ignore_images = False
+    h.body_width = 0  # Don't wrap lines
+    h.single_line_break = True
+    
+    try:
+        # Parse and clean HTML first
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Remove script and style elements
+        for script in soup(["script", "style"]):
+            script.decompose()
+        
+        # Convert to markdown
+        markdown = h.handle(str(soup))
+        
+        # Clean up excessive whitespace
+        lines = markdown.split('\n')
+        cleaned_lines = []
+        prev_empty = False
+        
+        for line in lines:
+            line = line.rstrip()
+            if line:
+                cleaned_lines.append(line)
+                prev_empty = False
+            elif not prev_empty:
+                cleaned_lines.append('')
+                prev_empty = True
+        
+        return '\n'.join(cleaned_lines).strip()
+    except Exception as e:
+        print(f"Warning: Failed to convert HTML to markdown: {e}")
+        # Fallback to BeautifulSoup text extraction
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            return soup.get_text(separator='\n', strip=True)
+        except:
+            return html_content
 
 def chunk_text(text, chunk_size=500, overlap=50):
     """Split text into chunks"""
@@ -137,8 +191,17 @@ def compute_file_hash(content: str) -> str:
     """Compute SHA256 hash of file content"""
     return hashlib.sha256(content.encode()).hexdigest()
 
+def create_page_filename(space_key: str, page_title: str, page_id: str) -> str:
+    """Create a meaningful filename for a Confluence page"""
+    # Clean the title for use in filename
+    safe_title = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in page_title)
+    safe_title = safe_title.strip()[:100]  # Limit length
+    
+    # Format: SPACEKEY_PageTitle_pageID.md
+    return f"{space_key}_{safe_title}_{page_id}.md"
+
 def register_file_in_postgres(conn, file_id: str, filename: str, content: str, 
-                            user_id: str, knowledge_id: str) -> bool:
+                            user_id: str, knowledge_id: str, metadata: Dict) -> bool:
     """Register file in PostgreSQL database"""
     try:
         cur = conn.cursor()
@@ -153,6 +216,19 @@ def register_file_in_postgres(conn, file_id: str, filename: str, content: str,
         file_hash = compute_file_hash(content)
         current_time = int(time.time() * 1000)  # milliseconds
         
+        file_meta = {
+            'name': filename,
+            'content_type': 'text/markdown' if metadata.get('html_to_markdown') else 'text/html',
+            'size': len(content),
+            'knowledge_id': knowledge_id,
+            'source': 'confluence',
+            'space_key': metadata.get('space_key', ''),
+            'page_id': metadata.get('page_id', ''),
+            'page_title': metadata.get('page_title', ''),
+            'confluence_url': metadata.get('confluence_url', ''),
+            'last_updated': metadata.get('last_updated', '')
+        }
+        
         cur.execute("""
             INSERT INTO file (id, user_id, filename, meta, created_at, updated_at, hash, data)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -160,12 +236,7 @@ def register_file_in_postgres(conn, file_id: str, filename: str, content: str,
             file_id,
             user_id,
             filename,
-            json.dumps({
-                'name': filename,
-                'content_type': 'text/markdown',
-                'size': len(content),
-                'knowledge_id': knowledge_id
-            }),
+            json.dumps(file_meta),
             current_time,
             current_time,
             file_hash,
@@ -257,7 +328,7 @@ def ensure_collection_exists(client: QdrantClient, collection_name: str, vector_
 def insert_chunks_to_qdrant(client: QdrantClient, chunks: List[str], 
                            embeddings: List[List[float]], file_id: str, 
                            filename: str, user_id: str, knowledge_id: str,
-                           batch_size: int = 30) -> bool:
+                           metadata: Dict, batch_size: int = 30) -> bool:
     """Insert chunks into both Qdrant collections"""
     
     # Prepare points for both collections
@@ -266,7 +337,7 @@ def insert_chunks_to_qdrant(client: QdrantClient, chunks: List[str],
     
     for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
         # Common metadata
-        metadata = {
+        chunk_metadata = {
             "source": filename,
             "name": filename,
             "created_by": user_id,
@@ -276,7 +347,11 @@ def insert_chunks_to_qdrant(client: QdrantClient, chunks: List[str],
             "embedding_config": json.dumps({
                 "engine": "ollama",
                 "model": DEFAULT_EMBED_MODEL
-            })
+            }),
+            "space_key": metadata.get('space_key', ''),
+            "page_id": metadata.get('page_id', ''),
+            "page_title": metadata.get('page_title', ''),
+            "confluence_source": True
         }
         
         # Files collection point
@@ -286,7 +361,7 @@ def insert_chunks_to_qdrant(client: QdrantClient, chunks: List[str],
                 vector=embedding,
                 payload={
                     "text": chunk,
-                    "metadata": metadata,
+                    "metadata": chunk_metadata,
                     "tenant_id": f"file-{file_id}"
                 }
             )
@@ -299,7 +374,7 @@ def insert_chunks_to_qdrant(client: QdrantClient, chunks: List[str],
                 vector=embedding,
                 payload={
                     "text": chunk,
-                    "metadata": metadata,
+                    "metadata": chunk_metadata,
                     "tenant_id": knowledge_id
                 }
             )
@@ -330,22 +405,142 @@ def insert_chunks_to_qdrant(client: QdrantClient, chunks: List[str],
         print(f"ERROR during Qdrant upsert: {e}")
         return False
 
-def collect_files(input_dir: str, file_pattern: str = "*.md") -> List[Path]:
-    """Recursively collect all files matching pattern"""
-    files = []
-    for root, dirs, filenames in os.walk(input_dir):
-        for filename in filenames:
-            if Path(filename).match(file_pattern):
-                files.append(Path(root) / filename)
-    return sorted(files)
+def process_confluence_page(page_data: Dict, space_key: str, space_name: str,
+                          config: Dict, pg_conn, qdrant_client, ollama_client,
+                          base_confluence_url: str) -> Tuple[bool, Dict]:
+    """Process a single Confluence page and upload to OpenWebUI"""
+    
+    page_id = page_data.get('id', '')
+    page_title = page_data.get('title', 'Untitled')
+    page_body = page_data.get('body', '')
+    last_updated = page_data.get('updated', '')
+    
+    if not page_id or not page_body:
+        return False, None
+    
+    print(f"    Processing page: {page_title} (ID: {page_id})")
+    
+    # Convert HTML to markdown if enabled
+    if config['html_to_markdown']:
+        content = html_to_markdown_text(page_body)
+    else:
+        content = page_body
+    
+    if not content.strip():
+        print(f"    Warning: No content after processing, skipping page")
+        return False, None
+    
+    # Create filename
+    filename = create_page_filename(space_key, page_title, page_id)
+    file_id = str(uuid.uuid4())
+    
+    # Page metadata
+    page_metadata = {
+        'space_key': space_key,
+        'space_name': space_name,
+        'page_id': page_id,
+        'page_title': page_title,
+        'last_updated': last_updated,
+        'confluence_url': f"{base_confluence_url}/pages/viewpage.action?pageId={page_id}",
+        'html_to_markdown': config['html_to_markdown']
+    }
+    
+    # Register in PostgreSQL
+    if pg_conn:
+        if not register_file_in_postgres(pg_conn, file_id, filename, content, 
+                                       config['user_id'], config['knowledge_id'], 
+                                       page_metadata):
+            print("    Warning: PostgreSQL registration failed, file won't show in UI")
+    
+    # Chunk text
+    chunks = chunk_text(content, config['chunk_size'], config['overlap'])
+    print(f"    Created {len(chunks)} chunks")
+    
+    # Generate embeddings
+    embeddings = []
+    for chunk in chunks:
+        try:
+            resp = ollama_client.embeddings(model=config['embed_model'], prompt=chunk)
+            
+            vec = None
+            if hasattr(resp, 'embeddings'):
+                vec = resp.embeddings
+            elif hasattr(resp, 'embedding'):
+                vec = resp.embedding
+            elif isinstance(resp, list):
+                vec = resp
+            elif isinstance(resp, dict):
+                vec = resp.get('embeddings') or resp.get('embedding')
+            
+            if vec is None:
+                raise RuntimeError("Failed to extract embedding")
+            
+            embeddings.append(vec)
+        except Exception as e:
+            print(f"    Error generating embedding: {e}")
+            return False, None
+    
+    # Insert into Qdrant
+    success = insert_chunks_to_qdrant(
+        qdrant_client,
+        chunks,
+        embeddings,
+        file_id,
+        filename,
+        config['user_id'],
+        config['knowledge_id'],
+        page_metadata,
+        config['batch_points']
+    )
+    
+    if not success:
+        print(f"    ERROR: Failed to insert chunks to Qdrant")
+        return False, None
+    
+    # Return file metadata for knowledge.data update
+    file_info = {
+        "id": file_id,
+        "filename": filename,
+        "name": filename,
+        "created_at": int(time.time() * 1000)
+    }
+    
+    return True, file_info
+
+def get_pickle_files(pickle_dir: str, space_keys: List[str] = None) -> List[Path]:
+    """Get list of pickle files to process"""
+    pickle_path = Path(pickle_dir)
+    
+    if not pickle_path.exists():
+        print(f"Error: Pickle directory not found: {pickle_dir}")
+        return []
+    
+    all_pickles = list(pickle_path.glob("*.pkl"))
+    
+    if space_keys:
+        # Filter to specific space keys
+        filtered_pickles = []
+        for pkl in all_pickles:
+            base_name = pkl.stem
+            # Handle both regular and _full suffixed files
+            if base_name.endswith('_full'):
+                base_name = base_name[:-5]
+            
+            if base_name in space_keys:
+                filtered_pickles.append(pkl)
+        return sorted(filtered_pickles)
+    else:
+        # Return all non-personal space pickles
+        return sorted([p for p in all_pickles if not p.stem.startswith('~')])
 
 def main():
     config = load_config()
     
     parser = argparse.ArgumentParser(
-        description="Upload Markdown documents to OpenWebUI with full integration"
+        description="Upload Confluence pickle files to OpenWebUI with full integration"
     )
-    parser.add_argument("--input-dir", default=config['input_dir'])
+    parser.add_argument("--pickle-dir", default=config['pickle_dir'],
+                       help="Directory containing Confluence pickle files")
     parser.add_argument("--knowledge-id", default=config['knowledge_id'])
     parser.add_argument("--user-id", default=config['user_id'])
     parser.add_argument("--qdrant-host", default=config['qdrant_host'])
@@ -355,15 +550,32 @@ def main():
     parser.add_argument("--embed-model", default=config['embed_model'])
     parser.add_argument("--ollama-host", default=config['ollama_host'])
     parser.add_argument("--vector-size", type=int, default=config['vector_size'])
-    parser.add_argument("--file-pattern", default=config['file_pattern'])
     parser.add_argument("--batch-points", type=int, default=config['batch_points'])
-    parser.add_argument("--clear-checkpoint", action="store_true")
+    parser.add_argument("--space-keys", nargs='+', 
+                       help="Specific space keys to process (default: all)")
+    parser.add_argument("--all-spaces", action="store_true",
+                       help="Process all space pickle files")
+    parser.add_argument("--no-markdown", action="store_true",
+                       help="Keep original HTML instead of converting to markdown")
+    parser.add_argument("--clear-checkpoint", action="store_true",
+                       help="Clear checkpoint and start fresh")
+    parser.add_argument("--base-url", default="https://confluence.example.com",
+                       help="Base URL of Confluence instance for generating links")
     
     args = parser.parse_args()
+    
+    # Override config with command line args
+    if args.no_markdown:
+        config['html_to_markdown'] = False
     
     if args.clear_checkpoint:
         clear_checkpoint(config['checkpoint_file'])
         print("Checkpoint cleared")
+    
+    # Load checkpoint
+    checkpoint = load_checkpoint(config['checkpoint_file'])
+    uploaded_files = checkpoint.get('uploaded_files', [])
+    processed_spaces = checkpoint.get('processed_spaces', {})
     
     # Connect to PostgreSQL
     print(f"Connecting to PostgreSQL at {config['db_host']}:{config['db_port']}")
@@ -424,128 +636,110 @@ def main():
     ensure_collection_exists(qdrant_client, FILES_COLLECTION, args.vector_size)
     ensure_collection_exists(qdrant_client, KNOWLEDGE_COLLECTION, args.vector_size)
     
-    # Collect files
-    print(f"\nLooking for files in: {args.input_dir}")
-    files = collect_files(args.input_dir, args.file_pattern)
-    print(f"Found {len(files)} files")
-    
-    if not files:
-        print("No files found!")
+    # Get pickle files to process
+    space_keys = args.space_keys if args.space_keys else (config.get('space_keys', '').split(',') if config.get('space_keys') else None)
+    if not args.all_spaces and not space_keys:
+        print("\nNo spaces specified. Use --all-spaces or --space-keys to specify which spaces to process.")
         return
     
-    # Load checkpoint and uploaded files list
-    checkpoint = load_checkpoint(config['checkpoint_file'])
-    start_idx = 0
-    uploaded_files = []
+    pickle_files = get_pickle_files(args.pickle_dir, space_keys if not args.all_spaces else None)
     
-    if checkpoint:
-        last_file = checkpoint.get('last_file')
-        uploaded_files = checkpoint.get('uploaded_files', [])
-        if last_file:
-            for idx, file_path in enumerate(files):
-                if str(file_path) == last_file:
-                    start_idx = idx + 1
-                    print(f"Resuming from file {start_idx}/{len(files)}")
-                    print(f"Already uploaded: {len(uploaded_files)} files")
-                    break
+    print(f"\nFound {len(pickle_files)} pickle files to process")
+    if not pickle_files:
+        print("No pickle files found!")
+        return
     
-    total_processed = len(uploaded_files)
-    failed_files = []
+    total_pages_processed = 0
+    total_spaces_processed = 0
+    failed_pages = 0
     
-    # Process each file
-    for idx, file_path in enumerate(files[start_idx:], start_idx):
+    # Process each pickle file
+    for pickle_file in pickle_files:
+        space_key = pickle_file.stem
+        if space_key.endswith('_full'):
+            space_key = space_key[:-5]
+        
+        print(f"\n[Space {total_spaces_processed + 1}/{len(pickle_files)}] Processing space: {space_key}")
+        
+        # Check if space already processed
+        if space_key in processed_spaces and processed_spaces[space_key].get('completed', False):
+            print(f"  Space already fully processed, skipping")
+            continue
+        
         try:
-            # Read file
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
+            # Load pickle file
+            with open(pickle_file, 'rb') as f:
+                pickle_data = pickle.load(f)
             
-            if not content.strip():
-                print(f"[{idx+1}/{len(files)}] Skipping empty file: {file_path.name}")
-                save_checkpoint(str(file_path), config['checkpoint_file'], uploaded_files)
-                continue
+            space_name = pickle_data.get('name', space_key)
+            pages = pickle_data.get('sampled_pages', [])
+            total_pages = pickle_data.get('total_pages_in_space', len(pages))
             
-            # Generate metadata
-            rel_path = file_path.relative_to(args.input_dir)
-            filename = str(rel_path).replace('\\', '/')
+            print(f"  Space name: {space_name}")
+            print(f"  Pages in pickle: {len(pages)} (Total in space: {total_pages})")
             
-            print(f"[{idx+1}/{len(files)}] Processing: {filename}")
+            # Get already processed pages for this space
+            processed_page_ids = set(processed_spaces.get(space_key, {}).get('pages', []))
             
-            file_id = str(uuid.uuid4())
+            # Process each page
+            space_page_count = 0
+            space_failed_count = 0
             
-            # Register in PostgreSQL FIRST (like OpenWebUI does)
-            if pg_conn:
-                if not register_file_in_postgres(pg_conn, file_id, filename, content, 
-                                               args.user_id, args.knowledge_id):
-                    print("  Warning: PostgreSQL registration failed, file won't show in UI")
-            
-            # Chunk text
-            chunks = chunk_text(content, args.chunk_size, args.overlap)
-            print(f"  Created {len(chunks)} chunks")
-            
-            # Generate embeddings
-            embeddings = []
-            for chunk in tqdm(chunks, desc="Generating embeddings", leave=False):
-                resp = ollama_client.embeddings(model=args.embed_model, prompt=chunk)
+            for idx, page in enumerate(pages):
+                page_id = page.get('id', '')
                 
-                vec = None
-                if hasattr(resp, 'embeddings'):
-                    vec = resp.embeddings
-                elif hasattr(resp, 'embedding'):
-                    vec = resp.embedding
-                elif isinstance(resp, list):
-                    vec = resp
-                elif isinstance(resp, dict):
-                    vec = resp.get('embeddings') or resp.get('embedding')
+                # Skip if already processed
+                if page_id in processed_page_ids:
+                    continue
                 
-                if vec is None:
-                    raise RuntimeError("Failed to extract embedding")
+                # Process page
+                success, file_info = process_confluence_page(
+                    page, space_key, space_name, config, pg_conn, 
+                    qdrant_client, ollama_client, args.base_url
+                )
                 
-                embeddings.append(vec)
+                if success and file_info:
+                    uploaded_files.append(file_info)
+                    
+                    # Update checkpoint
+                    if space_key not in processed_spaces:
+                        processed_spaces[space_key] = {'pages': [], 'completed': False}
+                    processed_spaces[space_key]['pages'].append(page_id)
+                    
+                    checkpoint['processed_spaces'] = processed_spaces
+                    checkpoint['uploaded_files'] = uploaded_files
+                    save_checkpoint(checkpoint, config['checkpoint_file'])
+                    
+                    space_page_count += 1
+                    total_pages_processed += 1
+                    
+                    # Update knowledge.data periodically
+                    if total_pages_processed % KNOWLEDGE_UPDATE_BATCH == 0 and pg_conn:
+                        print(f"\n[Progress] Updating knowledge.data with {len(uploaded_files)} files...")
+                        update_knowledge_data(pg_conn, args.knowledge_id, uploaded_files)
+                else:
+                    space_failed_count += 1
+                    failed_pages += 1
+                
+                # Progress indicator
+                if (idx + 1) % 10 == 0 or (idx + 1) == len(pages):
+                    print(f"    Progress: {idx + 1}/{len(pages)} pages processed")
             
-            # Insert into Qdrant
-            success = insert_chunks_to_qdrant(
-                qdrant_client,
-                chunks,
-                embeddings,
-                file_id,
-                filename,
-                args.user_id,
-                args.knowledge_id,
-                args.batch_points
-            )
+            # Mark space as completed
+            processed_spaces[space_key]['completed'] = True
+            checkpoint['processed_spaces'] = processed_spaces
+            save_checkpoint(checkpoint, config['checkpoint_file'])
             
-            if not success:
-                print(f"  ERROR: Failed to insert chunks to Qdrant")
-                failed_files.append(str(file_path))
-                continue
+            print(f"  Space complete: {space_page_count} pages uploaded, {space_failed_count} failed")
+            total_spaces_processed += 1
             
-            # Add to uploaded files list
-            uploaded_files.append({
-                "id": file_id,
-                "filename": filename,
-                "name": filename,
-                "created_at": int(time.time() * 1000)
-            })
-            
-            total_processed += 1
-            save_checkpoint(str(file_path), config['checkpoint_file'], uploaded_files)
-            
-            # Update knowledge.data periodically
-            if total_processed % KNOWLEDGE_UPDATE_BATCH == 0 and pg_conn:
-                print(f"\n[Progress] Updating knowledge.data with {len(uploaded_files)} files...")
-                update_knowledge_data(pg_conn, args.knowledge_id, uploaded_files)
-            
-            # Progress check
-            if total_processed % 10 == 0:
-                print(f"\n[Progress] {total_processed} files processed successfully")
-            
-            # Small delay between files
-            if total_processed % 5 == 0:
+            # Small delay between spaces
+            if total_spaces_processed < len(pickle_files):
                 time.sleep(0.5)
             
         except Exception as e:
-            print(f"ERROR processing {file_path}: {e}")
-            failed_files.append(str(file_path))
+            print(f"  ERROR processing space {space_key}: {e}")
+            continue
     
     # Final knowledge.data update
     if pg_conn and uploaded_files:
@@ -555,15 +749,9 @@ def main():
     # Final report
     print(f"\n{'='*60}")
     print(f"Processing complete!")
-    print(f"Total files processed: {total_processed}")
-    print(f"Failed files: {len(failed_files)}")
-    
-    if failed_files:
-        print("\nFailed files:")
-        for f in failed_files[:10]:
-            print(f"  - {f}")
-        if len(failed_files) > 10:
-            print(f"  ... and {len(failed_files) - 10} more")
+    print(f"Total spaces processed: {total_spaces_processed}")
+    print(f"Total pages uploaded: {total_pages_processed}")
+    print(f"Failed pages: {failed_pages}")
     
     # Show collection statistics
     try:
@@ -581,8 +769,8 @@ def main():
     
     clear_checkpoint(config['checkpoint_file'])
     
-    print("\n[OK] Files uploaded with full OpenWebUI integration!")
-    print("All files should be immediately visible in OpenWebUI.")
+    print("\n[OK] Confluence pages uploaded with full OpenWebUI integration!")
+    print("All pages should be immediately visible in OpenWebUI.")
 
 if __name__ == "__main__":
     main()
