@@ -292,16 +292,14 @@ def update_knowledge_data(conn, knowledge_id: str, uploaded_files: List[Dict]) -
             UPDATE knowledge 
             SET data = %s,
                 updated_at = %s,
-                meta = jsonb_set(
-                    COALESCE(meta, '{}'::jsonb),
-                    '{file_count}',
-                    %s::jsonb
+                meta = json_build_object(
+                    'file_count', %s::int
                 )
             WHERE id = %s
         """, (
             json.dumps(current_data),
             int(time.time() * 1000),
-            str(len(uploaded_files)),
+            len(uploaded_files),
             knowledge_id
         ))
         
