@@ -469,17 +469,16 @@ def process_confluence_page(page_data: Dict, space_key: str, space_name: str,
     # Build the content with metadata header
     confluence_url = f"{base_confluence_url}/pages/viewpage.action?pageId={page_id}"
     
-    # Create metadata header
-    metadata_header = f"---\n"
-    metadata_header += f"Source: Confluence - {space_name} ({space_key})\n"
-    metadata_header += f"Title: {page_title}\n"
-    metadata_header += f"URL: {confluence_url}\n"
+    # Create metadata header with proper markdown formatting
+    metadata_header = f"##### {page_title}\n\n"  # Smaller heading (h5)
+    metadata_header += f"**Source:** Confluence - {space_name} ({space_key})  \n"  # Two spaces for line break
+    metadata_header += f"**URL:** [{confluence_url}]({confluence_url})  \n"  # Make URL clickable
     if page_path:
-        metadata_header += f"Path: {space_name} > {' > '.join(page_path)} > {page_title}\n"
+        metadata_header += f"**Path:** {space_name} > {' > '.join(page_path)} > {page_title}  \n"
     else:
-        metadata_header += f"Path: {space_name} > {page_title}\n"
-    metadata_header += f"Last Updated: {last_updated}\n"
-    metadata_header += f"---\n\n"
+        metadata_header += f"**Path:** {space_name} > {page_title}  \n"
+    metadata_header += f"**Last Updated:** {last_updated}  \n"
+    metadata_header += f"\n---\n\n"  # Horizontal rule to separate header from content
     
     # Process HTML content
     if config.get('html_to_markdown', True):
