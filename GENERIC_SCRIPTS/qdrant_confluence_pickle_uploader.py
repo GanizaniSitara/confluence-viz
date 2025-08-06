@@ -18,6 +18,7 @@ import hashlib
 import os
 import pickle
 import psycopg2
+import sys
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
 from qdrant_client import QdrantClient
@@ -27,6 +28,15 @@ from tqdm import tqdm
 from datetime import datetime
 from bs4 import BeautifulSoup
 import html2text
+
+# Add parent directory to path to import utils
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from utils.html_cleaner import clean_confluence_html
+    USE_CONFLUENCE_CLEANER = True
+except ImportError:
+    print("Warning: Could not import clean_confluence_html from utils, using fallback")
+    USE_CONFLUENCE_CLEANER = False
 
 # Detect if we're in WSL
 is_wsl = os.path.exists('/proc/version') and 'microsoft' in open('/proc/version').read().lower()
@@ -461,18 +471,38 @@ def process_confluence_page(page_data: Dict, space_key: str, space_name: str,
     metadata_header += f"Last Updated: {last_updated}\n"
     metadata_header += f"---\n\n"
     
-    # Convert HTML to markdown if enabled
-    if config['html_to_markdown']:
-        page_content = html_to_markdown_text(page_body)
+    # Process HTML content
+    if config.get('html_to_markdown', True):
+        # First try the Confluence-specific cleaner if available
+        if USE_CONFLUENCE_CLEANER:
+            print(f"    Using Confluence HTML cleaner")
+            cleaned_html = clean_confluence_html(page_body)
+            if cleaned_html:
+                # If we have cleaned content, optionally convert to markdown
+                page_content = html_to_markdown_text(cleaned_html) if cleaned_html else ""
+            else:
+                print(f"    Warning: Confluence cleaner returned empty, trying direct markdown conversion")
+                page_content = html_to_markdown_text(page_body)
+        else:
+            # Fallback to direct markdown conversion
+            print(f"    Using direct HTML to markdown conversion")
+            page_content = html_to_markdown_text(page_body)
     else:
+        # Keep raw HTML
         page_content = page_body
     
     if not page_content.strip():
         print(f"    Warning: No content after processing, skipping page")
+        print(f"    Original body length was: {len(page_body)} chars")
         return False, None
     
     # Combine metadata header with content
     content = metadata_header + page_content
+    
+    # Debug logging
+    print(f"    Content length: {len(content)} chars (header: {len(metadata_header)}, body: {len(page_content)})")
+    if len(content) < 500:
+        print(f"    Content preview: {content[:200]}...")
     
     # Create filename
     filename = create_page_filename(space_key, page_title, page_id)
@@ -500,6 +530,13 @@ def process_confluence_page(page_data: Dict, space_key: str, space_name: str,
     # Chunk text
     chunks = chunk_text(content, config['chunk_size'], config['overlap'])
     print(f"    Created {len(chunks)} chunks")
+    
+    if not chunks:
+        print(f"    ERROR: No chunks created from content")
+        return False, None
+    
+    # Debug first chunk
+    print(f"    First chunk preview: {chunks[0][:100]}...")
     
     # Generate embeddings
     embeddings = []
