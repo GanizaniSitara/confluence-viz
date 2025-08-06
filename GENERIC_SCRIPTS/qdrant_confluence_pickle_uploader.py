@@ -416,28 +416,63 @@ def insert_chunks_to_qdrant(client: QdrantClient, chunks: List[str],
 
 def process_confluence_page(page_data: Dict, space_key: str, space_name: str,
                           config: Dict, pg_conn, qdrant_client, ollama_client,
-                          base_confluence_url: str) -> Tuple[bool, Dict]:
+                          base_confluence_url: str, all_pages_lookup: Dict = None) -> Tuple[bool, Dict]:
     """Process a single Confluence page and upload to OpenWebUI"""
     
     page_id = page_data.get('id', '')
     page_title = page_data.get('title', 'Untitled')
     page_body = page_data.get('body', '')
     last_updated = page_data.get('updated', '')
+    parent_id = page_data.get('parent_id')
+    level = page_data.get('level', 0)
     
     if not page_id or not page_body:
         return False, None
     
     print(f"    Processing page: {page_title} (ID: {page_id})")
     
+    # Build page hierarchy path
+    page_path = []
+    if all_pages_lookup and parent_id:
+        current_parent_id = parent_id
+        max_depth = 10  # Prevent infinite loops
+        depth = 0
+        while current_parent_id and depth < max_depth:
+            parent_page = all_pages_lookup.get(current_parent_id)
+            if parent_page:
+                page_path.insert(0, parent_page.get('title', 'Unknown'))
+                current_parent_id = parent_page.get('parent_id')
+            else:
+                break
+            depth += 1
+    
+    # Build the content with metadata header
+    confluence_url = f"{base_confluence_url}/pages/viewpage.action?pageId={page_id}"
+    
+    # Create metadata header
+    metadata_header = f"---\n"
+    metadata_header += f"Source: Confluence - {space_name} ({space_key})\n"
+    metadata_header += f"Title: {page_title}\n"
+    metadata_header += f"URL: {confluence_url}\n"
+    if page_path:
+        metadata_header += f"Path: {space_name} > {' > '.join(page_path)} > {page_title}\n"
+    else:
+        metadata_header += f"Path: {space_name} > {page_title}\n"
+    metadata_header += f"Last Updated: {last_updated}\n"
+    metadata_header += f"---\n\n"
+    
     # Convert HTML to markdown if enabled
     if config['html_to_markdown']:
-        content = html_to_markdown_text(page_body)
+        page_content = html_to_markdown_text(page_body)
     else:
-        content = page_body
+        page_content = page_body
     
-    if not content.strip():
+    if not page_content.strip():
         print(f"    Warning: No content after processing, skipping page")
         return False, None
+    
+    # Combine metadata header with content
+    content = metadata_header + page_content
     
     # Create filename
     filename = create_page_filename(space_key, page_title, page_id)
@@ -693,6 +728,9 @@ def main():
             # Get already processed pages for this space
             processed_page_ids = set(processed_spaces.get(space_key, {}).get('pages', []))
             
+            # Create a lookup dictionary for all pages (for building hierarchy paths)
+            all_pages_lookup = {p.get('id'): p for p in pages if p.get('id')}
+            
             # Process each page
             space_page_count = 0
             space_failed_count = 0
@@ -707,7 +745,7 @@ def main():
                 # Process page
                 success, file_info = process_confluence_page(
                     page, space_key, space_name, config, pg_conn, 
-                    qdrant_client, ollama_client, args.base_url
+                    qdrant_client, ollama_client, args.base_url, all_pages_lookup
                 )
                 
                 if success and file_info:
