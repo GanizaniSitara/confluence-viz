@@ -223,6 +223,8 @@ def create_page_filename(space_key: str, page_title: str, page_id: str) -> str:
 def register_file_in_postgres(conn, file_id: str, filename: str, content: str, 
                             user_id: str, knowledge_id: str, metadata: Dict) -> bool:
     """Register file in PostgreSQL database"""
+    print(f"    Registering in PostgreSQL - content length: {len(content)}, first 100 chars: {repr(content[:100])}...")
+    
     try:
         cur = conn.cursor()
         
@@ -249,6 +251,8 @@ def register_file_in_postgres(conn, file_id: str, filename: str, content: str,
             'last_updated': metadata.get('last_updated', '')
         }
         
+        print(f"    File metadata: size={file_meta['size']}, content_type={file_meta['content_type']}")
+        
         cur.execute("""
             INSERT INTO file (id, user_id, filename, meta, created_at, updated_at, hash, data)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -260,7 +264,7 @@ def register_file_in_postgres(conn, file_id: str, filename: str, content: str,
             current_time,
             current_time,
             file_hash,
-            json.dumps({})
+            json.dumps({'content': content})
         ))
         
         conn.commit()
@@ -349,6 +353,12 @@ def insert_chunks_to_qdrant(client: QdrantClient, chunks: List[str],
                            metadata: Dict, batch_size: int = 30, 
                            chunk_size: int = 500, overlap: int = 50) -> bool:
     """Insert chunks into both Qdrant collections"""
+    
+    print(f"    Inserting {len(chunks)} chunks to Qdrant (embeddings: {len(embeddings)})")
+    
+    # Debug first chunk being inserted
+    if chunks:
+        print(f"    First chunk to Qdrant: {repr(chunks[0][:100])}...")
     
     # Prepare points for both collections
     files_points = []
@@ -535,13 +545,23 @@ def process_confluence_page(page_data: Dict, space_key: str, space_name: str,
         print(f"    ERROR: No chunks created from content")
         return False, None
     
-    # Debug first chunk
-    print(f"    First chunk preview: {chunks[0][:100]}...")
+    # Debug chunks
+    print(f"    First chunk preview: {repr(chunks[0][:100])}...")
+    if len(chunks) > 1:
+        print(f"    Second chunk preview: {repr(chunks[1][:100])}...")
+    
+    # Check for empty chunks
+    empty_chunks = [i for i, c in enumerate(chunks) if not c.strip()]
+    if empty_chunks:
+        print(f"    WARNING: Found {len(empty_chunks)} empty chunks at positions: {empty_chunks[:5]}")
     
     # Generate embeddings
     embeddings = []
-    for chunk in chunks:
+    for i, chunk in enumerate(chunks):
         try:
+            if not chunk.strip():
+                print(f"    WARNING: Chunk {i} is empty, skipping")
+                continue
             resp = ollama_client.embeddings(model=config['embed_model'], prompt=chunk)
             
             vec = None
