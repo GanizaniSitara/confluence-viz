@@ -31,19 +31,6 @@ import html2text
 # Detect if we're in WSL
 is_wsl = os.path.exists('/proc/version') and 'microsoft' in open('/proc/version').read().lower()
 
-# Default configuration
-DEFAULT_PICKLE_DIR = "../temp"  # Default location of pickle files
-DEFAULT_OLLAMA_HOST = "http://localhost:11434"
-DEFAULT_QDRANT_HOST = "localhost"
-DEFAULT_QDRANT_PORT = 6333
-DEFAULT_KNOWLEDGE_ID = "00000000-0000-0000-0000-000000000000"  # Replace with your knowledge ID
-DEFAULT_USER_ID = "00000000-0000-0000-0000-000000000000"  # Replace with your user ID
-DEFAULT_CHUNK_SIZE = 500
-DEFAULT_OVERLAP = 50
-DEFAULT_EMBED_MODEL = "nomic-embed-text:v1.5"
-DEFAULT_VECTOR_SIZE = 768
-CHECKPOINT_FILE = 'qdrant_confluence_pickle_checkpoint.json'
-
 # OpenWebUI collection names
 FILES_COLLECTION = "open-webui_files"
 KNOWLEDGE_COLLECTION = "open-webui_knowledge"
@@ -56,50 +43,73 @@ def load_config():
     config = configparser.ConfigParser()
     config_file = 'settings.ini'
     
-    # Set defaults
-    defaults = {
-        'pickle_dir': DEFAULT_PICKLE_DIR,
-        'ollama_host': DEFAULT_OLLAMA_HOST,
-        'qdrant_host': DEFAULT_QDRANT_HOST,
-        'qdrant_port': str(DEFAULT_QDRANT_PORT),
-        'knowledge_id': DEFAULT_KNOWLEDGE_ID,
-        'user_id': DEFAULT_USER_ID,
-        'chunk_size': str(DEFAULT_CHUNK_SIZE),
-        'overlap': str(DEFAULT_OVERLAP),
-        'embed_model': DEFAULT_EMBED_MODEL,
-        'vector_size': str(DEFAULT_VECTOR_SIZE),
-        'checkpoint_file': CHECKPOINT_FILE,
-        'batch_points': '30',
-        'process_all_spaces': 'false',
-        'space_keys': '',  # Comma-separated list of space keys to process
-        'html_to_markdown': 'true',  # Convert HTML to markdown for better readability
-        # PostgreSQL settings
-        'db_host': '172.17.112.1' if is_wsl else 'localhost',
-        'db_port': '5432',
-        'db_name': 'openwebui',
-        'db_user': 'postgres',
-        'db_password': 'password'
-    }
+    # Initialize empty settings
+    settings = {}
     
-    if os.path.exists(config_file):
-        config.read(config_file)
-        if 'confluence_pickle_uploader' in config:
-            cfg = config['confluence_pickle_uploader']
-            for key in defaults:
-                if key in cfg:
-                    defaults[key] = cfg[key]
+    if not os.path.exists(config_file):
+        raise FileNotFoundError(f"Configuration file '{config_file}' not found. Please create it from settings.example.ini")
     
-    # Convert types
-    defaults['qdrant_port'] = int(defaults['qdrant_port'])
-    defaults['chunk_size'] = int(defaults['chunk_size'])
-    defaults['overlap'] = int(defaults['overlap'])
-    defaults['vector_size'] = int(defaults['vector_size'])
-    defaults['batch_points'] = int(defaults['batch_points'])
-    defaults['db_port'] = int(defaults['db_port'])
-    defaults['process_all_spaces'] = defaults['process_all_spaces'].lower() == 'true'
-    defaults['html_to_markdown'] = defaults['html_to_markdown'].lower() == 'true'
+    config.read(config_file)
     
-    return defaults
+    # Load settings from qdrant_uploader section (common settings)
+    if 'qdrant_uploader' in config:
+        for key, value in config['qdrant_uploader'].items():
+            settings[key] = value
+    else:
+        raise ValueError("Missing [qdrant_uploader] section in settings.ini")
+    
+    # Add settings specific to confluence_pickle_uploader
+    if 'confluence_pickle_uploader' in config:
+        for key, value in config['confluence_pickle_uploader'].items():
+            settings[key] = value
+    
+    # Required settings check
+    required_settings = [
+        'knowledge_id', 'user_id', 'ollama_host', 'embed_model',
+        'qdrant_host', 'qdrant_port', 'chunk_size', 'overlap',
+        'db_host', 'db_port', 'db_name', 'db_user', 'db_password',
+        'pickle_dir'
+    ]
+    
+    missing_settings = []
+    for setting in required_settings:
+        if setting not in settings:
+            missing_settings.append(setting)
+    
+    if missing_settings:
+        raise ValueError(f"Missing required settings: {', '.join(missing_settings)}")
+    
+    # Convert types for numeric settings
+    if 'qdrant_port' in settings:
+        settings['qdrant_port'] = int(settings['qdrant_port'])
+    if 'chunk_size' in settings:
+        settings['chunk_size'] = int(settings['chunk_size'])
+    if 'overlap' in settings:
+        settings['overlap'] = int(settings['overlap'])
+    if 'vector_size' in settings:
+        settings['vector_size'] = int(settings.get('vector_size', '768'))
+    else:
+        settings['vector_size'] = 768  # Default if not specified
+    if 'batch_points' in settings:
+        settings['batch_points'] = int(settings.get('batch_points', '30'))
+    else:
+        settings['batch_points'] = 30
+    if 'db_port' in settings:
+        settings['db_port'] = int(settings['db_port'])
+    
+    # Convert boolean settings
+    settings['process_all_spaces'] = settings.get('process_all_spaces', 'false').lower() == 'true'
+    settings['html_to_markdown'] = settings.get('html_to_markdown', 'true').lower() == 'true'
+    
+    # Set defaults for optional settings
+    if 'checkpoint_file' not in settings:
+        settings['checkpoint_file'] = 'qdrant_confluence_pickle_checkpoint.json'
+    if 'base_url' not in settings:
+        settings['base_url'] = 'https://confluence.example.com'
+    if 'space_keys' not in settings:
+        settings['space_keys'] = ''
+    
+    return settings
 
 def save_checkpoint(checkpoint_data: Dict, checkpoint_file: str):
     """Save checkpoint to track progress"""
@@ -328,7 +338,8 @@ def ensure_collection_exists(client: QdrantClient, collection_name: str, vector_
 def insert_chunks_to_qdrant(client: QdrantClient, chunks: List[str], 
                            embeddings: List[List[float]], file_id: str, 
                            filename: str, user_id: str, knowledge_id: str,
-                           metadata: Dict, batch_size: int = 30) -> bool:
+                           metadata: Dict, batch_size: int = 30, 
+                           chunk_size: int = 500, overlap: int = 50) -> bool:
     """Insert chunks into both Qdrant collections"""
     
     # Prepare points for both collections
@@ -342,11 +353,11 @@ def insert_chunks_to_qdrant(client: QdrantClient, chunks: List[str],
             "name": filename,
             "created_by": user_id,
             "file_id": file_id,
-            "start_index": idx * (DEFAULT_CHUNK_SIZE - DEFAULT_OVERLAP),
+            "start_index": idx * (chunk_size - overlap),
             "hash": hashlib.sha256(chunk.encode()).hexdigest(),
             "embedding_config": json.dumps({
                 "engine": "ollama",
-                "model": DEFAULT_EMBED_MODEL
+                "model": metadata.get('embed_model', 'nomic-embed-text:v1.5')
             }),
             "space_key": metadata.get('space_key', ''),
             "page_id": metadata.get('page_id', ''),
@@ -442,7 +453,8 @@ def process_confluence_page(page_data: Dict, space_key: str, space_name: str,
         'page_title': page_title,
         'last_updated': last_updated,
         'confluence_url': f"{base_confluence_url}/pages/viewpage.action?pageId={page_id}",
-        'html_to_markdown': config['html_to_markdown']
+        'html_to_markdown': config['html_to_markdown'],
+        'embed_model': config['embed_model']
     }
     
     # Register in PostgreSQL
@@ -490,7 +502,9 @@ def process_confluence_page(page_data: Dict, space_key: str, space_name: str,
         config['user_id'],
         config['knowledge_id'],
         page_metadata,
-        config['batch_points']
+        config['batch_points'],
+        config['chunk_size'],
+        config['overlap']
     )
     
     if not success:
