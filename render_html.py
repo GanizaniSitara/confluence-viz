@@ -1,4 +1,4 @@
-# description: Renders HTML for Confluence visualization.
+# description: Renders HTML for Confluence visualization from individual space pickle files.
 
 import pickle
 import json
@@ -8,9 +8,10 @@ import webbrowser
 import numpy as np
 from datetime import datetime
 import argparse
+from config_loader import load_data_settings
 
 OUTPUT_HTML = "confluence_treepack.html"
-OUTPUT_PICKLE = "confluence_data.pkl"
+DEFAULT_PICKLE_DIR = "temp"  # Default directory for individual space pickles
 
 # Color constants
 GRADIENT_STEPS = 10  # Number of color steps
@@ -99,13 +100,108 @@ def calculate_color_data(data):
 
     return percentile_thresholds, color_range_hex
 
+
+def parse_timestamp(ts_str):
+    """Parse various timestamp formats to Unix timestamp."""
+    if not ts_str:
+        return 0
+
+    try:
+        # Handle timezone suffix
+        if ts_str.endswith('Z'):
+            ts_str = ts_str[:-1]
+        elif '+' in ts_str:
+            ts_str = ts_str.split('+')[0]
+
+        dt = datetime.fromisoformat(ts_str)
+        return dt.timestamp()
+    except Exception:
+        return 0
+
+
+def load_spaces_from_pickles(pickle_dir):
+    """Load individual space pickle files and build visualization data structure."""
+    if not os.path.exists(pickle_dir):
+        print(f"Error: Pickle directory '{pickle_dir}' does not exist.", file=sys.stderr)
+        sys.exit(1)
+
+    pickle_files = [f for f in os.listdir(pickle_dir) if f.endswith('.pkl')]
+
+    if not pickle_files:
+        print(f"Error: No pickle files found in '{pickle_dir}'.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Loading {len(pickle_files)} space pickle files from '{pickle_dir}'...")
+
+    spaces = []
+    skipped = 0
+
+    for pkl_file in sorted(pickle_files):
+        pkl_path = os.path.join(pickle_dir, pkl_file)
+        try:
+            with open(pkl_path, 'rb') as f:
+                data = pickle.load(f)
+
+            # Skip placeholder/processing pickles
+            if data.get('status') == 'processing':
+                skipped += 1
+                continue
+
+            space_key = data.get('space_key', os.path.splitext(pkl_file)[0])
+            space_name = data.get('name', space_key)
+            pages = data.get('sampled_pages', [])
+            total_pages = data.get('total_pages_in_space', len(pages))
+
+            # Calculate average timestamp from pages
+            timestamps = []
+            for page in pages:
+                # Try different timestamp fields
+                ts_str = (page.get('lastModified') or
+                         page.get('when') or
+                         page.get('version', {}).get('when', ''))
+                ts = parse_timestamp(ts_str)
+                if ts > 0:
+                    timestamps.append(ts)
+
+            avg_timestamp = sum(timestamps) / len(timestamps) if timestamps else 0
+
+            spaces.append({
+                'key': space_key,
+                'name': space_name,
+                'value': total_pages,
+                'avg': avg_timestamp
+            })
+
+        except Exception as e:
+            print(f"  Warning: Error reading {pkl_file}: {e}", file=sys.stderr)
+            skipped += 1
+
+    if not spaces:
+        print("Error: No valid space data found.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Loaded {len(spaces)} spaces (skipped {skipped})")
+
+    # Build hierarchical structure
+    return {"name": "Confluence", "children": spaces}
+
+
 def load_data_and_render():
+    # Try to get pickle dir from config, fall back to default
+    try:
+        data_settings = load_data_settings()
+        config_pickle_dir = data_settings.get('remote_full_pickle_dir') or DEFAULT_PICKLE_DIR
+    except Exception:
+        config_pickle_dir = DEFAULT_PICKLE_DIR
+
     parser = argparse.ArgumentParser(description="Render Confluence visualization as HTML.")
     parser.add_argument('--min-pages', type=int, default=0, help='Minimum number of pages for a space to be included')
+    parser.add_argument('--pickle-dir', type=str, default=config_pickle_dir,
+                        help=f'Directory containing space pickle files (default: {config_pickle_dir})')
     args = parser.parse_args()
 
-    with open(OUTPUT_PICKLE, "rb") as f:
-        data = pickle.load(f)
+    # Load data from individual space pickle files
+    data = load_spaces_from_pickles(args.pickle_dir)
 
     # Filter spaces with less than min-pages
     def filter_spaces(node):
