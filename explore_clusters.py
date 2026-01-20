@@ -302,6 +302,16 @@ def get_vectors(spaces):
             # 1. Direct string: page['body'] = '<html>...'
             # 2. Nested structure: page['body']['storage']['value'] = '<html>...'
             body = p.get('body', '')
+
+            # DEBUG: Show body status for first 5 pages of first space
+            if page_count <= 5 and spaces_with_content == 0:
+                print(f"  Page {page_count}: body type={type(body).__name__}, ", end="")
+                if isinstance(body, dict):
+                    nested = body.get('storage', {}).get('value', '')
+                    print(f"nested value len={len(nested) if nested else 0}")
+                else:
+                    print(f"str len={len(body) if body else 0}, truthy={bool(body)}")
+
             if isinstance(body, dict):
                 # Nested structure from concurrent fetch
                 body = body.get('storage', {}).get('value', '')
