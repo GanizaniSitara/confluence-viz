@@ -44,14 +44,14 @@ def load_data_settings(config_path='settings.ini'):
 def load_visualization_settings(config_path='settings.ini'):
     """Load visualization settings from the configuration file."""
     config = configparser.ConfigParser()
-    
+
     #Set default values for visualization section only
     config['visualization'] = {
         'default_clusters': '20',
         'default_min_pages': '5',
         'spaces_dir': 'temp/full_pickles'
     }
-    
+
     # Override with values from config file if it exists
     if os.path.exists(config_path):
         temp_config = configparser.ConfigParser()
@@ -59,7 +59,7 @@ def load_visualization_settings(config_path='settings.ini'):
         if 'visualization' in temp_config:
             for key, value in temp_config['visualization'].items():
                 config['visualization'][key] = value
-    
+
     # Return as dictionary with all settings
     result = {}
     for key, value in config['visualization'].items():
@@ -68,4 +68,12 @@ def load_visualization_settings(config_path='settings.ini'):
             result[key] = int(value)
         else:
             result[key] = value
+
+    # Also include confluence_base_url from confluence section for visualization links
+    if os.path.exists(config_path):
+        temp_config = configparser.ConfigParser()
+        temp_config.read(config_path)
+        if 'confluence' in temp_config:
+            result['confluence_base_url'] = temp_config['confluence'].get('base_url', '')
+
     return result
