@@ -275,6 +275,26 @@ def get_vectors(spaces):
                     print(f"Body preview: {raw_body[:300] if raw_body else 'EMPTY'}...")
                 else:
                     print(f"Body unexpected type: {type(raw_body)}")
+
+                # DEBUG: Test cleaning on this body
+                test_body = raw_body
+                if isinstance(test_body, dict):
+                    test_body = test_body.get('storage', {}).get('value', '')
+                if test_body:
+                    print(f"\n--- Cleaning debug ---")
+                    print(f"Input to clean_html length: {len(test_body)}")
+                    cleaned_result = clean_html(test_body)
+                    print(f"Output from clean_html length: {len(cleaned_result) if cleaned_result else 0}")
+                    print(f"Cleaned preview: {cleaned_result[:300] if cleaned_result else 'EMPTY'}...")
+                    # Try raw BeautifulSoup extraction
+                    try:
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(test_body, 'html.parser')
+                        raw_text = soup.get_text(separator=' ', strip=True)
+                        print(f"Raw BeautifulSoup text length: {len(raw_text) if raw_text else 0}")
+                        print(f"Raw BS text preview: {raw_text[:300] if raw_text else 'EMPTY'}...")
+                    except Exception as e:
+                        print(f"BeautifulSoup test error: {e}")
                 print(f"{'='*60}\n")
                 debug_shown = True
 
