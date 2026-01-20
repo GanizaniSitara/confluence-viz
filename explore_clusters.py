@@ -238,6 +238,10 @@ def get_vectors(spaces):
     valid_spaces = []
     spaces_with_content = 0
     total_spaces = len(spaces)
+
+    # DEBUG: Check first space's first page structure
+    debug_shown = False
+
     for s in spaces:
         space_key = s.get('space_key', 'unknown')
         cleaned_texts = []
@@ -247,6 +251,33 @@ def get_vectors(spaces):
         pages_with_body = 0
         for p in s.get('sampled_pages', []):
             page_count += 1
+
+            # DEBUG: Show structure of first page from first space
+            if not debug_shown:
+                print(f"\n{'='*60}")
+                print(f"DEBUG: First page structure from space '{space_key}'")
+                print(f"{'='*60}")
+                print(f"Page keys: {list(p.keys())}")
+                print(f"Page title: {p.get('title', 'N/A')}")
+                raw_body = p.get('body', None)
+                print(f"Body type: {type(raw_body)}")
+                if raw_body is None:
+                    print("Body is None")
+                elif isinstance(raw_body, dict):
+                    print(f"Body dict keys: {list(raw_body.keys())}")
+                    storage = raw_body.get('storage', {})
+                    print(f"Body['storage'] keys: {list(storage.keys()) if isinstance(storage, dict) else type(storage)}")
+                    value = storage.get('value', '') if isinstance(storage, dict) else ''
+                    print(f"Body['storage']['value'] length: {len(value) if value else 0}")
+                    print(f"Body['storage']['value'] preview: {value[:300] if value else 'EMPTY'}...")
+                elif isinstance(raw_body, str):
+                    print(f"Body string length: {len(raw_body)}")
+                    print(f"Body preview: {raw_body[:300] if raw_body else 'EMPTY'}...")
+                else:
+                    print(f"Body unexpected type: {type(raw_body)}")
+                print(f"{'='*60}\n")
+                debug_shown = True
+
             # Handle both body structures:
             # 1. Direct string: page['body'] = '<html>...'
             # 2. Nested structure: page['body']['storage']['value'] = '<html>...'
