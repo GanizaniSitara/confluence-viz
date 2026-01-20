@@ -241,13 +241,19 @@ def get_vectors(spaces):
     for s in spaces:
         space_key = s.get('space_key', 'unknown')
         cleaned_texts = []
-        
+
         # Process each page in the space
         page_count = 0
         pages_with_body = 0
         for p in s.get('sampled_pages', []):
             page_count += 1
+            # Handle both body structures:
+            # 1. Direct string: page['body'] = '<html>...'
+            # 2. Nested structure: page['body']['storage']['value'] = '<html>...'
             body = p.get('body', '')
+            if isinstance(body, dict):
+                # Nested structure from concurrent fetch
+                body = body.get('storage', {}).get('value', '')
             if body:
                 pages_with_body += 1
                 cleaned_text = clean_html(body)
