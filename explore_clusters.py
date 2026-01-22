@@ -208,21 +208,41 @@ def get_vectors(spaces):
     # Try to import BeautifulSoup, if not available fall back to regex
     try:
         from bs4 import BeautifulSoup
-        
+
         # Function to clean HTML content
         def clean_html(html_content):
             if not html_content:
                 return ''
             try:
-                # Remove HTML tags and extract text
-                soup = BeautifulSoup(html_content, 'html.parser')
+                # Confluence storage format uses XML namespaces (ac:, ri:, etc.)
+                # BeautifulSoup's html.parser doesn't handle these well.
+                # Pre-process to normalize namespace tags so content is extracted.
+
+                # Remove namespace prefixes from tags (ac:structured-macro -> structured-macro)
+                # This ensures BeautifulSoup can traverse into these elements
+                normalized = re.sub(r'<(/?)(\w+):', r'<\1\2-', html_content)
+
+                # Also handle self-closing namespace tags
+                normalized = re.sub(r'<(\w+):(\w+)\s*/>', r'<\1-\2/>', normalized)
+
+                # Parse with lxml if available (better XML handling), fallback to html.parser
+                try:
+                    soup = BeautifulSoup(normalized, 'lxml')
+                except Exception:
+                    soup = BeautifulSoup(normalized, 'html.parser')
+
+                # Extract text from all elements
                 text = soup.get_text(separator=' ', strip=True)
+
                 # Remove special characters and excessive whitespace
                 text = re.sub(r'\s+', ' ', text)
                 return text.strip()
             except Exception as e:
                 print(f"Error cleaning HTML: {e}")
-                return html_content
+                # Fallback: just strip all tags with regex
+                text = re.sub(r'<[^>]+>', ' ', html_content)
+                text = re.sub(r'\s+', ' ', text)
+                return text.strip()
     except ImportError:
         print("BeautifulSoup not installed. Using simple regex for HTML cleaning.")
         def clean_html(html_content):
