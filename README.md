@@ -137,6 +137,29 @@ This project helps organizations understand how their Confluence instance is bei
 - **proximity_visualizer.py**: Creates proximity-based visualizations
 - **scatter_plot_visualizer.py**: Creates scatter plot visualizations
 
+## Data Files
+
+### stopwords.txt
+Word exclusion list for cluster analysis. One word per line, case-insensitive. Used by `explore_clusters.py` to filter out common/noisy terms when identifying cluster topics.
+
+Default includes: years (2021-2025), generic tech terms (api, architecture, data...), Confluence-specific terms (jira, confluence, sprint...), and common English words.
+
+### app_search.txt
+Application search terms for the "Search for applications" features in `explore_clusters.py`. One application name per line.
+
+**Setup:**
+```bash
+cp app_search.example.txt app_search.txt
+# Edit app_search.txt with your application names
+```
+
+**Usage in explore_clusters.py:**
+- Option 13: Direct search (slow)
+- Option 14: Build Whoosh index (run first for fast searches)
+- Option 15: Indexed search - full report
+- Option 18: Top space per application term
+- Option 19: All spaces per application term
+
 ## Example Visualizations
 
 - **confluence_treepack.html**: Treemap visualization of Confluence spaces
