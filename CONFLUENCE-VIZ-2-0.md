@@ -17,14 +17,22 @@ The project has grown organically into a comprehensive Confluence data extractio
 
 ---
 
-## Phase 1: Extract Confluence Unified Search to Separate Repo
+## Phase 1: Extract Confluence Timeline Search to Separate Repo
 
 **Priority:** HIGH
 **Reason:** Independent Flask app, version-specific implementations, different deployment model
 
+### What It Actually Does
+Plots page last-edit timestamps on a timeline, filtered by search terms, grouped by Confluence space. NOT a general unified search - it's a **timeline visualization of edit activity**.
+
+### Suggested Repo Names
+- `confluence-timeline-search` (describes function)
+- `confluence-edit-timeline` (clearer)
+- `confluence-space-timeline` (emphasizes grouping)
+
 ### Files to Extract
 ```
-confluence_unified_search/
+confluence_unified_search/  →  rename to match new repo
 ├── search_aggregation_service_confluence_9.2.py   [Confluence Cloud]
 ├── search_aggregation_service_confluence_6.17.py  [Confluence Server]
 ├── app/                                           [Flask modules]
@@ -38,9 +46,11 @@ confluence_unified_search/
 ```
 
 ### Steps
-- [ ] Create new repo: `confluence-unified-search`
+- [ ] Decide on repo name
+- [ ] Create new repo: `confluence-timeline-search` (or chosen name)
 - [ ] Copy directory contents
-- [ ] Write proper README with setup instructions
+- [ ] Rename internal references from "unified_search" to new name
+- [ ] Write proper README describing timeline visualization feature
 - [ ] Add requirements.txt for Flask app
 - [ ] Add settings.example.ini specific to search service
 - [ ] Update this repo to remove the directory
@@ -87,15 +97,21 @@ confluence_unified_search/
 
 ---
 
-## Phase 3: Apply Pending Fixes
+## Phase 3: Apply Pending Fixes (NEEDS TESTING FIRST)
 
 ### HTML Cleaner Namespace Fix
 **Issue:** `utils/html_cleaner.py` uses `html.parser` which doesn't handle Confluence XML namespace tags (`ac:`, `ri:`).
+**Hypothesis:** This causes content inside `<ac:rich-text-body>` etc. to be lost during cleaning.
 **Fix Applied:** `explore_clusters.py` (commit f2b78bb)
 **Still Needed:** Apply same fix to `utils/html_cleaner.py`
 
+**CAVEAT:** This fix is theoretical - not yet confirmed to solve the work Confluence issue. Need to:
+1. First diagnose actual cause using `explore_pickle_content.py`
+2. Confirm raw HTML has content but cleaned is empty
+3. Only then apply fix
+
 ```python
-# Add before BeautifulSoup parsing:
+# Proposed fix - add before BeautifulSoup parsing:
 normalized = re.sub(r'<(/?)(\w+):', r'<\1\2-', html_content)
 normalized = re.sub(r'<(\w+):(\w+)\s*/>', r'<\1-\2/>', normalized)
 try:
@@ -104,9 +120,17 @@ except Exception:
     soup = BeautifulSoup(normalized, 'html.parser')
 ```
 
-- [ ] Test fix with work Confluence instance using `explore_pickle_content.py`
-- [ ] If raw HTML has content but cleaned is empty, apply fix
-- [ ] Update `utils/html_cleaner.py`
+### Testing Steps
+- [ ] Pull latest at work
+- [ ] Run `python explore_pickle_content.py SPACENAME`
+- [ ] Option 5 → press `r` to view raw HTML
+- [ ] Check: Does raw HTML have content?
+  - **YES, raw has content** → press `c` to view cleaned → is it empty?
+    - **YES, cleaned is empty** → namespace fix is likely the solution
+    - **NO, cleaned has content** → issue is elsewhere (not this fix)
+  - **NO, raw is empty** → issue is in data collection, not cleaning
+- [ ] If fix confirmed needed, apply to `utils/html_cleaner.py`
+- [ ] Test again to verify fix works
 - [ ] Commit and push
 
 ---
@@ -254,62 +278,75 @@ flask
 
 ---
 
-## Phase 9: Project Structure Reorganization
+## Phase 9: Project Structure Reorganization (TBD)
 
-### Current (Flat)
-```
-confluence_visualization/
-├── 50+ .py files in root
-├── utils/
-├── GENERIC_SCRIPTS/
-├── confluence_unified_search/  [TO BE EXTRACTED]
-└── temp/
-```
+**Status:** NOT DECIDED - needs more thought
 
-### Proposed (Organized)
+### Options
+
+#### Option A: Simple Directory Reorganization
+Move files into subdirectories but keep as standalone scripts.
 ```
 confluence_visualization/
 ├── src/
 │   ├── collectors/           [Data extraction]
-│   │   ├── sample_and_pickle_spaces.py
-│   │   └── sample_and_pickle_attachments.py
 │   ├── explorers/            [Interactive tools]
-│   │   ├── explore_clusters.py
-│   │   ├── explore_pickle_content.py
-│   │   └── space_explorer.py
 │   ├── visualizers/          [Rendering]
-│   │   ├── render_html.py
-│   │   ├── scatter_plot_visualizer.py
-│   │   └── proximity_visualizer.py
 │   ├── uploaders/            [External integrations]
-│   │   ├── openwebui/
-│   │   └── qdrant/
 │   └── utils/
-│       ├── config_loader.py
-│       └── html_cleaner.py
 ├── tests/
 ├── docs/
 ├── data/                     [Replaces temp/]
 └── config/
-    ├── settings.example.ini
-    └── settings_gpu_load.example.ini
 ```
+**Pros:** Organized, low effort
+**Cons:** Not installable, import paths change
 
-**Note:** This is a breaking change - defer until other cleanup complete
+#### Option B: Python Package
+Convert to installable package with CLI entry points.
+```
+confluence_viz/
+├── pyproject.toml
+├── src/
+│   └── confluence_viz/
+│       ├── __init__.py
+│       ├── collectors/
+│       ├── explorers/
+│       ├── visualizers/
+│       ├── uploaders/
+│       └── utils/
+├── tests/
+└── docs/
+```
+**Pros:** `pip install .`, proper imports, versioning, distributable
+**Cons:** More effort, breaking change, need to learn packaging
+
+#### Option C: Keep Flat, Just Clean Up
+Remove dead code, fix inconsistencies, but keep current structure.
+**Pros:** Minimal disruption, works today
+**Cons:** Doesn't scale, harder to navigate
+
+### Decision Needed
+- [ ] Evaluate actual pain points with current structure
+- [ ] Decide if package distribution is a goal
+- [ ] Consider if GENERIC_SCRIPTS should be separate package
+- [ ] Make decision after Phases 1-8 complete
+
+**Note:** This is a breaking change - defer until other cleanup complete and we have clearer requirements
 
 ---
 
 ## Execution Order
 
-1. **Phase 1** - Extract unified search (independent, can do now)
-2. **Phase 3** - Apply HTML cleaner fix (blocking work usage)
+1. **Phase 1** - Extract timeline search (independent, can do now)
+2. **Phase 3** - TEST HTML cleaner fix at work first, then apply if confirmed
 3. **Phase 2** - Verify features (builds understanding)
 4. **Phase 4** - Commit GENERIC_SCRIPTS changes
 5. **Phase 5** - Remove duplicates
 6. **Phase 6** - Fix config inconsistencies
 7. **Phase 7** - Update requirements
 8. **Phase 8** - Documentation
-9. **Phase 9** - Restructure (major, do last)
+9. **Phase 9** - Restructure (TBD - maybe Python package, decide later)
 
 ---
 
