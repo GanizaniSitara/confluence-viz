@@ -16,7 +16,7 @@ from utils.html_cleaner import clean_confluence_html
 
 # Load configurable pickle directory from settings
 viz_settings = load_visualization_settings()
-SPACES_DIR = viz_settings.get('spaces_dir', 'temp/full_pickles')
+SPACES_DIR = viz_settings.get('spaces_dir', 'temp')
 SNIPPET_LINES = 10 # Number of lines for snippets
 
 def clear_console():
