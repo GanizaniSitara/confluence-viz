@@ -182,3 +182,39 @@ In summary:
 Existing individual .pkl files for spaces in the temp directory are not automatically removed en masse. They are overwritten if and when the script re-processes that specific space.
 
 The confluence_checkpoint.json file is used to manage resumption and can be removed if you use the --reset option, forcing a full re-processing of all spaces.
+
+## Troubleshooting
+
+### Empty Content After Cleaning (0 pages with content in explore_clusters)
+
+If `explore_clusters.py` reports 0 or very few pages with content after cleaning, use `explore_pickle_content.py` to diagnose:
+
+```bash
+python explore_pickle_content.py SPACENAME
+```
+
+1. Select **Option 5** (Explore Pages) to paginate through pages
+2. Press **`r`** to view **raw HTML** - see what's actually stored in the body
+3. Press **`c`** to view **cleaned** text - see what remains after cleaning
+4. Press **`f`** to toggle between full content and snippet view
+5. Press **`n`/`p`** to navigate next/previous page
+
+**Diagnosis:**
+- **Raw HTML has content, cleaned is empty**: The HTML cleaner is stripping everything. This typically happens when Confluence content uses XML namespace tags (`ac:structured-macro`, `ac:rich-text-body`, etc.) that BeautifulSoup's `html.parser` doesn't traverse into properly. The fix is to normalize namespace prefixes before parsing (convert `ac:tag` to `ac-tag`). This fix has been applied to `explore_clusters.py` but may also need to be applied to `utils/html_cleaner.py`.
+
+- **Raw HTML is empty**: The body content wasn't fetched. Check:
+  - API user permissions (may lack read access to page content)
+  - Confluence API version differences (Cloud vs Server)
+  - Network/authentication issues during pickle generation
+
+- **Raw HTML contains only macros**: Some pages are 100% macro content (diagrams, embeds, etc.) with no text. These will legitimately be empty after cleaning.
+
+### Diagnosing Pickle Structure
+
+Run the diagnostic script to inspect pickle file contents:
+
+```bash
+python diagnose_pickle_bodies.py --dir /path/to/pickles --files 3 --pages 5
+```
+
+This shows body types (string vs dict), content lengths, and identifies structural issues.
