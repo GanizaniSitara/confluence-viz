@@ -11,6 +11,8 @@ from pathlib import Path
 
 import requests
 
+from config_loader import load_confluence_settings
+
 # ---------------------------------------------------------------------------
 # SQL Content Generators for Testing
 # ---------------------------------------------------------------------------
@@ -279,7 +281,7 @@ def create_space(base_url, auth, verify, key, name, desc=""):
         },
     }
     r = post_with_retry(url, payload, auth, verify)
-    return r.ok
+    return r  # Return full response for debugging
 
 def generate_content_with_corporate_lorem(paragraphs=2):
     """
@@ -329,7 +331,7 @@ def create_page(base_url, auth, verify, space_key, title, content=None, use_olla
         },
     }
     r = post_with_retry(f"{base_url}/rest/api/content", payload, auth, verify)
-    return r.ok
+    return r  # Return full response for debugging
 
 # ---------------------------------------------------------------------------
 # Main script
@@ -337,41 +339,52 @@ def create_page(base_url, auth, verify, space_key, title, content=None, use_olla
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--url", help="Confluence base URL, e.g. https://confluence.example.com")
-    parser.add_argument("--user", help="Username")
-    parser.add_argument("--password", help="Password")
+    parser.add_argument("--url", help="Confluence base URL (overrides settings.ini)")
+    parser.add_argument("--user", help="Username (overrides settings.ini)")
+    parser.add_argument("--password", help="Password (overrides settings.ini)")
     parser.add_argument("--spaces", type=int, help="Number of spaces to create")
     parser.add_argument("--min-pages", type=int, help="Minimum pages per space")
     parser.add_argument("--max-pages", type=int, help="Maximum pages per space")
     parser.add_argument("--seed-file", type=Path, help="Seed words file (txt or json)")
-    parser.add_argument("--verify-ssl", action="store_true", help="Enable SSL verification (default off)")
+    parser.add_argument("--verify-ssl", action="store_true", help="Enable SSL verification (overrides settings.ini)")
     parser.add_argument("--use-ollama", action="store_true", help="Generate content using CorporateLorem API")
     parser.add_argument("--sql", action="store_true", help="Randomly insert SQL content (Oracle/MS SQL) into ~1/3 of pages")
+    parser.add_argument("--debug", action="store_true", help="Print detailed error responses from Confluence API")
     args = parser.parse_args()
 
-    # Default configuration
-    DEFAULT_URL = "http://192.168.65.128:8090"
-    DEFAULT_USER = "admin"
-    DEFAULT_PASSWORD = "admin"
+    # Load settings from settings.ini
+    try:
+        conf_settings = load_confluence_settings()
+        print("Loaded Confluence settings from settings.ini")
+    except FileNotFoundError:
+        print("Warning: settings.ini not found, using fallback defaults", file=sys.stderr)
+        conf_settings = {
+            'base_url': 'http://192.168.65.128:8090',
+            'username': 'admin',
+            'password': 'admin',
+            'verify_ssl': False
+        }
+
+    # Default configuration for non-confluence settings
     DEFAULT_SPACES = 300
     DEFAULT_MIN_PAGES = 10
     DEFAULT_MAX_PAGES = 100
     DEFAULT_SEED_FILE = Path("seeds.txt")
-    DEFAULT_VERIFY_SSL = False
     DEFAULT_USE_OLLAMA = True
     DEFAULT_SQL = False
 
-    # Use provided arguments or fallback to defaults
-    url = args.url or DEFAULT_URL
-    user = args.user or DEFAULT_USER
-    password = args.password or DEFAULT_PASSWORD
+    # Use provided arguments, fallback to settings.ini, then defaults
+    url = args.url or conf_settings['base_url']
+    user = args.user or conf_settings['username']
+    password = args.password or conf_settings['password']
+    verify_ssl = args.verify_ssl or conf_settings.get('verify_ssl', False)
     spaces = args.spaces or DEFAULT_SPACES
     min_pages = args.min_pages or DEFAULT_MIN_PAGES
     max_pages = args.max_pages or DEFAULT_MAX_PAGES
     seed_file = args.seed_file or DEFAULT_SEED_FILE
-    verify_ssl = args.verify_ssl or DEFAULT_VERIFY_SSL
     use_ollama = args.use_ollama or DEFAULT_USE_OLLAMA
     use_sql = args.sql or DEFAULT_SQL
+    debug = args.debug
 
     print(f"Starting content creation with the following settings:")
     print(f"URL: {url}")
@@ -391,13 +404,22 @@ def main():
     print(f"Loaded {len(seeds)} seed words for content generation")
     existing_keys = set()
 
+    def print_debug_response(resp, context=""):
+        """Print response details for debugging."""
+        if debug:
+            print(f"      [DEBUG] {context}", file=sys.stderr)
+            print(f"      [DEBUG] Status: {resp.status_code}", file=sys.stderr)
+            print(f"      [DEBUG] Response: {resp.text[:1000]}", file=sys.stderr)
+
     for i in range(spaces):
         key = rand_key(existing_keys)
         existing_keys.add(key)
         name = f"{random.choice(seeds)} Space {i + 1}"
         print(f"Creating space [{i + 1}/{spaces}]: {name} (key: {key})...")
-        if not create_space(base_url, auth, verify_ssl, key, name):
+        resp = create_space(base_url, auth, verify_ssl, key, name)
+        if not resp.ok:
             print(f"Failed to create space {name} ({key})", file=sys.stderr)
+            print_debug_response(resp, f"create_space failed for {key}")
             continue
 
         page_total = random.randint(min_pages, max_pages)
@@ -423,27 +445,35 @@ def main():
                     # Append SQL content after the generated content
                     newline_char = '\n'
                     html_content = f"<p>{base_content.replace(newline_char, '</p><p>')}</p>{sql_suffix}"
-                    if not create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True):
+                    resp = create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True)
+                    if not resp.ok:
                         print(f"Failed to create page {title} in space {key}", file=sys.stderr)
+                        print_debug_response(resp, f"create_page failed for {title}")
                     else:
                         print(f"      Page created successfully (with SQL)")
                 else:
-                    if not create_page(base_url, auth, verify_ssl, key, title, use_ollama=True):
+                    resp = create_page(base_url, auth, verify_ssl, key, title, use_ollama=True)
+                    if not resp.ok:
                         print(f"Failed to create page {title} in space {key}", file=sys.stderr)
+                        print_debug_response(resp, f"create_page failed for {title}")
                     else:
                         print(f"      Page created successfully")
             else:
                 content = " ".join(random.choices(seeds, k=30))
                 if include_sql:
                     html_content = f"<p>{content}</p>{sql_suffix}"
-                    if not create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True):
+                    resp = create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True)
+                    if not resp.ok:
                         print(f"Failed to create page {title} in space {key}", file=sys.stderr)
+                        print_debug_response(resp, f"create_page failed for {title}")
                     else:
                         print(f"      Page created successfully (with SQL)")
                 else:
                     print(f"      Using random seed content")
-                    if not create_page(base_url, auth, verify_ssl, key, title, content):
+                    resp = create_page(base_url, auth, verify_ssl, key, title, content)
+                    if not resp.ok:
                         print(f"Failed to create page {title} in space {key}", file=sys.stderr)
+                        print_debug_response(resp, f"create_page failed for {title}")
                     else:
                         print(f"      Page created successfully")
 
