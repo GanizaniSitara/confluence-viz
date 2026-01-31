@@ -215,17 +215,16 @@ def generate_sql_content():
     before = random.choice(context_before)
     after = random.choice(context_after)
 
-    # Build plain text content - just paragraphs with SQL pasted in
+    # Build as plain text - Confluence will handle it
+    # Just return text with newlines, no HTML tags
     parts = []
     if before:
-        parts.append(f"<p>{before}</p>")
-    # SQL as plain paragraph text (no pre, no code tags)
-    # First escape HTML special chars (<, >, &, etc.) then replace newlines
-    sql_escaped = html.escape(sql_snippet)
-    sql_as_text = sql_escaped.replace('\n', '<br />')
-    parts.append(f"<p>{sql_as_text}</p>")
+        parts.append(before)
+    parts.append("")  # blank line before SQL
+    parts.append(sql_snippet)
+    parts.append("")  # blank line after SQL
     if after:
-        parts.append(f"<p>{after}</p>")
+        parts.append(after)
 
     return "\n".join(parts)
 
@@ -445,41 +444,39 @@ def main():
             if use_ollama:
                 print(f"      Generating content with CorporateLorem API...")
                 base_content = generate_content_with_corporate_lorem()
-                # Escape HTML special chars in base content
-                base_content_escaped = html.escape(base_content)
                 if include_sql:
-                    # Append SQL content after the generated content
-                    newline_char = '\n'
-                    html_content = f"<p>{base_content_escaped.replace(newline_char, '</p><p>')}</p>{sql_suffix}"
-                    resp = create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True)
-                    if not resp.ok:
-                        print(f"Failed to create page {title} in space {key}", file=sys.stderr)
-                        print_debug_response(resp, f"create_page failed for {title}")
-                    else:
-                        print(f"      Page created successfully (with SQL)")
+                    # Append SQL as plain text - will be escaped together
+                    full_content = base_content + "\n\n" + sql_suffix
                 else:
-                    resp = create_page(base_url, auth, verify_ssl, key, title, use_ollama=True)
-                    if not resp.ok:
-                        print(f"Failed to create page {title} in space {key}", file=sys.stderr)
-                        print_debug_response(resp, f"create_page failed for {title}")
+                    full_content = base_content
+
+                # Escape and convert to HTML
+                content_escaped = html.escape(full_content)
+                html_content = "<p>" + content_escaped.replace('\n', '</p><p>') + "</p>"
+                resp = create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True)
+                if not resp.ok:
+                    print(f"Failed to create page {title} in space {key}", file=sys.stderr)
+                    print_debug_response(resp, f"create_page failed for {title}")
+                else:
+                    if include_sql:
+                        print(f"      Page created successfully (with SQL)")
                     else:
                         print(f"      Page created successfully")
             else:
                 content = " ".join(random.choices(seeds, k=30))
                 if include_sql:
-                    html_content = f"<p>{content}</p>{sql_suffix}"
-                    resp = create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True)
-                    if not resp.ok:
-                        print(f"Failed to create page {title} in space {key}", file=sys.stderr)
-                        print_debug_response(resp, f"create_page failed for {title}")
-                    else:
-                        print(f"      Page created successfully (with SQL)")
+                    content = content + "\n\n" + sql_suffix
+
+                # Escape and convert to HTML
+                content_escaped = html.escape(content)
+                html_content = "<p>" + content_escaped.replace('\n', '</p><p>') + "</p>"
+                resp = create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True)
+                if not resp.ok:
+                    print(f"Failed to create page {title} in space {key}", file=sys.stderr)
+                    print_debug_response(resp, f"create_page failed for {title}")
                 else:
-                    print(f"      Using random seed content")
-                    resp = create_page(base_url, auth, verify_ssl, key, title, content)
-                    if not resp.ok:
-                        print(f"Failed to create page {title} in space {key}", file=sys.stderr)
-                        print_debug_response(resp, f"create_page failed for {title}")
+                    if include_sql:
+                        print(f"      Page created successfully (with SQL)")
                     else:
                         print(f"      Page created successfully")
 
