@@ -11,6 +11,8 @@ from pathlib import Path
 
 import requests
 
+from config_loader import load_confluence_settings
+
 # ---------------------------------------------------------------------------
 # SQL Content Generators for Testing
 # ---------------------------------------------------------------------------
@@ -337,39 +339,48 @@ def create_page(base_url, auth, verify, space_key, title, content=None, use_olla
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--url", help="Confluence base URL, e.g. https://confluence.example.com")
-    parser.add_argument("--user", help="Username")
-    parser.add_argument("--password", help="Password")
+    parser.add_argument("--url", help="Confluence base URL (overrides settings.ini)")
+    parser.add_argument("--user", help="Username (overrides settings.ini)")
+    parser.add_argument("--password", help="Password (overrides settings.ini)")
     parser.add_argument("--spaces", type=int, help="Number of spaces to create")
     parser.add_argument("--min-pages", type=int, help="Minimum pages per space")
     parser.add_argument("--max-pages", type=int, help="Maximum pages per space")
     parser.add_argument("--seed-file", type=Path, help="Seed words file (txt or json)")
-    parser.add_argument("--verify-ssl", action="store_true", help="Enable SSL verification (default off)")
+    parser.add_argument("--verify-ssl", action="store_true", help="Enable SSL verification (overrides settings.ini)")
     parser.add_argument("--use-ollama", action="store_true", help="Generate content using CorporateLorem API")
     parser.add_argument("--sql", action="store_true", help="Randomly insert SQL content (Oracle/MS SQL) into ~1/3 of pages")
     args = parser.parse_args()
 
-    # Default configuration
-    DEFAULT_URL = "http://192.168.65.128:8090"
-    DEFAULT_USER = "admin"
-    DEFAULT_PASSWORD = "admin"
+    # Load settings from settings.ini
+    try:
+        conf_settings = load_confluence_settings()
+        print("Loaded Confluence settings from settings.ini")
+    except FileNotFoundError:
+        print("Warning: settings.ini not found, using fallback defaults", file=sys.stderr)
+        conf_settings = {
+            'base_url': 'http://192.168.65.128:8090',
+            'username': 'admin',
+            'password': 'admin',
+            'verify_ssl': False
+        }
+
+    # Default configuration for non-confluence settings
     DEFAULT_SPACES = 300
     DEFAULT_MIN_PAGES = 10
     DEFAULT_MAX_PAGES = 100
     DEFAULT_SEED_FILE = Path("seeds.txt")
-    DEFAULT_VERIFY_SSL = False
     DEFAULT_USE_OLLAMA = True
     DEFAULT_SQL = False
 
-    # Use provided arguments or fallback to defaults
-    url = args.url or DEFAULT_URL
-    user = args.user or DEFAULT_USER
-    password = args.password or DEFAULT_PASSWORD
+    # Use provided arguments, fallback to settings.ini, then defaults
+    url = args.url or conf_settings['base_url']
+    user = args.user or conf_settings['username']
+    password = args.password or conf_settings['password']
+    verify_ssl = args.verify_ssl or conf_settings.get('verify_ssl', False)
     spaces = args.spaces or DEFAULT_SPACES
     min_pages = args.min_pages or DEFAULT_MIN_PAGES
     max_pages = args.max_pages or DEFAULT_MAX_PAGES
     seed_file = args.seed_file or DEFAULT_SEED_FILE
-    verify_ssl = args.verify_ssl or DEFAULT_VERIFY_SSL
     use_ollama = args.use_ollama or DEFAULT_USE_OLLAMA
     use_sql = args.sql or DEFAULT_SQL
 
