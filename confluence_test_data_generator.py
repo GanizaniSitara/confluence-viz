@@ -281,7 +281,7 @@ def create_space(base_url, auth, verify, key, name, desc=""):
         },
     }
     r = post_with_retry(url, payload, auth, verify)
-    return r.ok
+    return r  # Return full response for debugging
 
 def generate_content_with_corporate_lorem(paragraphs=2):
     """
@@ -331,7 +331,7 @@ def create_page(base_url, auth, verify, space_key, title, content=None, use_olla
         },
     }
     r = post_with_retry(f"{base_url}/rest/api/content", payload, auth, verify)
-    return r.ok
+    return r  # Return full response for debugging
 
 # ---------------------------------------------------------------------------
 # Main script
@@ -349,6 +349,7 @@ def main():
     parser.add_argument("--verify-ssl", action="store_true", help="Enable SSL verification (overrides settings.ini)")
     parser.add_argument("--use-ollama", action="store_true", help="Generate content using CorporateLorem API")
     parser.add_argument("--sql", action="store_true", help="Randomly insert SQL content (Oracle/MS SQL) into ~1/3 of pages")
+    parser.add_argument("--debug", action="store_true", help="Print detailed error responses from Confluence API")
     args = parser.parse_args()
 
     # Load settings from settings.ini
@@ -383,6 +384,7 @@ def main():
     seed_file = args.seed_file or DEFAULT_SEED_FILE
     use_ollama = args.use_ollama or DEFAULT_USE_OLLAMA
     use_sql = args.sql or DEFAULT_SQL
+    debug = args.debug
 
     print(f"Starting content creation with the following settings:")
     print(f"URL: {url}")
@@ -402,13 +404,22 @@ def main():
     print(f"Loaded {len(seeds)} seed words for content generation")
     existing_keys = set()
 
+    def print_debug_response(resp, context=""):
+        """Print response details for debugging."""
+        if debug:
+            print(f"      [DEBUG] {context}", file=sys.stderr)
+            print(f"      [DEBUG] Status: {resp.status_code}", file=sys.stderr)
+            print(f"      [DEBUG] Response: {resp.text[:1000]}", file=sys.stderr)
+
     for i in range(spaces):
         key = rand_key(existing_keys)
         existing_keys.add(key)
         name = f"{random.choice(seeds)} Space {i + 1}"
         print(f"Creating space [{i + 1}/{spaces}]: {name} (key: {key})...")
-        if not create_space(base_url, auth, verify_ssl, key, name):
+        resp = create_space(base_url, auth, verify_ssl, key, name)
+        if not resp.ok:
             print(f"Failed to create space {name} ({key})", file=sys.stderr)
+            print_debug_response(resp, f"create_space failed for {key}")
             continue
 
         page_total = random.randint(min_pages, max_pages)
@@ -434,27 +445,35 @@ def main():
                     # Append SQL content after the generated content
                     newline_char = '\n'
                     html_content = f"<p>{base_content.replace(newline_char, '</p><p>')}</p>{sql_suffix}"
-                    if not create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True):
+                    resp = create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True)
+                    if not resp.ok:
                         print(f"Failed to create page {title} in space {key}", file=sys.stderr)
+                        print_debug_response(resp, f"create_page failed for {title}")
                     else:
                         print(f"      Page created successfully (with SQL)")
                 else:
-                    if not create_page(base_url, auth, verify_ssl, key, title, use_ollama=True):
+                    resp = create_page(base_url, auth, verify_ssl, key, title, use_ollama=True)
+                    if not resp.ok:
                         print(f"Failed to create page {title} in space {key}", file=sys.stderr)
+                        print_debug_response(resp, f"create_page failed for {title}")
                     else:
                         print(f"      Page created successfully")
             else:
                 content = " ".join(random.choices(seeds, k=30))
                 if include_sql:
                     html_content = f"<p>{content}</p>{sql_suffix}"
-                    if not create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True):
+                    resp = create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True)
+                    if not resp.ok:
                         print(f"Failed to create page {title} in space {key}", file=sys.stderr)
+                        print_debug_response(resp, f"create_page failed for {title}")
                     else:
                         print(f"      Page created successfully (with SQL)")
                 else:
                     print(f"      Using random seed content")
-                    if not create_page(base_url, auth, verify_ssl, key, title, content):
+                    resp = create_page(base_url, auth, verify_ssl, key, title, content)
+                    if not resp.ok:
                         print(f"Failed to create page {title} in space {key}", file=sys.stderr)
+                        print_debug_response(resp, f"create_page failed for {title}")
                     else:
                         print(f"      Page created successfully")
 
