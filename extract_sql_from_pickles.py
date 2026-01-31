@@ -10,12 +10,14 @@ sample_and_pickle_spaces.py to expand 'version.by' in the API call.
 
 Usage:
     python extract_sql_from_pickles.py [--pickle-dir PICKLE_DIR] [--output OUTPUT_FILE]
+    python extract_sql_from_pickles.py --sqlite sql_scripts.db
 """
 
 import os
 import pickle
 import argparse
 import re
+import sqlite3
 from datetime import datetime
 from bs4 import BeautifulSoup, Tag, NavigableString
 from config_loader import load_data_settings
@@ -693,6 +695,82 @@ def format_datetime(iso_string):
         return iso_string
 
 
+def init_sqlite_db(db_path):
+    """Initialize SQLite database with schema for SQL scripts."""
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    # Create main table for SQL scripts
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS sql_scripts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            space_key TEXT NOT NULL,
+            space_name TEXT,
+            page_id TEXT NOT NULL,
+            page_title TEXT,
+            last_modified TEXT,
+            last_editor TEXT,
+            sql_language TEXT,
+            sql_title TEXT,
+            sql_description TEXT,
+            sql_source TEXT,
+            sql_code TEXT NOT NULL,
+            line_count INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Create indexes for common queries
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_space_key ON sql_scripts(space_key)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_page_id ON sql_scripts(page_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_sql_language ON sql_scripts(sql_language)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_sql_source ON sql_scripts(sql_source)')
+
+    # Create a summary view
+    cursor.execute('''
+        CREATE VIEW IF NOT EXISTS sql_summary AS
+        SELECT
+            space_key,
+            space_name,
+            COUNT(*) as script_count,
+            COUNT(DISTINCT page_id) as pages_with_sql,
+            SUM(line_count) as total_lines
+        FROM sql_scripts
+        GROUP BY space_key, space_name
+        ORDER BY script_count DESC
+    ''')
+
+    conn.commit()
+    return conn
+
+
+def insert_sql_to_db(conn, result):
+    """Insert a single SQL result into the database."""
+    cursor = conn.cursor()
+    line_count = result['sql_code'].count('\n') + 1
+
+    cursor.execute('''
+        INSERT INTO sql_scripts (
+            space_key, space_name, page_id, page_title, last_modified,
+            last_editor, sql_language, sql_title, sql_description,
+            sql_source, sql_code, line_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        result['space_key'],
+        result['space_name'],
+        result['page_id'],
+        result['page_title'],
+        result['last_modified'],
+        result['last_editor'],
+        result['sql_language'],
+        result['sql_title'],
+        result['sql_description'],
+        result['sql_source'],
+        result['sql_code'],
+        line_count
+    ))
+
+
 def format_sql_result(result, script_num):
     """Format a single SQL result for output."""
     lines = []
@@ -715,9 +793,16 @@ def format_sql_result(result, script_num):
     return '\n'.join(lines)
 
 
-def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_lines=1):
+def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_lines=1, db_conn=None):
     """
     Process a single pickle file and output SQL scripts in real-time.
+
+    Args:
+        pickle_path: Path to pickle file
+        output_file: File handle for text output (or None for stdout)
+        script_counter: List with single int for counting scripts
+        min_lines: Minimum lines of SQL to include
+        db_conn: SQLite connection (or None for text output)
 
     Returns: (page_count, sql_count, pages_with_sql_set)
     """
@@ -772,13 +857,20 @@ def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_
                 'sql_code': script.get('sql_code', '')
             }
 
-            # Output immediately
-            formatted = format_sql_result(result, script_counter[0])
-            if output_file:
+            # Output to SQLite or text
+            if db_conn:
+                insert_sql_to_db(db_conn, result)
+            elif output_file:
+                formatted = format_sql_result(result, script_counter[0])
                 output_file.write(formatted + '\n')
                 output_file.flush()  # Ensure it's written immediately
             else:
+                formatted = format_sql_result(result, script_counter[0])
                 print(formatted)
+
+    # Commit after each pickle file for SQLite
+    if db_conn:
+        db_conn.commit()
 
     return page_count, sql_count, pages_with_sql
 
@@ -786,7 +878,8 @@ def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_
 def main():
     parser = argparse.ArgumentParser(description='Extract SQL scripts from Confluence pickles')
     parser.add_argument('--pickle-dir', '-d', help='Directory containing pickle files')
-    parser.add_argument('--output', '-o', help='Output file path (default: stdout)')
+    parser.add_argument('--output', '-o', help='Output text file path (default: stdout)')
+    parser.add_argument('--sqlite', '--db', help='Output to SQLite database file')
     parser.add_argument('--summary', '-s', action='store_true',
                         help='Print summary statistics only')
     parser.add_argument('--min-lines', type=int, default=1,
@@ -822,6 +915,12 @@ def main():
     output_file = None
     if args.output and not args.summary:
         output_file = open(args.output, 'w', encoding='utf-8')
+
+    # Open SQLite database if specified
+    db_conn = None
+    if args.sqlite and not args.summary:
+        db_conn = init_sqlite_db(args.sqlite)
+        print(f"Writing to SQLite database: {args.sqlite}")
 
     total_pages = 0
     total_sql_found = 0
@@ -870,7 +969,7 @@ def main():
                     continue
 
                 page_count, sql_count, pages_with_sql = process_pickle_file_streaming(
-                    pkl_path, output_file, script_counter, args.min_lines
+                    pkl_path, output_file, script_counter, args.min_lines, db_conn
                 )
 
                 total_pages += page_count
@@ -884,6 +983,8 @@ def main():
     finally:
         if output_file:
             output_file.close()
+        if db_conn:
+            db_conn.close()
 
     print("=" * 80)
     print(f"\nSUMMARY:")
@@ -893,7 +994,13 @@ def main():
     print(f"  Total SQL scripts found: {total_sql_found:,}")
 
     if args.output and not args.summary:
-        print(f"\nResults written to: {args.output}")
+        print(f"\nText results written to: {args.output}")
+    if args.sqlite and not args.summary:
+        print(f"\nSQLite database written to: {args.sqlite}")
+        print("  Query examples:")
+        print("    sqlite3 {} \"SELECT COUNT(*) FROM sql_scripts\"".format(args.sqlite))
+        print("    sqlite3 {} \"SELECT * FROM sql_summary\"".format(args.sqlite))
+        print("    sqlite3 {} \"SELECT page_title, sql_code FROM sql_scripts WHERE space_key='MYSPACE'\"".format(args.sqlite))
 
 
 if __name__ == '__main__':
