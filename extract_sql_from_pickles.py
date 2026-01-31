@@ -51,6 +51,70 @@ SQL_KEYWORDS = [
 # Minimum number of SQL keywords to consider something as SQL (for unlabeled blocks)
 MIN_SQL_KEYWORDS = 2
 
+# Patterns that indicate the START of a SQL statement (for plain text extraction)
+# NOTE: BEGIN, LOOP, EXCEPTION etc. are NOT starters - they're continuations within PL/SQL
+SQL_STATEMENT_STARTERS = [
+    r'^\s*SELECT\b',
+    r'^\s*INSERT\b',
+    r'^\s*UPDATE\b',
+    r'^\s*DELETE\b',
+    r'^\s*CREATE\b',
+    r'^\s*ALTER\b',
+    r'^\s*DROP\b',
+    r'^\s*TRUNCATE\b',
+    r'^\s*GRANT\b',
+    r'^\s*REVOKE\b',
+    r'^\s*MERGE\b',
+    r'^\s*DECLARE\b',
+    r'^\s*EXEC(UTE)?\b',
+    r'^\s*WITH\b',  # CTE
+    r'^\s*CALL\b',
+    r'^\s*COMMIT\b',
+    r'^\s*ROLLBACK\b',
+]
+
+# Lines that likely continue a SQL statement
+SQL_CONTINUATION_PATTERNS = [
+    r'^\s*FROM\b',
+    r'^\s*WHERE\b',
+    r'^\s*AND\b',
+    r'^\s*OR\b',
+    r'^\s*JOIN\b',
+    r'^\s*(LEFT|RIGHT|INNER|OUTER|CROSS)\s+JOIN\b',
+    r'^\s*ON\b',
+    r'^\s*GROUP\s+BY\b',
+    r'^\s*ORDER\s+BY\b',
+    r'^\s*HAVING\b',
+    r'^\s*UNION\b',
+    r'^\s*INTERSECT\b',
+    r'^\s*MINUS\b',
+    r'^\s*INTO\b',
+    r'^\s*VALUES\b',
+    r'^\s*SET\b',
+    r'^\s*RETURNING\b',
+    r'^\s*WHEN\b',
+    r'^\s*THEN\b',
+    r'^\s*ELSE\b',
+    r'^\s*END\b',
+    r'^\s*LOOP\b',
+    r'^\s*EXIT\b',
+    r'^\s*FETCH\b',
+    r'^\s*OPEN\b',
+    r'^\s*CLOSE\b',
+    r'^\s*RETURN\b',
+    r'^\s*RAISE\b',
+    r'^\s*EXCEPTION\b',
+    r'^\s*PRAGMA\b',
+    r'^\s*--',  # SQL comment
+    r'^\s*/\*',  # Block comment start
+    r'^\s*\*',   # Block comment continuation
+    r'^\s*\(',   # Subquery or list
+    r'^\s*\)',   # Closing
+    r'.*;\s*$',  # Ends with semicolon
+    r'^\s*,',    # Continuation with comma
+    r'^[^a-zA-Z]*$',  # Lines with only symbols/numbers (likely part of SQL)
+]
+
 
 def is_sql_language(language_str):
     """Check if a language string indicates SQL."""
@@ -68,6 +132,305 @@ def looks_like_sql(text):
     text_upper = text.upper()
     keyword_count = sum(1 for pattern in SQL_KEYWORDS if re.search(pattern, text_upper))
     return keyword_count >= MIN_SQL_KEYWORDS
+
+
+def is_sql_starter_line(line):
+    """Check if a line starts a SQL statement."""
+    line_upper = line.upper()
+    for pattern in SQL_STATEMENT_STARTERS:
+        if re.match(pattern, line_upper, re.IGNORECASE):
+            return True
+    return False
+
+
+def is_sql_continuation_line(line):
+    """Check if a line is likely part of an ongoing SQL statement."""
+    if not line.strip():
+        return False  # Blank lines might end a statement
+    line_upper = line.upper()
+    for pattern in SQL_CONTINUATION_PATTERNS:
+        if re.match(pattern, line_upper, re.IGNORECASE):
+            return True
+    # Also check if line contains SQL keywords mid-line
+    keyword_count = sum(1 for pattern in SQL_KEYWORDS if re.search(pattern, line_upper))
+    return keyword_count >= 1
+
+
+def looks_like_prose(line):
+    """Check if a line looks like natural language prose rather than code."""
+    line = line.strip()
+    if not line:
+        return False
+
+    line_upper = line.upper()
+
+    # First, check if this line contains SQL keywords - if so, it's not prose
+    sql_words_in_line = [
+        'SELECT', 'FROM', 'WHERE', 'JOIN', 'LEFT', 'RIGHT', 'INNER', 'OUTER',
+        'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'ALTER', 'DROP', 'TRUNCATE',
+        'ORDER BY', 'GROUP BY', 'HAVING', 'UNION', 'INTO', 'VALUES', 'SET',
+        'BEGIN', 'END', 'DECLARE', 'EXECUTE', 'EXEC', 'COMMIT', 'ROLLBACK',
+        'GRANT', 'REVOKE', 'CURSOR', 'FETCH', 'EXCEPTION', 'RAISE', 'LOOP',
+        'VARCHAR', 'NUMBER', 'INTEGER', 'SYSDATE', 'NVL', 'DECODE', 'ROWNUM',
+        'PROCEDURE', 'FUNCTION', 'TRIGGER', 'PACKAGE', 'VIEW', 'INDEX',
+        'PRIMARY KEY', 'FOREIGN KEY', 'CONSTRAINT', 'NOT NULL', 'DEFAULT',
+        'AND', 'OR', 'ON', 'AS', 'IN', 'IS', 'NULL', 'LIKE', 'BETWEEN',
+    ]
+
+    # Check for SQL keywords at start of line or as significant part
+    for sql_word in sql_words_in_line:
+        if line_upper.startswith(sql_word + ' ') or line_upper.startswith(sql_word + '\t'):
+            return False
+        if line_upper == sql_word:
+            return False
+
+    # Check if line looks like it's part of SQL (has SQL operators/patterns)
+    if re.search(r'\s+(AND|OR)\s+\w+\s*(=|<|>|!=|<>|LIKE|IN|IS)', line_upper):
+        return False
+    if re.search(r'\bJOIN\b.*\bON\b', line_upper):
+        return False
+    if re.search(r'\b(COUNT|SUM|AVG|MAX|MIN)\s*\(', line_upper):
+        return False
+
+    # Common prose patterns (only match these if no SQL keywords found)
+    prose_patterns = [
+        r'^(This|That|The|Here|There|But|If|What|How|Why|Please|Note|See)\s+\w+\s+\w+',
+        r'.*\s(is|are|was|were|has|have|had|will|would|could|should|can|may|must|shall)\s+(a|an|the|this|that|these|those)\s',
+        r'^[A-Z][a-z]+\s+[a-z]+\s+[a-z]+\s+[a-z]+',  # Sentence-like pattern (4+ words)
+        r'\.\s*$',  # Ends with period (not semicolon)
+        r':\s*$',   # Ends with colon (heading/label)
+        r'^\d+\.\s+[A-Z]',  # Numbered list item starting with capital
+        r'^[-*]\s+[A-Z]',   # Bullet list item starting with capital
+    ]
+
+    for pattern in prose_patterns:
+        if re.search(pattern, line, re.IGNORECASE):
+            # Final check - make sure it's not a SQL comment
+            if not line.strip().startswith('--'):
+                return True
+
+    return False
+
+
+def is_plsql_block_start(line):
+    """Check if this line starts a PL/SQL block (procedure, function, package, trigger)."""
+    line_upper = line.strip().upper()
+    patterns = [
+        r'^CREATE\s+(OR\s+REPLACE\s+)?(PROCEDURE|FUNCTION|PACKAGE|TRIGGER|TYPE)\b',
+        r'^DECLARE\b',
+    ]
+    for pattern in patterns:
+        if re.match(pattern, line_upper):
+            return True
+    return False
+
+
+def is_plsql_block_end(line):
+    """Check if this line ends a PL/SQL block."""
+    line_stripped = line.strip()
+    # PL/SQL blocks typically end with END; followed by / on next line
+    # Or just END; for anonymous blocks
+    return line_stripped == '/' or line_stripped.upper() in ('END;', 'END')
+
+
+def extract_sql_blocks_from_text(text):
+    """
+    Extract SQL blocks from plain text by looking for SQL statement patterns.
+
+    Returns a list of extracted SQL blocks (strings).
+    """
+    if not text:
+        return []
+
+    lines = text.split('\n')
+    sql_blocks = []
+    current_block = []
+    in_sql_block = False
+    in_plsql_block = False  # Track if we're inside a PL/SQL block
+    blank_line_count = 0
+    prev_line_ended_with_comma = False
+    prev_line_ended_with_semicolon = False
+    open_parens = 0
+
+    for i, line in enumerate(lines):
+        line_stripped = line.strip()
+
+        # Track parentheses balance
+        if in_sql_block:
+            open_parens += line_stripped.count('(') - line_stripped.count(')')
+            open_parens = max(0, open_parens)  # Don't go negative
+
+        # Check for PL/SQL block start
+        if is_plsql_block_start(line_stripped):
+            # Start a new PL/SQL block (save previous if valid)
+            if current_block and looks_like_sql('\n'.join(current_block)):
+                sql_blocks.append('\n'.join(current_block))
+            current_block = [line]
+            in_sql_block = True
+            in_plsql_block = True
+            blank_line_count = 0
+            prev_line_ended_with_comma = line_stripped.endswith(',')
+            prev_line_ended_with_semicolon = line_stripped.endswith(';')
+            open_parens = line_stripped.count('(') - line_stripped.count(')')
+
+        # Inside a PL/SQL block - don't start new blocks until END; /
+        elif in_plsql_block:
+            current_block.append(line)
+            blank_line_count = 0 if line_stripped else blank_line_count + 1
+
+            # Check for end of PL/SQL block
+            if is_plsql_block_end(line_stripped):
+                # Look ahead - if next non-blank line is '/', include it
+                if line_stripped.upper() in ('END;', 'END'):
+                    # Check if there's a / coming
+                    for j in range(i + 1, min(i + 3, len(lines))):
+                        next_line = lines[j].strip()
+                        if next_line == '/':
+                            continue  # Will be added in next iteration
+                        elif next_line:
+                            break  # Non-slash content, end here
+                    else:
+                        # No more lines or only blank/slash
+                        pass
+                elif line_stripped == '/':
+                    # This is the end
+                    if current_block and looks_like_sql('\n'.join(current_block)):
+                        sql_blocks.append('\n'.join(current_block))
+                    current_block = []
+                    in_sql_block = False
+                    in_plsql_block = False
+                    open_parens = 0
+
+        elif is_sql_starter_line(line_stripped):
+            # Start a new SQL block (save previous if valid)
+            if current_block and looks_like_sql('\n'.join(current_block)):
+                sql_blocks.append('\n'.join(current_block))
+            current_block = [line]
+            in_sql_block = True
+            blank_line_count = 0
+            prev_line_ended_with_comma = line_stripped.endswith(',')
+            prev_line_ended_with_semicolon = line_stripped.endswith(';')
+            open_parens = line_stripped.count('(') - line_stripped.count(')')
+
+        elif in_sql_block:
+            if not line_stripped:
+                # Blank line - might end the block
+                blank_line_count += 1
+                # End block after semicolon followed by blank line (unless in PL/SQL block)
+                if prev_line_ended_with_semicolon and blank_line_count >= 1 and open_parens <= 0:
+                    # Check if we might be in a PL/SQL block (has BEGIN but no END yet)
+                    block_text = '\n'.join(current_block).upper()
+                    if 'BEGIN' in block_text and 'END' not in block_text:
+                        # Still in PL/SQL block, continue
+                        current_block.append(line)
+                    else:
+                        if current_block and looks_like_sql('\n'.join(current_block)):
+                            sql_blocks.append('\n'.join(current_block))
+                        current_block = []
+                        in_sql_block = False
+                        open_parens = 0
+                elif blank_line_count >= 2 and open_parens <= 0 and not prev_line_ended_with_comma:
+                    # Two blank lines = end of SQL block
+                    if current_block and looks_like_sql('\n'.join(current_block)):
+                        sql_blocks.append('\n'.join(current_block))
+                    current_block = []
+                    in_sql_block = False
+                    open_parens = 0
+                else:
+                    current_block.append(line)
+            elif looks_like_prose(line_stripped):
+                # This looks like natural language - end the SQL block
+                if current_block and looks_like_sql('\n'.join(current_block)):
+                    sql_blocks.append('\n'.join(current_block))
+                current_block = []
+                in_sql_block = False
+                blank_line_count = 0
+                open_parens = 0
+            else:
+                # Check various conditions for continuing the SQL block
+                should_continue = False
+
+                # Explicit SQL patterns
+                if is_sql_continuation_line(line_stripped):
+                    should_continue = True
+                # Ends with semicolon (SQL terminator) - but might continue for PL/SQL
+                elif line_stripped.endswith(';'):
+                    should_continue = True
+                # Ends with comma (list continuation)
+                elif line_stripped.endswith(','):
+                    should_continue = True
+                # Previous line ended with comma - this is likely a list item
+                elif prev_line_ended_with_comma:
+                    should_continue = True
+                # Inside parentheses
+                elif open_parens > 0:
+                    should_continue = True
+                # Contains SQL keywords
+                elif looks_like_sql(line_stripped):
+                    should_continue = True
+                # Indented lines (likely part of SQL structure)
+                elif (line.startswith('    ') or line.startswith('\t')) and len(line_stripped) < 100:
+                    should_continue = True
+                # PL/SQL block terminators
+                elif line_stripped in ('/', 'END;', 'END', 'BEGIN', 'EXCEPTION'):
+                    should_continue = True
+                # Short identifier-like lines (column names, etc.)
+                elif len(line_stripped) < 60 and re.match(r'^[\w\s,\.\(\)\'\"_\-\*:=]+$', line_stripped):
+                    # But not if it looks like prose
+                    if not looks_like_prose(line_stripped):
+                        should_continue = True
+
+                if should_continue:
+                    current_block.append(line)
+                    blank_line_count = 0
+                    prev_line_ended_with_comma = line_stripped.endswith(',')
+                    prev_line_ended_with_semicolon = line_stripped.endswith(';')
+                else:
+                    # Check if this might be a terminator line for PL/SQL
+                    if line_stripped == '/' or line_stripped.upper() == 'END;' or line_stripped.upper() == 'END':
+                        current_block.append(line)
+                        if current_block and looks_like_sql('\n'.join(current_block)):
+                            sql_blocks.append('\n'.join(current_block))
+                        current_block = []
+                        in_sql_block = False
+                        open_parens = 0
+                    else:
+                        # Likely end of SQL block
+                        if current_block and looks_like_sql('\n'.join(current_block)):
+                            sql_blocks.append('\n'.join(current_block))
+                        current_block = []
+                        in_sql_block = False
+                        blank_line_count = 0
+                        open_parens = 0
+
+    # Don't forget the last block
+    if current_block and looks_like_sql('\n'.join(current_block)):
+        sql_blocks.append('\n'.join(current_block))
+
+    return sql_blocks
+
+
+def get_context_before_position(text, position, max_chars=200):
+    """Get text before a position to use as context/description."""
+    if position <= 0:
+        return ''
+
+    # Look backwards for a heading or meaningful context
+    before_text = text[:position]
+    lines = before_text.split('\n')
+
+    # Get last few non-empty lines before the SQL
+    context_lines = []
+    for line in reversed(lines[-5:]):
+        line = line.strip()
+        if line and len(line) < 200:
+            # Skip if it looks like SQL
+            if not is_sql_starter_line(line) and not looks_like_sql(line):
+                context_lines.insert(0, line)
+                if len(' | '.join(context_lines)) > max_chars:
+                    break
+
+    return ' | '.join(context_lines) if context_lines else ''
 
 
 def extract_text_from_element(element):
@@ -280,6 +643,40 @@ def extract_all_sql_from_page(html_content, page_title=''):
                     if row_context and not sql_item['description']:
                         sql_item['description'] = row_context
                     sql_scripts.append(sql_item)
+
+    # 5. CRITICAL: Scan ALL plain text content for SQL patterns
+    # This catches SQL that's not in any structured element (just written as text)
+    # First, get the full text content of the page
+    full_text = soup.get_text(separator='\n')
+
+    # Track what SQL we've already found (to avoid duplicates)
+    existing_sql_normalized = set()
+    for script in sql_scripts:
+        # Normalize: remove whitespace for comparison
+        normalized = re.sub(r'\s+', ' ', script['sql_code'].strip().upper())
+        existing_sql_normalized.add(normalized)
+
+    # Extract SQL blocks from plain text
+    plain_text_sql_blocks = extract_sql_blocks_from_text(full_text)
+
+    for sql_block in plain_text_sql_blocks:
+        # Check if this is a duplicate of something we already found
+        normalized = re.sub(r'\s+', ' ', sql_block.strip().upper())
+        if normalized in existing_sql_normalized:
+            continue
+
+        # Find position in text for context
+        block_pos = full_text.find(sql_block[:50]) if len(sql_block) >= 50 else full_text.find(sql_block)
+        context = get_context_before_position(full_text, block_pos) if block_pos > 0 else ''
+
+        sql_scripts.append({
+            'sql_code': sql_block,
+            'language': 'detected-plain-text',
+            'title': '',
+            'description': context,
+            'source': 'plain-text-scan'
+        })
+        existing_sql_normalized.add(normalized)
 
     return sql_scripts
 
