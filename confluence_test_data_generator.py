@@ -318,7 +318,9 @@ def create_page(base_url, auth, verify, space_key, title, content=None, use_olla
     if raw_html:
         html_content = content
     elif use_ollama:
-        html_content = f"<p>{content.replace(newline_char, '</p><p>')}</p>"
+        # Escape HTML special chars from CorporateLorem content
+        content_escaped = html.escape(content)
+        html_content = f"<p>{content_escaped.replace(newline_char, '</p><p>')}</p>"
     else:
         html_content = f"<p>{content}</p>"
     payload = {
@@ -443,10 +445,12 @@ def main():
             if use_ollama:
                 print(f"      Generating content with CorporateLorem API...")
                 base_content = generate_content_with_corporate_lorem()
+                # Escape HTML special chars in base content
+                base_content_escaped = html.escape(base_content)
                 if include_sql:
                     # Append SQL content after the generated content
                     newline_char = '\n'
-                    html_content = f"<p>{base_content.replace(newline_char, '</p><p>')}</p>{sql_suffix}"
+                    html_content = f"<p>{base_content_escaped.replace(newline_char, '</p><p>')}</p>{sql_suffix}"
                     resp = create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True)
                     if not resp.ok:
                         print(f"Failed to create page {title} in space {key}", file=sys.stderr)
