@@ -305,32 +305,24 @@ def generate_content_with_corporate_lorem(paragraphs=2):
         print(f"Error generating content from CorporateLorem API: {e}", file=sys.stderr)
         return "Lorem ipsum dolor sit amet, consectetur adipiscing elit."
 
-def create_page(base_url, auth, verify, space_key, title, content=None, use_ollama=False, raw_html=False):
+def create_page(base_url, auth, verify, space_key, title, content=None, use_ollama=False):
     """
     Create a page in Confluence.
     If use_ollama is True and no content is provided, generate content using CorporateLorem API.
-    If raw_html is True, use content as-is without wrapping in paragraph tags.
+    Content is sent as plain text - Confluence handles formatting.
     """
     if use_ollama and content is None:
         content = generate_content_with_corporate_lorem()
-    newline_char = '\n'
-    # Wrap plain text content in paragraph tags (replacing newlines), unless raw_html is True
-    if raw_html:
-        html_content = content
-    elif use_ollama:
-        # Escape HTML special chars from CorporateLorem content
-        content_escaped = html.escape(content)
-        html_content = f"<p>{content_escaped.replace(newline_char, '</p><p>')}</p>"
-    else:
-        html_content = f"<p>{content}</p>"
+
+    # Send as plain text - let Confluence handle the formatting
     payload = {
         "type": "page",
         "title": title,
         "space": {"key": space_key},
         "body": {
             "storage": {
-                "value": html_content,
-                "representation": "storage",
+                "value": content,
+                "representation": "plain",
             }
         },
     }
@@ -448,56 +440,32 @@ def main():
                 print(f"      Generating content with CorporateLorem API...")
                 base_content = generate_content_with_corporate_lorem()
                 if include_sql:
-                    # Append SQL as plain text - will be escaped together
                     full_content = base_content + "\n\n" + sql_suffix
                 else:
                     full_content = base_content
-
-                # Escape and convert to HTML
-                content_escaped = html.escape(full_content)
-                html_content = "<p>" + content_escaped.replace('\n', '</p><p>') + "</p>"
-                resp = create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True)
-                if not resp.ok:
-                    print(f"Failed to create page {title} in space {key}", file=sys.stderr)
-                    print_debug_response(resp, f"create_page failed for {title}")
-                else:
-                    # Track created page for browser opening
-                    try:
-                        page_data = resp.json()
-                        page_id = page_data.get('id')
-                        if page_id:
-                            created_pages.append({'id': page_id, 'title': title, 'space': key, 'has_sql': include_sql})
-                    except:
-                        pass
-                    if include_sql:
-                        print(f"      Page created successfully (with SQL)")
-                    else:
-                        print(f"      Page created successfully")
             else:
-                content = " ".join(random.choices(seeds, k=30))
+                full_content = " ".join(random.choices(seeds, k=30))
                 if include_sql:
-                    content = content + "\n\n" + sql_suffix
+                    full_content = full_content + "\n\n" + sql_suffix
 
-                # Escape and convert to HTML
-                content_escaped = html.escape(content)
-                html_content = "<p>" + content_escaped.replace('\n', '</p><p>') + "</p>"
-                resp = create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True)
-                if not resp.ok:
-                    print(f"Failed to create page {title} in space {key}", file=sys.stderr)
-                    print_debug_response(resp, f"create_page failed for {title}")
+            # Send as plain text - Confluence handles formatting
+            resp = create_page(base_url, auth, verify_ssl, key, title, content=full_content)
+            if not resp.ok:
+                print(f"Failed to create page {title} in space {key}", file=sys.stderr)
+                print_debug_response(resp, f"create_page failed for {title}")
+            else:
+                # Track created page for browser opening
+                try:
+                    page_data = resp.json()
+                    page_id = page_data.get('id')
+                    if page_id:
+                        created_pages.append({'id': page_id, 'title': title, 'space': key, 'has_sql': include_sql})
+                except:
+                    pass
+                if include_sql:
+                    print(f"      Page created successfully (with SQL)")
                 else:
-                    # Track created page for browser opening
-                    try:
-                        page_data = resp.json()
-                        page_id = page_data.get('id')
-                        if page_id:
-                            created_pages.append({'id': page_id, 'title': title, 'space': key, 'has_sql': include_sql})
-                    except:
-                        pass
-                    if include_sql:
-                        print(f"      Page created successfully (with SQL)")
-                    else:
-                        print(f"      Page created successfully")
+                    print(f"      Page created successfully")
 
         if use_sql:
             print(f"  Space {key} complete: {sql_pages_count}/{page_total} pages contain SQL content")
