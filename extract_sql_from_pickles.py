@@ -693,20 +693,48 @@ def format_datetime(iso_string):
         return iso_string
 
 
-def process_pickle_file(pickle_path):
-    """Process a single pickle file and extract all SQL scripts."""
-    results = []
+def format_sql_result(result, script_num):
+    """Format a single SQL result for output."""
+    lines = []
+    lines.append("=" * 80)
+    lines.append(f"SQL SCRIPT #{script_num}")
+    lines.append("=" * 80)
+    lines.append(f"Space Key:      {result['space_key']}")
+    lines.append(f"Space Name:     {result['space_name']}")
+    lines.append(f"Page Title:     {result['page_title']}")
+    lines.append(f"Page ID:        {result['page_id']}")
+    lines.append(f"Last Modified:  {result['last_modified']}")
+    lines.append(f"Last Editor:    {result['last_editor']}")
+    lines.append(f"SQL Language:   {result['sql_language']}")
+    lines.append(f"Script Title:   {result['sql_title'] or 'N/A'}")
+    lines.append(f"Description:    {result['sql_description'] or 'N/A'}")
+    lines.append(f"Source:         {result['sql_source']}")
+    lines.append("-" * 40 + " SQL CODE " + "-" * 40)
+    lines.append(result['sql_code'])
+    lines.append("")
+    return '\n'.join(lines)
+
+
+def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_lines=1):
+    """
+    Process a single pickle file and output SQL scripts in real-time.
+
+    Returns: (page_count, sql_count, pages_with_sql_set)
+    """
+    pages_with_sql = set()
+    sql_count = 0
 
     try:
         with open(pickle_path, 'rb') as f:
             data = pickle.load(f)
     except Exception as e:
         print(f"  ERROR loading pickle {pickle_path}: {e}")
-        return results
+        return 0, 0, pages_with_sql
 
     space_key = data.get('space_key', os.path.basename(pickle_path).replace('.pkl', ''))
     space_name = data.get('name') or data.get('space_name') or space_key
     pages = data.get('sampled_pages', [])
+    page_count = len(pages)
 
     for page in pages:
         page_id = page.get('id', 'unknown')
@@ -719,22 +747,40 @@ def process_pickle_file(pickle_path):
 
         sql_scripts = extract_all_sql_from_page(body, page_title)
 
+        if sql_scripts:
+            pages_with_sql.add((space_key, page_id))
+
         for script in sql_scripts:
-            results.append({
+            # Filter by minimum lines
+            if min_lines > 1 and script['sql_code'].count('\n') + 1 < min_lines:
+                continue
+
+            script_counter[0] += 1
+            sql_count += 1
+
+            result = {
                 'space_key': space_key,
                 'space_name': space_name,
                 'page_id': page_id,
                 'page_title': page_title,
                 'last_modified': format_datetime(updated),
-                'last_editor': 'Not available in pickle data',  # Would need version.by in API call
+                'last_editor': 'Not available in pickle data',
                 'sql_language': script.get('language', ''),
                 'sql_title': script.get('title', ''),
                 'sql_description': script.get('description', ''),
                 'sql_source': script.get('source', ''),
                 'sql_code': script.get('sql_code', '')
-            })
+            }
 
-    return results
+            # Output immediately
+            formatted = format_sql_result(result, script_counter[0])
+            if output_file:
+                output_file.write(formatted + '\n')
+                output_file.flush()  # Ensure it's written immediately
+            else:
+                print(formatted)
+
+    return page_count, sql_count, pages_with_sql
 
 
 def main():
@@ -772,76 +818,82 @@ def main():
     print(f"Found {len(pickle_files)} pickle files in {pickle_dir}")
     print("=" * 80)
 
-    all_results = []
+    # Open output file if specified
+    output_file = None
+    if args.output and not args.summary:
+        output_file = open(args.output, 'w', encoding='utf-8')
+
     total_pages = 0
-    pages_with_sql = set()
+    total_sql_found = 0
+    all_pages_with_sql = set()
+    script_counter = [0]  # Use list to allow mutation in nested function
 
-    for i, pkl_file in enumerate(pickle_files, 1):
-        pkl_path = os.path.join(pickle_dir, pkl_file)
-        print(f"[{i}/{len(pickle_files)}] Processing {pkl_file}...", end=' ')
+    try:
+        for i, pkl_file in enumerate(pickle_files, 1):
+            pkl_path = os.path.join(pickle_dir, pkl_file)
 
-        try:
-            with open(pkl_path, 'rb') as f:
-                data = pickle.load(f)
-            page_count = len(data.get('sampled_pages', []))
-            total_pages += page_count
-        except Exception as e:
-            print(f"ERROR: {e}")
-            continue
+            if args.summary:
+                # Summary mode - just count, don't output SQL
+                try:
+                    with open(pkl_path, 'rb') as f:
+                        data = pickle.load(f)
+                    page_count = len(data.get('sampled_pages', []))
+                    total_pages += page_count
 
-        results = process_pickle_file(pkl_path)
+                    # Still need to count SQL for summary
+                    space_key = data.get('space_key', pkl_file.replace('.pkl', ''))
+                    pages = data.get('sampled_pages', [])
+                    sql_in_space = 0
+                    for page in pages:
+                        body = page.get('body', '')
+                        if body:
+                            sql_scripts = extract_all_sql_from_page(body, page.get('title', ''))
+                            if args.min_lines > 1:
+                                sql_scripts = [s for s in sql_scripts if s['sql_code'].count('\n') + 1 >= args.min_lines]
+                            if sql_scripts:
+                                all_pages_with_sql.add((space_key, page.get('id', 'unknown')))
+                                sql_in_space += len(sql_scripts)
 
-        for r in results:
-            pages_with_sql.add((r['space_key'], r['page_id']))
+                    total_sql_found += sql_in_space
+                    print(f"[{i}/{len(pickle_files)}] {pkl_file}: {sql_in_space} SQL in {page_count} pages | "
+                          f"Running total: {total_pages:,} pages examined, {total_sql_found:,} SQL found")
+                except Exception as e:
+                    print(f"[{i}/{len(pickle_files)}] {pkl_file}: ERROR - {e}")
+            else:
+                # Streaming mode - output SQL as found
+                try:
+                    with open(pkl_path, 'rb') as f:
+                        data = pickle.load(f)
+                    page_count_check = len(data.get('sampled_pages', []))
+                except Exception as e:
+                    print(f"[{i}/{len(pickle_files)}] {pkl_file}: ERROR - {e}")
+                    continue
 
-        # Filter by minimum lines
-        if args.min_lines > 1:
-            results = [r for r in results if r['sql_code'].count('\n') + 1 >= args.min_lines]
+                page_count, sql_count, pages_with_sql = process_pickle_file_streaming(
+                    pkl_path, output_file, script_counter, args.min_lines
+                )
 
-        all_results.extend(results)
-        print(f"Found {len(results)} SQL scripts in {page_count} pages")
+                total_pages += page_count
+                total_sql_found += sql_count
+                all_pages_with_sql.update(pages_with_sql)
+
+                # Print progress after each pickle file
+                print(f"[{i}/{len(pickle_files)}] {pkl_file}: {sql_count} SQL in {page_count} pages | "
+                      f"Running total: {total_pages:,} pages examined, {total_sql_found:,} SQL found")
+
+    finally:
+        if output_file:
+            output_file.close()
 
     print("=" * 80)
     print(f"\nSUMMARY:")
     print(f"  Total pickle files processed: {len(pickle_files)}")
-    print(f"  Total pages scanned: {total_pages}")
-    print(f"  Pages containing SQL: {len(pages_with_sql)}")
-    print(f"  Total SQL scripts found: {len(all_results)}")
+    print(f"  Total pages scanned: {total_pages:,}")
+    print(f"  Pages containing SQL: {len(all_pages_with_sql):,}")
+    print(f"  Total SQL scripts found: {total_sql_found:,}")
 
-    if args.summary:
-        return
-
-    # Output results
-    output_lines = []
-
-    for i, result in enumerate(all_results, 1):
-        lines = []
-        lines.append("=" * 80)
-        lines.append(f"SQL SCRIPT #{i}")
-        lines.append("=" * 80)
-        lines.append(f"Space Key:      {result['space_key']}")
-        lines.append(f"Space Name:     {result['space_name']}")
-        lines.append(f"Page Title:     {result['page_title']}")
-        lines.append(f"Page ID:        {result['page_id']}")
-        lines.append(f"Last Modified:  {result['last_modified']}")
-        lines.append(f"Last Editor:    {result['last_editor']}")
-        lines.append(f"SQL Language:   {result['sql_language']}")
-        lines.append(f"Script Title:   {result['sql_title'] or 'N/A'}")
-        lines.append(f"Description:    {result['sql_description'] or 'N/A'}")
-        lines.append(f"Source:         {result['sql_source']}")
-        lines.append("-" * 40 + " SQL CODE " + "-" * 40)
-        lines.append(result['sql_code'])
-        lines.append("")
-        output_lines.extend(lines)
-
-    output_text = '\n'.join(output_lines)
-
-    if args.output:
-        with open(args.output, 'w', encoding='utf-8') as f:
-            f.write(output_text)
+    if args.output and not args.summary:
         print(f"\nResults written to: {args.output}")
-    else:
-        print("\n" + output_text)
 
 
 if __name__ == '__main__':
