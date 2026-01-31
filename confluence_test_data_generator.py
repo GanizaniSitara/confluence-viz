@@ -1,6 +1,7 @@
 # description: Seeds data for Confluence visualization.
 
 import argparse
+import html
 import json
 import os
 import random
@@ -219,8 +220,9 @@ def generate_sql_content():
     if before:
         parts.append(f"<p>{before}</p>")
     # SQL as plain paragraph text (no pre, no code tags)
-    # Replace newlines with <br/> to preserve formatting in plain text
-    sql_as_text = sql_snippet.replace('\n', '<br/>')
+    # First escape HTML special chars (<, >, &, etc.) then replace newlines
+    sql_escaped = html.escape(sql_snippet)
+    sql_as_text = sql_escaped.replace('\n', '<br />')
     parts.append(f"<p>{sql_as_text}</p>")
     if after:
         parts.append(f"<p>{after}</p>")
