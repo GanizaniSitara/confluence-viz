@@ -176,99 +176,54 @@ WHEN NOT MATCHED BY SOURCE THEN
     DELETE;""",
 ]
 
-# SQL presentation formats
-SQL_FORMATS = ['table', 'code_block', 'inline', 'mixed']
-
-
 def generate_sql_content():
-    """Generate random SQL content for insertion into pages."""
+    """Generate random SQL content for insertion into pages as plain floating text."""
     # Pick random SQL type (Oracle or MS SQL)
     sql_type = random.choice(['oracle', 'mssql'])
     snippets = ORACLE_SQL_SNIPPETS if sql_type == 'oracle' else MSSQL_SNIPPETS
     sql_snippet = random.choice(snippets)
 
-    # Pick random format
-    format_type = random.choice(SQL_FORMATS)
+    # Context phrases that might appear before/after SQL in real Confluence pages
+    context_before = [
+        "Here is the query we discussed:",
+        "Use this SQL:",
+        "The query is:",
+        "SQL statement:",
+        "Database query:",
+        "Run this:",
+        "Execute the following:",
+        "Current query:",
+        "",  # Sometimes no intro text at all
+        "",
+        "",
+    ]
 
-    db_label = "Oracle Database" if sql_type == 'oracle' else "Microsoft SQL Server"
+    context_after = [
+        "Let me know if you have questions.",
+        "This runs on the production database.",
+        "Make sure to test first.",
+        "Contact DBA team for access.",
+        "",  # Often no closing text
+        "",
+        "",
+        "",
+    ]
 
-    if format_type == 'table':
-        # SQL in a table format
-        return f"""
-<h3>Database Query Reference ({db_label})</h3>
-<table>
-<tbody>
-<tr>
-<th>Query Type</th>
-<th>SQL Code</th>
-<th>Notes</th>
-</tr>
-<tr>
-<td>{random.choice(['SELECT', 'DML', 'DDL', 'Procedure', 'Analytics'])}</td>
-<td><pre>{sql_snippet}</pre></td>
-<td>Last updated: {random.randint(1, 28)}/{random.randint(1, 12)}/2024</td>
-</tr>
-</tbody>
-</table>
-"""
-    elif format_type == 'code_block':
-        # SQL in a code block with description
-        descriptions = [
-            "The following query is used for daily reporting:",
-            "Critical database operation - handle with care:",
-            "Performance optimized query for production use:",
-            "Legacy query - scheduled for refactoring:",
-            "New implementation pending review:",
-        ]
-        return f"""
-<h3>{db_label} Code Reference</h3>
-<p>{random.choice(descriptions)}</p>
-<ac:structured-macro ac:name="code">
-<ac:parameter ac:name="language">sql</ac:parameter>
-<ac:plain-text-body><![CDATA[{sql_snippet}]]></ac:plain-text-body>
-</ac:structured-macro>
-<p><em>Database: {db_label}</em></p>
-"""
-    elif format_type == 'inline':
-        # SQL floating in paragraph text
-        context_before = [
-            "For reference, the team has been using this query pattern:",
-            "As discussed in the last meeting, here's the SQL we need:",
-            "The database administrator provided this solution:",
-            "Current implementation uses the following approach:",
-        ]
-        context_after = [
-            "Please review and provide feedback.",
-            "This should be tested in the staging environment first.",
-            "Contact the DBA team for any questions.",
-            "Performance metrics are being monitored.",
-        ]
-        return f"""
-<p>{random.choice(context_before)}</p>
-<pre>{sql_snippet}</pre>
-<p>{random.choice(context_after)}</p>
-"""
-    else:  # mixed format
-        # Multiple SQL snippets in different formats
-        sql2 = random.choice(snippets)
-        return f"""
-<h2>Database Documentation ({db_label})</h2>
-<p>This page contains SQL queries and procedures for the project.</p>
+    before = random.choice(context_before)
+    after = random.choice(context_after)
 
-<h3>Primary Query</h3>
-<table>
-<tbody>
-<tr><th>Description</th><td>Main data retrieval query</td></tr>
-<tr><th>SQL</th><td><pre>{sql_snippet}</pre></td></tr>
-</tbody>
-</table>
+    # Build plain text content - just paragraphs with SQL pasted in
+    parts = []
+    if before:
+        parts.append(f"<p>{before}</p>")
+    # SQL as plain paragraph text (no pre, no code tags)
+    # Replace newlines with <br/> to preserve formatting in plain text
+    sql_as_text = sql_snippet.replace('\n', '<br/>')
+    parts.append(f"<p>{sql_as_text}</p>")
+    if after:
+        parts.append(f"<p>{after}</p>")
 
-<h3>Secondary Query</h3>
-<p>Additional query for related operations:</p>
-<pre>{sql2}</pre>
-
-<p><strong>Note:</strong> All queries are optimized for {db_label}.</p>
-"""
+    return "\n".join(parts)
 
 
 def should_insert_sql(page_index):
