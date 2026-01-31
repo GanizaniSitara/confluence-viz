@@ -1,6 +1,7 @@
 # description: Seeds data for Confluence visualization.
 
 import argparse
+import html
 import json
 import os
 import random
@@ -219,8 +220,9 @@ def generate_sql_content():
     if before:
         parts.append(f"<p>{before}</p>")
     # SQL as plain paragraph text (no pre, no code tags)
-    # Replace newlines with <br/> to preserve formatting in plain text
-    sql_as_text = sql_snippet.replace('\n', '<br/>')
+    # First escape HTML special chars (<, >, &, etc.) then replace newlines
+    sql_escaped = html.escape(sql_snippet)
+    sql_as_text = sql_escaped.replace('\n', '<br />')
     parts.append(f"<p>{sql_as_text}</p>")
     if after:
         parts.append(f"<p>{after}</p>")
@@ -316,7 +318,9 @@ def create_page(base_url, auth, verify, space_key, title, content=None, use_olla
     if raw_html:
         html_content = content
     elif use_ollama:
-        html_content = f"<p>{content.replace(newline_char, '</p><p>')}</p>"
+        # Escape HTML special chars from CorporateLorem content
+        content_escaped = html.escape(content)
+        html_content = f"<p>{content_escaped.replace(newline_char, '</p><p>')}</p>"
     else:
         html_content = f"<p>{content}</p>"
     payload = {
@@ -441,10 +445,12 @@ def main():
             if use_ollama:
                 print(f"      Generating content with CorporateLorem API...")
                 base_content = generate_content_with_corporate_lorem()
+                # Escape HTML special chars in base content
+                base_content_escaped = html.escape(base_content)
                 if include_sql:
                     # Append SQL content after the generated content
                     newline_char = '\n'
-                    html_content = f"<p>{base_content.replace(newline_char, '</p><p>')}</p>{sql_suffix}"
+                    html_content = f"<p>{base_content_escaped.replace(newline_char, '</p><p>')}</p>{sql_suffix}"
                     resp = create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True)
                     if not resp.ok:
                         print(f"Failed to create page {title} in space {key}", file=sys.stderr)
