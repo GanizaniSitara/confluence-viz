@@ -8,6 +8,7 @@ import random
 import string
 import sys
 import time
+import webbrowser
 from pathlib import Path
 
 import requests
@@ -215,17 +216,16 @@ def generate_sql_content():
     before = random.choice(context_before)
     after = random.choice(context_after)
 
-    # Build plain text content - just paragraphs with SQL pasted in
+    # Build as plain text - Confluence will handle it
+    # Just return text with newlines, no HTML tags
     parts = []
     if before:
-        parts.append(f"<p>{before}</p>")
-    # SQL as plain paragraph text (no pre, no code tags)
-    # First escape HTML special chars (<, >, &, etc.) then replace newlines
-    sql_escaped = html.escape(sql_snippet)
-    sql_as_text = sql_escaped.replace('\n', '<br />')
-    parts.append(f"<p>{sql_as_text}</p>")
+        parts.append(before)
+    parts.append("")  # blank line before SQL
+    parts.append(sql_snippet)
+    parts.append("")  # blank line after SQL
     if after:
-        parts.append(f"<p>{after}</p>")
+        parts.append(after)
 
     return "\n".join(parts)
 
@@ -354,6 +354,7 @@ def main():
     parser.add_argument("--use-ollama", action="store_true", help="Generate content using CorporateLorem API")
     parser.add_argument("--sql", action="store_true", help="Randomly insert SQL content (Oracle/MS SQL) into ~1/3 of pages")
     parser.add_argument("--debug", action="store_true", help="Print detailed error responses from Confluence API")
+    parser.add_argument("--open-browser", action="store_true", help="Open first 10 created pages in browser after completion")
     args = parser.parse_args()
 
     # Load settings from settings.ini
@@ -407,6 +408,7 @@ def main():
     seeds = read_seeds(seed_file)
     print(f"Loaded {len(seeds)} seed words for content generation")
     existing_keys = set()
+    created_pages = []  # Track created pages for browser opening
 
     def print_debug_response(resp, context=""):
         """Print response details for debugging."""
@@ -445,41 +447,55 @@ def main():
             if use_ollama:
                 print(f"      Generating content with CorporateLorem API...")
                 base_content = generate_content_with_corporate_lorem()
-                # Escape HTML special chars in base content
-                base_content_escaped = html.escape(base_content)
                 if include_sql:
-                    # Append SQL content after the generated content
-                    newline_char = '\n'
-                    html_content = f"<p>{base_content_escaped.replace(newline_char, '</p><p>')}</p>{sql_suffix}"
-                    resp = create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True)
-                    if not resp.ok:
-                        print(f"Failed to create page {title} in space {key}", file=sys.stderr)
-                        print_debug_response(resp, f"create_page failed for {title}")
-                    else:
-                        print(f"      Page created successfully (with SQL)")
+                    # Append SQL as plain text - will be escaped together
+                    full_content = base_content + "\n\n" + sql_suffix
                 else:
-                    resp = create_page(base_url, auth, verify_ssl, key, title, use_ollama=True)
-                    if not resp.ok:
-                        print(f"Failed to create page {title} in space {key}", file=sys.stderr)
-                        print_debug_response(resp, f"create_page failed for {title}")
+                    full_content = base_content
+
+                # Escape and convert to HTML
+                content_escaped = html.escape(full_content)
+                html_content = "<p>" + content_escaped.replace('\n', '</p><p>') + "</p>"
+                resp = create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True)
+                if not resp.ok:
+                    print(f"Failed to create page {title} in space {key}", file=sys.stderr)
+                    print_debug_response(resp, f"create_page failed for {title}")
+                else:
+                    # Track created page for browser opening
+                    try:
+                        page_data = resp.json()
+                        page_id = page_data.get('id')
+                        if page_id:
+                            created_pages.append({'id': page_id, 'title': title, 'space': key, 'has_sql': include_sql})
+                    except:
+                        pass
+                    if include_sql:
+                        print(f"      Page created successfully (with SQL)")
                     else:
                         print(f"      Page created successfully")
             else:
                 content = " ".join(random.choices(seeds, k=30))
                 if include_sql:
-                    html_content = f"<p>{content}</p>{sql_suffix}"
-                    resp = create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True)
-                    if not resp.ok:
-                        print(f"Failed to create page {title} in space {key}", file=sys.stderr)
-                        print_debug_response(resp, f"create_page failed for {title}")
-                    else:
-                        print(f"      Page created successfully (with SQL)")
+                    content = content + "\n\n" + sql_suffix
+
+                # Escape and convert to HTML
+                content_escaped = html.escape(content)
+                html_content = "<p>" + content_escaped.replace('\n', '</p><p>') + "</p>"
+                resp = create_page(base_url, auth, verify_ssl, key, title, content=html_content, raw_html=True)
+                if not resp.ok:
+                    print(f"Failed to create page {title} in space {key}", file=sys.stderr)
+                    print_debug_response(resp, f"create_page failed for {title}")
                 else:
-                    print(f"      Using random seed content")
-                    resp = create_page(base_url, auth, verify_ssl, key, title, content)
-                    if not resp.ok:
-                        print(f"Failed to create page {title} in space {key}", file=sys.stderr)
-                        print_debug_response(resp, f"create_page failed for {title}")
+                    # Track created page for browser opening
+                    try:
+                        page_data = resp.json()
+                        page_id = page_data.get('id')
+                        if page_id:
+                            created_pages.append({'id': page_id, 'title': title, 'space': key, 'has_sql': include_sql})
+                    except:
+                        pass
+                    if include_sql:
+                        print(f"      Page created successfully (with SQL)")
                     else:
                         print(f"      Page created successfully")
 
@@ -487,6 +503,23 @@ def main():
             print(f"  Space {key} complete: {sql_pages_count}/{page_total} pages contain SQL content")
 
     print("\nAll content creation completed successfully!")
+    print(f"Total pages created: {len(created_pages)}")
+
+    # Open first 10 pages in browser if requested
+    if args.open_browser and created_pages:
+        print("\nOpening pages in browser...")
+        # Prioritize pages with SQL content
+        sql_pages = [p for p in created_pages if p.get('has_sql')]
+        other_pages = [p for p in created_pages if not p.get('has_sql')]
+        pages_to_open = (sql_pages + other_pages)[:10]
+
+        for i, page in enumerate(pages_to_open):
+            page_url = f"{base_url}/pages/viewpage.action?pageId={page['id']}"
+            print(f"  Opening [{i+1}/10]: {page['title']} {'[SQL]' if page.get('has_sql') else ''}")
+            webbrowser.open_new_tab(page_url)
+            time.sleep(0.3)  # Small delay between tabs
+
+        print(f"\nOpened {len(pages_to_open)} pages in browser.")
 
 if __name__ == "__main__":
     main()
