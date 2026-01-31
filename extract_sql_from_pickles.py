@@ -774,11 +774,11 @@ def main():
 
     all_results = []
     total_pages = 0
+    total_sql_found = 0
     pages_with_sql = set()
 
     for i, pkl_file in enumerate(pickle_files, 1):
         pkl_path = os.path.join(pickle_dir, pkl_file)
-        print(f"[{i}/{len(pickle_files)}] Processing {pkl_file}...", end=' ')
 
         try:
             with open(pkl_path, 'rb') as f:
@@ -786,7 +786,7 @@ def main():
             page_count = len(data.get('sampled_pages', []))
             total_pages += page_count
         except Exception as e:
-            print(f"ERROR: {e}")
+            print(f"[{i}/{len(pickle_files)}] {pkl_file}: ERROR - {e}")
             continue
 
         results = process_pickle_file(pkl_path)
@@ -799,7 +799,11 @@ def main():
             results = [r for r in results if r['sql_code'].count('\n') + 1 >= args.min_lines]
 
         all_results.extend(results)
-        print(f"Found {len(results)} SQL scripts in {page_count} pages")
+        total_sql_found += len(results)
+
+        # Print progress with running tally
+        print(f"[{i}/{len(pickle_files)}] {pkl_file}: {len(results)} SQL in {page_count} pages | "
+              f"Running total: {total_pages:,} pages examined, {total_sql_found:,} SQL found")
 
     print("=" * 80)
     print(f"\nSUMMARY:")
