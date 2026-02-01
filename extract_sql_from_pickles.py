@@ -18,6 +18,7 @@ import pickle
 import argparse
 import re
 import sqlite3
+import hashlib
 from datetime import datetime
 from bs4 import BeautifulSoup, Tag, NavigableString
 from config_loader import load_data_settings
@@ -116,6 +117,20 @@ SQL_CONTINUATION_PATTERNS = [
     r'^\s*,',    # Continuation with comma
     r'^[^a-zA-Z]*$',  # Lines with only symbols/numbers (likely part of SQL)
 ]
+
+
+def normalize_sql_for_hash(sql_code):
+    """Normalize SQL for duplicate detection: uppercase, collapse whitespace."""
+    normalized = sql_code.upper()
+    normalized = re.sub(r'\s+', ' ', normalized)
+    normalized = normalized.strip()
+    return normalized
+
+
+def hash_sql(sql_code):
+    """Compute hash of normalized SQL for fast duplicate detection."""
+    normalized = normalize_sql_for_hash(sql_code)
+    return hashlib.md5(normalized.encode('utf-8')).hexdigest()
 
 
 def is_sql_language(language_str):
@@ -793,7 +808,7 @@ def format_sql_result(result, script_num):
     return '\n'.join(lines)
 
 
-def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_lines=1, db_conn=None):
+def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_lines=1, db_conn=None, seen_hashes=None):
     """
     Process a single pickle file and output SQL scripts in real-time.
 
@@ -803,18 +818,23 @@ def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_
         script_counter: List with single int for counting scripts
         min_lines: Minimum lines of SQL to include
         db_conn: SQLite connection (or None for text output)
+        seen_hashes: Set of already seen SQL hashes (for duplicate detection)
 
-    Returns: (page_count, sql_count, pages_with_sql_set)
+    Returns: (page_count, sql_count, duplicate_count, pages_with_sql_set)
     """
     pages_with_sql = set()
     sql_count = 0
+    duplicate_count = 0
+
+    if seen_hashes is None:
+        seen_hashes = set()
 
     try:
         with open(pickle_path, 'rb') as f:
             data = pickle.load(f)
     except Exception as e:
         print(f"  ERROR loading pickle {pickle_path}: {e}")
-        return 0, 0, pages_with_sql
+        return 0, 0, 0, pages_with_sql
 
     space_key = data.get('space_key', os.path.basename(pickle_path).replace('.pkl', ''))
     space_name = data.get('name') or data.get('space_name') or space_key
@@ -839,6 +859,13 @@ def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_
             # Filter by minimum lines
             if min_lines > 1 and script['sql_code'].count('\n') + 1 < min_lines:
                 continue
+
+            # Check for duplicates using hash
+            sql_hash = hash_sql(script['sql_code'])
+            if sql_hash in seen_hashes:
+                duplicate_count += 1
+                continue
+            seen_hashes.add(sql_hash)
 
             script_counter[0] += 1
             sql_count += 1
@@ -872,7 +899,7 @@ def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_
     if db_conn:
         db_conn.commit()
 
-    return page_count, sql_count, pages_with_sql
+    return page_count, sql_count, duplicate_count, pages_with_sql
 
 
 def main():
@@ -924,8 +951,10 @@ def main():
 
     total_pages = 0
     total_sql_found = 0
+    total_duplicates = 0
     all_pages_with_sql = set()
     script_counter = [0]  # Use list to allow mutation in nested function
+    seen_hashes = set()   # Track seen SQL hashes for duplicate detection
 
     try:
         for i, pkl_file in enumerate(pickle_files, 1):
@@ -968,17 +997,19 @@ def main():
                     print(f"[{i}/{len(pickle_files)}] {pkl_file}: ERROR - {e}")
                     continue
 
-                page_count, sql_count, pages_with_sql = process_pickle_file_streaming(
-                    pkl_path, output_file, script_counter, args.min_lines, db_conn
+                page_count, sql_count, dup_count, pages_with_sql = process_pickle_file_streaming(
+                    pkl_path, output_file, script_counter, args.min_lines, db_conn, seen_hashes
                 )
 
                 total_pages += page_count
                 total_sql_found += sql_count
+                total_duplicates += dup_count
                 all_pages_with_sql.update(pages_with_sql)
 
                 # Print progress after each pickle file
-                print(f"[{i}/{len(pickle_files)}] {pkl_file}: {sql_count} SQL in {page_count} pages | "
-                      f"Running total: {total_pages:,} pages examined, {total_sql_found:,} SQL found")
+                dup_info = f", {dup_count} dups" if dup_count > 0 else ""
+                print(f"[{i}/{len(pickle_files)}] {pkl_file}: {sql_count} SQL{dup_info} in {page_count} pages | "
+                      f"Running total: {total_pages:,} pages, {total_sql_found:,} SQL, {total_duplicates:,} dups skipped")
 
     finally:
         if output_file:
@@ -992,6 +1023,7 @@ def main():
     print(f"  Total pages scanned: {total_pages:,}")
     print(f"  Pages containing SQL: {len(all_pages_with_sql):,}")
     print(f"  Total SQL scripts found: {total_sql_found:,}")
+    print(f"  Duplicates skipped: {total_duplicates:,}")
 
     if args.output and not args.summary:
         print(f"\nText results written to: {args.output}")
