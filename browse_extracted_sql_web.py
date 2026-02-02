@@ -12,24 +12,73 @@ Usage:
 import sqlite3
 import argparse
 import os
+from datetime import datetime
 from flask import Flask, render_template_string, request, g
 
 app = Flask(__name__)
 DATABASE = None
+CONFLUENCE_BASE_URL = None
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html>
 <head>
-    <title>SQL Script Browser</title>
+    <title>Confluence SQL Script Browser</title>
     <style>
         * { box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            margin: 0; padding: 20px; background: #f5f5f5;
+            margin: 0; padding: 0; background: #f5f5f5;
+            display: flex; height: 100vh;
         }
-        .container { max-width: 1200px; margin: 0 auto; }
-        h1 { color: #333; margin-bottom: 20px; }
+
+        /* Sidebar */
+        .sidebar {
+            width: 300px; background: #fff; border-right: 1px solid #ddd;
+            overflow-y: auto; flex-shrink: 0;
+        }
+        .sidebar-header {
+            padding: 15px; border-bottom: 1px solid #ddd;
+            font-weight: 600; color: #333; background: #f8f9fa;
+        }
+        .sidebar-header a { color: #007bff; text-decoration: none; font-weight: normal; font-size: 13px; }
+        .space-item {
+            border-bottom: 1px solid #eee;
+        }
+        .space-header {
+            padding: 10px 15px; cursor: pointer; display: flex;
+            justify-content: space-between; align-items: center;
+            background: #fafafa;
+        }
+        .space-header:hover { background: #f0f0f0; }
+        .space-header.active { background: #e7f1ff; }
+        .space-name { font-weight: 500; color: #333; font-size: 13px; }
+        .space-count {
+            background: #6c757d; color: white; padding: 2px 8px;
+            border-radius: 10px; font-size: 11px;
+        }
+        .space-pages { display: none; background: #fff; }
+        .space-pages.open { display: block; }
+        .page-item {
+            padding: 8px 15px 8px 25px; border-bottom: 1px solid #f0f0f0;
+            font-size: 12px; color: #555; cursor: pointer;
+            display: flex; justify-content: space-between;
+        }
+        .page-item:hover { background: #f8f9fa; }
+        .page-item.active { background: #e7f1ff; color: #0056b3; }
+        .page-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+        .page-count { color: #888; margin-left: 8px; }
+        .script-item {
+            padding: 6px 15px 6px 40px; border-bottom: 1px solid #f5f5f5;
+            font-size: 11px; color: #666; cursor: pointer;
+        }
+        .script-item:hover { background: #f0f7ff; }
+        .script-item.active { background: #cce5ff; color: #004085; }
+
+        /* Main content */
+        .main { flex: 1; overflow-y: auto; padding: 20px; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        h1 { color: #333; margin-bottom: 20px; font-size: 24px; }
 
         .nav {
             background: #fff; padding: 15px; border-radius: 8px;
@@ -62,99 +111,280 @@ HTML_TEMPLATE = '''
             border-radius: 8px; overflow-x: auto; font-family: "Fira Code", "Consolas", monospace;
             font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
         }
-        .sql-code .keyword { color: #569cd6; }
-        .sql-code .function { color: #dcdcaa; }
-        .sql-code .string { color: #ce9178; }
-        .sql-code .comment { color: #6a9955; }
-        .sql-code .number { color: #b5cea8; }
 
         .search-results { margin-bottom: 10px; color: #666; }
         .line-count { color: #888; font-size: 12px; }
-
         form { display: inline; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>SQL Script Browser</h1>
-
-        <div class="nav">
-            <a href="/?index=0" {% if index == 0 %}class="disabled"{% endif %}>First</a>
-            <a href="/?index={{ index - 1 }}{% if search %}&search={{ search }}{% endif %}" {% if index == 0 %}class="disabled"{% endif %}>Prev</a>
-            <a href="/?index={{ index + 1 }}{% if search %}&search={{ search }}{% endif %}" {% if index >= total - 1 %}class="disabled"{% endif %}>Next</a>
-            <a href="/?index={{ total - 1 }}" {% if index >= total - 1 %}class="disabled"{% endif %}>Last</a>
-
-            <form action="/" method="get" style="display: flex; gap: 5px; align-items: center;">
-                <input type="number" name="goto" value="{{ index + 1 }}" min="1" max="{{ total }}">
-                <button type="submit">Go</button>
-            </form>
-
-            <div class="spacer"></div>
-
-            <form action="/" method="get" style="display: flex; gap: 5px; align-items: center;">
-                <input type="text" name="search" value="{{ search or '' }}" placeholder="Search SQL...">
-                <button type="submit">Search</button>
-                {% if search %}<a href="/">Clear</a>{% endif %}
-            </form>
-
-            <span class="info">{{ index + 1 }} of {{ total }}</span>
+    <!-- Sidebar with tree -->
+    <div class="sidebar">
+        <div class="sidebar-header">
+            Spaces & Pages ({{ total_scripts }} scripts)
+            {% if space_filter or page_filter %}<br><a href="/">Clear filter</a>{% endif %}
         </div>
-
-        {% if search %}
-        <div class="search-results">
-            Found {{ total }} results for "{{ search }}"
+        {% for space in tree %}
+        <div class="space-item">
+            <div class="space-header {% if space.space_key == space_filter %}active{% endif %}"
+                 onclick="toggleSpace(this)">
+                <span class="space-name">{{ space.space_key }}</span>
+                <span class="space-count">{{ space.script_count }}</span>
+            </div>
+            <div class="space-pages {% if space.space_key == space_filter %}open{% endif %}">
+                {% for page in space.pages %}
+                <div class="page-item {% if page.page_id == page_filter %}active{% endif %}"
+                     onclick="togglePage(this, '{{ space.space_key }}', '{{ page.page_id }}')">
+                    <span class="page-title" title="{{ page.page_title }}">{{ page.page_title or 'Untitled' }}</span>
+                    <span class="page-count">{{ page.script_count }}</span>
+                </div>
+                <div class="page-scripts" style="display: {% if page.page_id == page_filter %}block{% else %}none{% endif %};">
+                    {% for script in page.scripts %}
+                    <div class="script-item {% if script.id == current_id %}active{% endif %}"
+                         onclick="window.location='/?id={{ script.id }}'">
+                        #{{ script.id }} - {{ script.line_count }} lines
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endfor %}
+            </div>
         </div>
-        {% endif %}
+        {% endfor %}
+    </div>
 
-        {% if script %}
-        <div class="card">
-            <div class="meta">
-                <div class="meta-item">
-                    <div class="meta-label">Space</div>
-                    <div class="meta-value">{{ script.space_key }} ({{ script.space_name or 'N/A' }})</div>
-                </div>
-                <div class="meta-item">
-                    <div class="meta-label">Page</div>
-                    <div class="meta-value">{{ script.page_title or 'Untitled' }}</div>
-                </div>
-                <div class="meta-item">
-                    <div class="meta-label">Page ID</div>
-                    <div class="meta-value">{{ script.page_id }}</div>
-                </div>
-                <div class="meta-item">
-                    <div class="meta-label">Modified</div>
-                    <div class="meta-value">{{ script.last_modified }}</div>
-                </div>
-                <div class="meta-item">
-                    <div class="meta-label">Language</div>
-                    <div class="meta-value">{{ script.sql_language or 'N/A' }}</div>
-                </div>
-                <div class="meta-item">
-                    <div class="meta-label">Source</div>
-                    <div class="meta-value">{{ script.sql_source }}</div>
-                </div>
-                {% if script.sql_title %}
-                <div class="meta-item">
-                    <div class="meta-label">Title</div>
-                    <div class="meta-value">{{ script.sql_title }}</div>
-                </div>
-                {% endif %}
-                {% if script.sql_description %}
-                <div class="meta-item">
-                    <div class="meta-label">Description</div>
-                    <div class="meta-value">{{ script.sql_description }}</div>
-                </div>
-                {% endif %}
+    <!-- Main content -->
+    <div class="main">
+        <div class="container">
+            <h1>Confluence SQL Script Browser</h1>
+
+            <div class="nav">
+                <a href="/?index=0" {% if index == 0 %}class="disabled"{% endif %}>First</a>
+                <a href="/?index={{ index - 1 }}{% if search %}&search={{ search }}{% endif %}{% if space_filter %}&space={{ space_filter }}{% endif %}{% if page_filter %}&page={{ page_filter }}{% endif %}" {% if index == 0 %}class="disabled"{% endif %}>Prev</a>
+                <a href="/?index={{ index + 1 }}{% if search %}&search={{ search }}{% endif %}{% if space_filter %}&space={{ space_filter }}{% endif %}{% if page_filter %}&page={{ page_filter }}{% endif %}" {% if index >= total - 1 %}class="disabled"{% endif %}>Next</a>
+                <a href="/?index={{ total - 1 }}{% if space_filter %}&space={{ space_filter }}{% endif %}{% if page_filter %}&page={{ page_filter }}{% endif %}" {% if index >= total - 1 %}class="disabled"{% endif %}>Last</a>
+
+                <form action="/" method="get" style="display: flex; gap: 5px; align-items: center;">
+                    <input type="number" name="goto" value="{{ index + 1 }}" min="1" max="{{ total }}">
+                    {% if space_filter %}<input type="hidden" name="space" value="{{ space_filter }}">{% endif %}
+                    {% if page_filter %}<input type="hidden" name="page" value="{{ page_filter }}">{% endif %}
+                    <button type="submit">Go</button>
+                </form>
+
+                <div class="spacer"></div>
+
+                <form action="/" method="get" style="display: flex; gap: 5px; align-items: center;">
+                    <input type="text" name="search" value="{{ search or '' }}" placeholder="Search SQL...">
+                    <button type="submit">Search</button>
+                    <button type="submit" formaction="/timeline" style="background: #28a745;">Timeline</button>
+                    {% if search %}<a href="/">Clear</a>{% endif %}
+                </form>
+
+                <span class="info">{{ index + 1 }} of {{ total }}</span>
             </div>
 
-            <div class="line-count">{{ script.line_count }} lines</div>
-            <pre class="sql-code">{{ script.sql_code }}</pre>
+            {% if search %}
+            <div class="search-results">Found {{ total }} results for "{{ search }}"</div>
+            {% endif %}
+            {% if space_filter and not page_filter %}
+            <div class="search-results">Showing scripts from space: {{ space_filter }}</div>
+            {% endif %}
+            {% if page_filter %}
+            <div class="search-results">Showing scripts from page: {{ script.page_title if script else page_filter }}</div>
+            {% endif %}
+
+            {% if script %}
+            <div class="card">
+                <div class="meta">
+                    <div class="meta-item">
+                        <div class="meta-label">Space</div>
+                        <div class="meta-value">
+                            <a href="/?space={{ script.space_key }}">{{ script.space_key }}</a>
+                            ({{ script.space_name or 'N/A' }})
+                        </div>
+                    </div>
+                    <div class="meta-item">
+                        <div class="meta-label">Page</div>
+                        <div class="meta-value">
+                            <a href="/?page={{ script.page_id }}">{{ script.page_title or 'Untitled' }}</a>
+                            {% if confluence_url %}
+                            <a href="{{ confluence_url }}/pages/viewpage.action?pageId={{ script.page_id }}" target="_blank" style="margin-left: 8px; font-size: 12px;">↗ Open in Confluence</a>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="meta-item">
+                        <div class="meta-label">Page ID</div>
+                        <div class="meta-value">{{ script.page_id }}</div>
+                    </div>
+                    <div class="meta-item">
+                        <div class="meta-label">Modified</div>
+                        <div class="meta-value">{{ script.last_modified }}</div>
+                    </div>
+                    <div class="meta-item">
+                        <div class="meta-label">Language</div>
+                        <div class="meta-value">{{ script.sql_language or 'N/A' }}</div>
+                    </div>
+                    <div class="meta-item">
+                        <div class="meta-label">Source</div>
+                        <div class="meta-value">{{ script.sql_source }}</div>
+                    </div>
+                    {% if script.sql_title %}
+                    <div class="meta-item">
+                        <div class="meta-label">Title</div>
+                        <div class="meta-value">{{ script.sql_title }}</div>
+                    </div>
+                    {% endif %}
+                    {% if script.sql_description %}
+                    <div class="meta-item">
+                        <div class="meta-label">Description</div>
+                        <div class="meta-value">{{ script.sql_description }}</div>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <div class="line-count">{{ script.line_count }} lines (Script ID: {{ script.id }})</div>
+                <pre class="sql-code">{{ script.sql_code }}</pre>
+            </div>
+            {% else %}
+            <div class="card">
+                <p>No scripts found.</p>
+            </div>
+            {% endif %}
         </div>
-        {% else %}
+    </div>
+
+    <script>
+        function toggleSpace(el) {
+            const pages = el.nextElementSibling;
+            pages.classList.toggle('open');
+        }
+        function togglePage(el, spaceKey, pageId) {
+            // Navigate to filter by page
+            window.location = '/?page=' + pageId;
+        }
+    </script>
+</body>
+</html>
+'''
+
+TIMELINE_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SQL Scripts Timeline - {{ search or 'All' }}</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0; padding: 20px; background: #f5f5f5;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        h1 { color: #333; margin-bottom: 10px; }
+        .subtitle { color: #666; margin-bottom: 20px; }
+
+        .nav {
+            background: #fff; padding: 15px; border-radius: 8px;
+            margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex; gap: 10px; align-items: center;
+        }
+        .nav a, .nav button {
+            padding: 8px 16px; background: #007bff; color: white;
+            text-decoration: none; border-radius: 4px; border: none; cursor: pointer;
+        }
+        .nav a:hover, .nav button:hover { background: #0056b3; }
+        .nav input[type="text"] { width: 300px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        .nav .spacer { flex-grow: 1; }
+
+        .card {
+            background: #fff; border-radius: 8px; padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px;
+        }
+
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; }
+
+        .timeline-cell { width: 60%; }
+        .timeline {
+            position: relative; height: 30px; background: #e9ecef; border-radius: 4px;
+        }
+        .event {
+            position: absolute; height: 30px; width: 2px; background: #dc3545;
+            cursor: pointer; transition: background 0.2s;
+        }
+        .event:hover { background: #007bff; width: 4px; margin-left: -1px; }
+
+        .year-markers {
+            position: relative; height: 20px; margin-top: 2px;
+        }
+        .year-marker {
+            position: absolute; font-size: 10px; color: #666;
+            transform: translateX(-50%);
+        }
+
+        .space-name { font-weight: 500; }
+        .space-name a { color: #007bff; text-decoration: none; }
+        .space-name a:hover { text-decoration: underline; }
+        .script-count { color: #666; }
+
+        .legend {
+            display: flex; gap: 20px; margin-bottom: 15px; font-size: 13px; color: #666;
+        }
+        .legend-item { display: flex; align-items: center; gap: 5px; }
+        .legend-bar { width: 20px; height: 12px; background: #dc3545; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>SQL Scripts Timeline</h1>
+        <p class="subtitle">
+            {% if search %}Search: "{{ search }}" - {% endif %}
+            {{ total_scripts }} scripts across {{ spaces|length }} spaces
+        </p>
+
+        <div class="nav">
+            <a href="/">← Back to Browser</a>
+            <div class="spacer"></div>
+            <form action="/timeline" method="get" style="display: flex; gap: 5px;">
+                <input type="text" name="search" value="{{ search or '' }}" placeholder="Search SQL content...">
+                <button type="submit">Search</button>
+                {% if search %}<a href="/timeline">Clear</a>{% endif %}
+            </form>
+        </div>
+
         <div class="card">
-            <p>No scripts found.</p>
+            <div class="legend">
+                <div class="legend-item"><div class="legend-bar"></div> SQL script last modified date</div>
+                <div class="legend-item">Timeline: {{ min_year }} - {{ max_year }}</div>
+            </div>
+
+            <table>
+                <tr>
+                    <th>Space</th>
+                    <th>Scripts</th>
+                    <th class="timeline-cell">Last Modified Timeline</th>
+                </tr>
+                {% for space in spaces %}
+                <tr>
+                    <td class="space-name"><a href="/?space={{ space.space_key }}">{{ space.space_key }}</a></td>
+                    <td class="script-count">{{ space.script_count }}</td>
+                    <td class="timeline-cell">
+                        <div class="timeline">
+                            {% for event in space.events %}
+                            <div class="event" style="left: {{ event.position }}%;"
+                                 title="{{ event.page_title }} ({{ event.date }})"
+                                 onclick="window.location='/?id={{ event.id }}'"></div>
+                            {% endfor %}
+                        </div>
+                        <div class="year-markers">
+                            {% for year in years %}
+                            <div class="year-marker" style="left: {{ year.position }}%;">{{ year.year }}</div>
+                            {% endfor %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </table>
         </div>
-        {% endif %}
     </div>
 </body>
 </html>
@@ -177,62 +407,167 @@ def close_db(error):
         db.close()
 
 
-def get_total_count(search=None):
-    """Get total count of scripts, optionally filtered by search."""
+def get_tree():
+    """Get hierarchical tree of spaces -> pages -> scripts."""
     db = get_db()
+
+    # Get all scripts grouped by space and page
+    cursor = db.execute('''
+        SELECT id, space_key, space_name, page_id, page_title, line_count
+        FROM sql_scripts
+        ORDER BY space_key, page_title, id
+    ''')
+
+    tree = {}
+    for row in cursor:
+        space_key = row['space_key']
+        page_id = row['page_id']
+
+        if space_key not in tree:
+            tree[space_key] = {
+                'space_key': space_key,
+                'space_name': row['space_name'],
+                'pages': {},
+                'script_count': 0
+            }
+
+        if page_id not in tree[space_key]['pages']:
+            tree[space_key]['pages'][page_id] = {
+                'page_id': page_id,
+                'page_title': row['page_title'],
+                'scripts': [],
+                'script_count': 0
+            }
+
+        tree[space_key]['pages'][page_id]['scripts'].append({
+            'id': row['id'],
+            'line_count': row['line_count']
+        })
+        tree[space_key]['pages'][page_id]['script_count'] += 1
+        tree[space_key]['script_count'] += 1
+
+    # Convert to list format
+    result = []
+    for space_key in sorted(tree.keys()):
+        space = tree[space_key]
+        space['pages'] = sorted(space['pages'].values(), key=lambda p: p['page_title'] or '')
+        result.append(space)
+
+    return result
+
+
+def get_total_count(search=None, space_filter=None, page_filter=None):
+    """Get total count of scripts with filters."""
+    db = get_db()
+
+    conditions = []
+    params = []
+
     if search:
-        cursor = db.execute(
-            'SELECT COUNT(*) FROM sql_scripts WHERE sql_code LIKE ? OR page_title LIKE ? OR space_key LIKE ?',
-            (f'%{search}%', f'%{search}%', f'%{search}%')
-        )
-    else:
-        cursor = db.execute('SELECT COUNT(*) FROM sql_scripts')
+        conditions.append('(sql_code LIKE ? OR page_title LIKE ? OR space_key LIKE ?)')
+        params.extend([f'%{search}%', f'%{search}%', f'%{search}%'])
+    if space_filter:
+        conditions.append('space_key = ?')
+        params.append(space_filter)
+    if page_filter:
+        conditions.append('page_id = ?')
+        params.append(page_filter)
+
+    where = ' WHERE ' + ' AND '.join(conditions) if conditions else ''
+    cursor = db.execute(f'SELECT COUNT(*) FROM sql_scripts{where}', params)
     return cursor.fetchone()[0]
 
 
-def get_script(index, search=None):
-    """Get script at given index, optionally filtered by search."""
+def get_script_by_id(script_id):
+    """Get script by ID."""
     db = get_db()
-    if search:
-        cursor = db.execute('''
-            SELECT id, space_key, space_name, page_id, page_title,
-                   last_modified, sql_language, sql_title, sql_description,
-                   sql_source, sql_code, line_count
-            FROM sql_scripts
-            WHERE sql_code LIKE ? OR page_title LIKE ? OR space_key LIKE ?
-            ORDER BY id
-            LIMIT 1 OFFSET ?
-        ''', (f'%{search}%', f'%{search}%', f'%{search}%', index))
-    else:
-        cursor = db.execute('''
-            SELECT id, space_key, space_name, page_id, page_title,
-                   last_modified, sql_language, sql_title, sql_description,
-                   sql_source, sql_code, line_count
-            FROM sql_scripts
-            ORDER BY id
-            LIMIT 1 OFFSET ?
-        ''', (index,))
+    cursor = db.execute('''
+        SELECT id, space_key, space_name, page_id, page_title,
+               last_modified, sql_language, sql_title, sql_description,
+               sql_source, sql_code, line_count
+        FROM sql_scripts WHERE id = ?
+    ''', (script_id,))
     row = cursor.fetchone()
-    if row:
-        return dict(row)
-    return None
+    return dict(row) if row else None
+
+
+def get_script(index, search=None, space_filter=None, page_filter=None):
+    """Get script at given index with filters."""
+    db = get_db()
+
+    conditions = []
+    params = []
+
+    if search:
+        conditions.append('(sql_code LIKE ? OR page_title LIKE ? OR space_key LIKE ?)')
+        params.extend([f'%{search}%', f'%{search}%', f'%{search}%'])
+    if space_filter:
+        conditions.append('space_key = ?')
+        params.append(space_filter)
+    if page_filter:
+        conditions.append('page_id = ?')
+        params.append(page_filter)
+
+    where = ' WHERE ' + ' AND '.join(conditions) if conditions else ''
+    params.append(index)
+
+    cursor = db.execute(f'''
+        SELECT id, space_key, space_name, page_id, page_title,
+               last_modified, sql_language, sql_title, sql_description,
+               sql_source, sql_code, line_count
+        FROM sql_scripts
+        {where}
+        ORDER BY id
+        LIMIT 1 OFFSET ?
+    ''', params)
+    row = cursor.fetchone()
+    return dict(row) if row else None
 
 
 @app.route('/')
 def browse():
     """Main browse endpoint."""
     search = request.args.get('search', '').strip() or None
-    total = get_total_count(search)
+    space_filter = request.args.get('space', '').strip() or None
+    page_filter = request.args.get('page', '').strip() or None
+    script_id = request.args.get('id', '').strip() or None
+
+    # Get tree for sidebar
+    tree = get_tree()
+    total_scripts = sum(s['script_count'] for s in tree)
+
+    # If specific script ID requested
+    if script_id:
+        try:
+            script = get_script_by_id(int(script_id))
+            if script:
+                # Find index for this script
+                total = get_total_count(search, space_filter, page_filter)
+                return render_template_string(
+                    HTML_TEMPLATE,
+                    script=script,
+                    index=0,
+                    total=1,
+                    total_scripts=total_scripts,
+                    search=search,
+                    space_filter=script['space_key'],
+                    page_filter=script['page_id'],
+                    current_id=script['id'],
+                    tree=tree,
+                    confluence_url=CONFLUENCE_BASE_URL
+                )
+        except ValueError:
+            pass
+
+    total = get_total_count(search, space_filter, page_filter)
 
     # Handle "goto" form (1-based) vs navigation links (0-based "index")
     if 'goto' in request.args:
-        # From the Go form - 1-based input
         try:
             index = int(request.args.get('goto', 1)) - 1
         except ValueError:
             index = 0
     else:
-        # From navigation links - 0-based
         try:
             index = int(request.args.get('index', 0))
         except ValueError:
@@ -241,19 +576,143 @@ def browse():
     # Clamp to valid range
     index = max(0, min(index, total - 1)) if total > 0 else 0
 
-    script = get_script(index, search) if total > 0 else None
+    script = get_script(index, search, space_filter, page_filter) if total > 0 else None
+    current_id = script['id'] if script else None
 
     return render_template_string(
         HTML_TEMPLATE,
         script=script,
         index=index,
         total=total,
-        search=search
+        total_scripts=total_scripts,
+        search=search,
+        space_filter=space_filter,
+        page_filter=page_filter,
+        current_id=current_id,
+        tree=tree,
+        confluence_url=CONFLUENCE_BASE_URL
+    )
+
+
+def parse_date(date_str):
+    """Parse date string to datetime, return None if invalid."""
+    if not date_str:
+        return None
+    try:
+        # Try common formats
+        for fmt in ['%Y-%m-%d %H:%M:%S UTC', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d']:
+            try:
+                return datetime.strptime(date_str.split('.')[0], fmt)
+            except ValueError:
+                continue
+        return None
+    except Exception:
+        return None
+
+
+@app.route('/timeline')
+def timeline():
+    """Timeline view of SQL scripts by space."""
+    search = request.args.get('search', '').strip() or None
+    db = get_db()
+
+    # Build query
+    conditions = []
+    params = []
+    if search:
+        conditions.append('(sql_code LIKE ? OR page_title LIKE ? OR space_key LIKE ?)')
+        params.extend([f'%{search}%', f'%{search}%', f'%{search}%'])
+
+    where = ' WHERE ' + ' AND '.join(conditions) if conditions else ''
+
+    cursor = db.execute(f'''
+        SELECT id, space_key, page_id, page_title, last_modified
+        FROM sql_scripts
+        {where}
+        ORDER BY space_key, last_modified
+    ''', params)
+
+    # Group by space and collect dates
+    spaces = {}
+    all_dates = []
+
+    for row in cursor:
+        space_key = row['space_key']
+        date = parse_date(row['last_modified'])
+
+        if space_key not in spaces:
+            spaces[space_key] = {'space_key': space_key, 'scripts': [], 'script_count': 0}
+
+        spaces[space_key]['scripts'].append({
+            'id': row['id'],
+            'page_id': row['page_id'],
+            'page_title': row['page_title'],
+            'date': date,
+            'date_str': row['last_modified']
+        })
+        spaces[space_key]['script_count'] += 1
+
+        if date:
+            all_dates.append(date)
+
+    # Calculate timeline range (10 years by default, or based on data)
+    now = datetime.now()
+    if all_dates:
+        min_date = min(all_dates)
+        max_date = max(all_dates)
+        # Extend range a bit
+        min_year = min_date.year
+        max_year = max(max_date.year, now.year)
+    else:
+        min_year = now.year - 10
+        max_year = now.year
+
+    # Ensure at least 5 year span
+    if max_year - min_year < 5:
+        min_year = max_year - 5
+
+    total_days = (datetime(max_year + 1, 1, 1) - datetime(min_year, 1, 1)).days
+
+    # Calculate positions for each event
+    for space in spaces.values():
+        events = []
+        for script in space['scripts']:
+            if script['date']:
+                days_from_start = (script['date'] - datetime(min_year, 1, 1)).days
+                position = (days_from_start / total_days) * 100
+                position = max(0, min(100, position))
+                events.append({
+                    'id': script['id'],
+                    'position': position,
+                    'page_title': script['page_title'] or 'Untitled',
+                    'date': script['date_str']
+                })
+        space['events'] = events
+
+    # Year markers
+    years = []
+    for year in range(min_year, max_year + 1):
+        days_from_start = (datetime(year, 1, 1) - datetime(min_year, 1, 1)).days
+        position = (days_from_start / total_days) * 100
+        years.append({'year': year, 'position': position})
+
+    # Sort spaces by script count
+    spaces_list = sorted(spaces.values(), key=lambda s: -s['script_count'])
+    total_scripts = sum(s['script_count'] for s in spaces_list)
+
+    return render_template_string(
+        TIMELINE_TEMPLATE,
+        search=search,
+        spaces=spaces_list,
+        years=years,
+        min_year=min_year,
+        max_year=max_year,
+        total_scripts=total_scripts
     )
 
 
 def main():
-    global DATABASE
+    global DATABASE, CONFLUENCE_BASE_URL
 
     parser = argparse.ArgumentParser(
         description='Web-based SQL script browser',
@@ -271,6 +730,10 @@ def main():
         '--host', default='127.0.0.1',
         help='Host to bind to (default: 127.0.0.1)'
     )
+    parser.add_argument(
+        '--confluence-url',
+        help='Confluence base URL for click-through links (e.g., https://wiki.example.com)'
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.db):
@@ -278,6 +741,18 @@ def main():
         return 1
 
     DATABASE = args.db
+
+    # Try to get Confluence URL from settings if not provided
+    CONFLUENCE_BASE_URL = args.confluence_url
+    if not CONFLUENCE_BASE_URL:
+        try:
+            import sys
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from config_loader import load_confluence_settings
+            settings = load_confluence_settings()
+            CONFLUENCE_BASE_URL = settings.get('base_url', '').rstrip('/')
+        except Exception:
+            pass
 
     # Quick count check
     conn = sqlite3.connect(DATABASE)
