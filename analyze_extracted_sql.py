@@ -10,26 +10,14 @@ Provides statistics on SQL scripts extracted from Confluence pages:
 - Top scripts by various criteria
 
 Usage:
-    python analyze_extracted_sql.py
-
-Expects: sql_scripts.db in current directory (or temp/sql_scripts.db)
+    python analyze_extracted_sql.py --db sql_queries.db
 """
 
 import sqlite3
 import os
 import re
+import argparse
 from collections import Counter, defaultdict
-
-# Find the database
-DB_PATHS = ['sql_scripts.db', 'temp/sql_scripts.db', 'extracted_sql.db']
-
-
-def find_database():
-    """Find the SQL scripts database."""
-    for path in DB_PATHS:
-        if os.path.exists(path):
-            return path
-    return None
 
 
 def get_table_references(sql_code):
@@ -178,11 +166,19 @@ def print_header(title):
 
 
 def main():
-    db_path = find_database()
-    if not db_path:
-        print("ERROR: Could not find SQL scripts database.")
-        print(f"Looked in: {', '.join(DB_PATHS)}")
-        print("\nRun extract_sql_from_pickles.py --sqlite sql_scripts.db first.")
+    parser = argparse.ArgumentParser(
+        description='Analyze extracted SQL scripts from SQLite database.',
+        epilog='Example: python analyze_extracted_sql.py --db sql_queries.db'
+    )
+    parser.add_argument(
+        '--db', required=True,
+        help='Path to SQLite database file (e.g., sql_queries.db)'
+    )
+    args = parser.parse_args()
+
+    db_path = args.db
+    if not os.path.exists(db_path):
+        print(f"ERROR: Database file not found: {db_path}")
         return
 
     print(f"Analyzing: {db_path}")
