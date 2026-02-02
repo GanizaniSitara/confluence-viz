@@ -85,7 +85,7 @@ HTML_TEMPLATE = '''
             <a href="/?index={{ total - 1 }}" {% if index >= total - 1 %}class="disabled"{% endif %}>Last</a>
 
             <form action="/" method="get" style="display: flex; gap: 5px; align-items: center;">
-                <input type="number" name="index" value="{{ index + 1 }}" min="1" max="{{ total }}">
+                <input type="number" name="goto" value="{{ index + 1 }}" min="1" max="{{ total }}">
                 <button type="submit">Go</button>
             </form>
 
@@ -224,16 +224,19 @@ def browse():
     search = request.args.get('search', '').strip() or None
     total = get_total_count(search)
 
-    # Handle index from form (1-based) or URL (0-based)
-    index = request.args.get('index', 0)
-    try:
-        index = int(index)
-        # If it looks like 1-based (from the form), convert
-        if index >= 1 and 'index' in request.args:
-            # Check if this came from the number input (1-based)
-            index = max(0, index - 1)
-    except ValueError:
-        index = 0
+    # Handle "goto" form (1-based) vs navigation links (0-based "index")
+    if 'goto' in request.args:
+        # From the Go form - 1-based input
+        try:
+            index = int(request.args.get('goto', 1)) - 1
+        except ValueError:
+            index = 0
+    else:
+        # From navigation links - 0-based
+        try:
+            index = int(request.args.get('index', 0))
+        except ValueError:
+            index = 0
 
     # Clamp to valid range
     index = max(0, min(index, total - 1)) if total > 0 else 0
