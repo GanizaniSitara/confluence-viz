@@ -178,7 +178,7 @@ HTML_TEMPLATE = '''
                     <input type="text" name="search" value="{{ search or '' }}" placeholder="Search SQL...">
                     <button type="submit">Search</button>
                     <button type="submit" formaction="/timeline" style="background: #28a745;">Timeline</button>
-                    <a href="/analytics" style="background: #6f42c1;">Analytics</a>
+                    <a href="/insights" style="background: #6f42c1;">Insights</a>
                     {% if search %}<a href="/">Clear</a>{% endif %}
                 </form>
 
@@ -346,7 +346,7 @@ TIMELINE_TEMPLATE = '''
 
         <div class="nav">
             <a href="/">← Browser</a>
-            <a href="/analytics">Analytics</a>
+            <a href="/insights">Insights</a>
             <div class="spacer"></div>
             <form action="/timeline" method="get" style="display: flex; gap: 5px;">
                 <input type="text" name="search" value="{{ search or '' }}" placeholder="Search SQL content...">
@@ -394,11 +394,11 @@ TIMELINE_TEMPLATE = '''
 </html>
 '''
 
-ANALYTICS_TEMPLATE = '''
+INSIGHTS_TEMPLATE = '''
 <!DOCTYPE html>
 <html>
 <head>
-    <title>SQL Analytics - Confluence SQL Script Browser</title>
+    <title>SQL Insights - Confluence SQL Script Browser</title>
     <style>
         * { box-sizing: border-box; }
         body {
@@ -460,14 +460,29 @@ ANALYTICS_TEMPLATE = '''
 </head>
 <body>
     <div class="container">
-        <h1>SQL Analytics</h1>
-        <p class="subtitle">Analysis of {{ total_scripts }} SQL scripts across {{ total_spaces }} spaces</p>
+        <h1>SQL Insights{% if space_filter %} - {{ space_filter }}{% endif %}</h1>
+        <p class="subtitle">
+            {% if space_filter %}
+                Filtered to space: {{ space_filter }} |
+                <a href="/insights">Show all spaces</a>
+            {% else %}
+                {{ total_scripts }} SQL scripts across {{ total_spaces }} spaces
+            {% endif %}
+        </p>
 
         <div class="nav">
             <a href="/">← Browser</a>
             <a href="/timeline">Timeline</a>
-            <a href="/analytics" class="active">Analytics</a>
+            <a href="/insights" class="active">Insights</a>
             <div class="spacer"></div>
+            <form action="/insights" method="get" style="display: flex; gap: 5px;">
+                <select name="space" onchange="this.form.submit()" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                    <option value="">All Spaces</option>
+                    {% for space in all_spaces %}
+                    <option value="{{ space }}" {% if space == space_filter %}selected{% endif %}>{{ space }}</option>
+                    {% endfor %}
+                </select>
+            </form>
         </div>
 
         <!-- Summary Stats -->
@@ -1062,15 +1077,28 @@ def count_keywords(sql_code):
     return count
 
 
-@app.route('/analytics')
-def analytics():
-    """Analytics view with tables, schemas, types, complexity."""
+@app.route('/insights')
+def insights():
+    """Insights view with tables, schemas, types, complexity. Supports space filtering."""
     db = get_db()
+    space_filter = request.args.get('space', '').strip() or None
 
-    cursor = db.execute('''
-        SELECT id, space_key, space_name, page_id, page_title, sql_code, line_count, sql_source
-        FROM sql_scripts
-    ''')
+    # Get list of all spaces for dropdown
+    all_spaces_cursor = db.execute('SELECT DISTINCT space_key FROM sql_scripts ORDER BY space_key')
+    all_spaces = [row['space_key'] for row in all_spaces_cursor]
+
+    # Build query with optional space filter
+    if space_filter:
+        cursor = db.execute('''
+            SELECT id, space_key, space_name, page_id, page_title, sql_code, line_count, sql_source
+            FROM sql_scripts
+            WHERE space_key = ?
+        ''', (space_filter,))
+    else:
+        cursor = db.execute('''
+            SELECT id, space_key, space_name, page_id, page_title, sql_code, line_count, sql_source
+            FROM sql_scripts
+        ''')
 
     all_tables = Counter()
     all_schemas = Counter()
@@ -1172,7 +1200,7 @@ def analytics():
     max_schema_count = top_schemas[0][1] if top_schemas else 1
 
     return render_template_string(
-        ANALYTICS_TEMPLATE,
+        INSIGHTS_TEMPLATE,
         total_scripts=total_scripts,
         total_lines=total_lines,
         total_spaces=len(space_stats),
@@ -1187,7 +1215,9 @@ def analytics():
         size_distribution=size_distribution,
         nesting_distribution=nesting_distribution,
         top_spaces=top_spaces,
-        most_complex=most_complex
+        most_complex=most_complex,
+        space_filter=space_filter,
+        all_spaces=all_spaces
     )
 
 
