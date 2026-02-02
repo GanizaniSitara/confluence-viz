@@ -1,6 +1,0 @@
-[confluence]
-base_url = https://confluence.example.com
-
-[credentials]
-USERNAME = your_username
-PASSWORD = your_password

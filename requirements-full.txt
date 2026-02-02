@@ -1,0 +1,34 @@
+# Full dependencies including optional features
+# Install with: pip install -r requirements-full.txt
+
+# Core (required)
+requests
+beautifulsoup4
+lxml
+numpy
+
+# Analysis (required for explore_clusters.py)
+scikit-learn
+
+# Full-text search
+whoosh
+
+# Visualization
+matplotlib
+
+# Progress bars
+tqdm
+
+# Database (for OpenWebUI integration)
+psycopg2-binary
+pgvector
+
+# Vector DB (for Qdrant integration)
+qdrant-client
+
+# Embeddings (choose one based on your setup)
+ollama
+sentence-transformers
+
+# Document processing (for Tika integration)
+tika

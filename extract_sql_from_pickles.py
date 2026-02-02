@@ -52,7 +52,8 @@ SQL_KEYWORDS = [
 ]
 
 # Minimum number of SQL keywords to consider something as SQL (for unlabeled blocks)
-MIN_SQL_KEYWORDS = 2
+# Raised from 2 to 3 to reduce false positives like "Execute light on business"
+MIN_SQL_KEYWORDS = 3
 
 # Patterns that indicate the START of a SQL statement (for plain text extraction)
 # NOTE: BEGIN, LOOP, EXCEPTION etc. are NOT starters - they're continuations within PL/SQL
@@ -147,6 +148,26 @@ def looks_like_sql(text):
         return False
 
     text_upper = text.upper()
+
+    # Must have at least one strong SQL statement keyword (SELECT, INSERT, CREATE, etc.)
+    # This prevents matching on single keywords like EXECUTE in prose
+    strong_keywords = [
+        r'\bSELECT\b.*\bFROM\b',  # SELECT ... FROM pattern
+        r'\bINSERT\s+INTO\b',
+        r'\bUPDATE\b.*\bSET\b',
+        r'\bDELETE\s+FROM\b',
+        r'\bCREATE\s+(TABLE|VIEW|INDEX|PROCEDURE|FUNCTION|TRIGGER|PACKAGE)\b',
+        r'\bALTER\s+TABLE\b',
+        r'\bDROP\s+(TABLE|VIEW|INDEX|PROCEDURE|FUNCTION)\b',
+        r'\bDECLARE\b.*\b(BEGIN|CURSOR|VARCHAR|NUMBER|INTEGER)\b',
+        r'\bBEGIN\b.*\bEND\b',
+    ]
+
+    has_strong_pattern = any(re.search(pattern, text_upper, re.DOTALL) for pattern in strong_keywords)
+    if has_strong_pattern:
+        return True
+
+    # Fallback: require multiple keywords
     keyword_count = sum(1 for pattern in SQL_KEYWORDS if re.search(pattern, text_upper))
     return keyword_count >= MIN_SQL_KEYWORDS
 
@@ -561,9 +582,14 @@ def extract_sql_from_table_cell(cell):
     return sql_blocks
 
 
-def extract_all_sql_from_page(html_content, page_title=''):
+def extract_all_sql_from_page(html_content, page_title='', scan_plain_text=False):
     """
     Extract all SQL scripts from a page's HTML content.
+
+    Args:
+        html_content: HTML content of the page
+        page_title: Title of the page (for context)
+        scan_plain_text: If True, also scan plain text for SQL patterns (slower)
 
     Returns a list of dicts with keys: sql_code, language, title, description, source
     """
@@ -661,39 +687,35 @@ def extract_all_sql_from_page(html_content, page_title=''):
                         sql_item['description'] = row_context
                     sql_scripts.append(sql_item)
 
-    # 5. CRITICAL: Scan ALL plain text content for SQL patterns
-    # This catches SQL that's not in any structured element (just written as text)
-    # First, get the full text content of the page
-    full_text = soup.get_text(separator='\n')
+    # 5. Optionally scan plain text for SQL patterns (disabled by default - slow and noisy)
+    if scan_plain_text:
+        full_text = soup.get_text(separator='\n')
 
-    # Track what SQL we've already found (to avoid duplicates)
-    existing_sql_normalized = set()
-    for script in sql_scripts:
-        # Normalize: remove whitespace for comparison
-        normalized = re.sub(r'\s+', ' ', script['sql_code'].strip().upper())
-        existing_sql_normalized.add(normalized)
+        # Track what SQL we've already found (to avoid duplicates)
+        existing_sql_normalized = set()
+        for script in sql_scripts:
+            normalized = re.sub(r'\s+', ' ', script['sql_code'].strip().upper())
+            existing_sql_normalized.add(normalized)
 
-    # Extract SQL blocks from plain text
-    plain_text_sql_blocks = extract_sql_blocks_from_text(full_text)
+        # Extract SQL blocks from plain text
+        plain_text_sql_blocks = extract_sql_blocks_from_text(full_text)
 
-    for sql_block in plain_text_sql_blocks:
-        # Check if this is a duplicate of something we already found
-        normalized = re.sub(r'\s+', ' ', sql_block.strip().upper())
-        if normalized in existing_sql_normalized:
-            continue
+        for sql_block in plain_text_sql_blocks:
+            normalized = re.sub(r'\s+', ' ', sql_block.strip().upper())
+            if normalized in existing_sql_normalized:
+                continue
 
-        # Find position in text for context
-        block_pos = full_text.find(sql_block[:50]) if len(sql_block) >= 50 else full_text.find(sql_block)
-        context = get_context_before_position(full_text, block_pos) if block_pos > 0 else ''
+            block_pos = full_text.find(sql_block[:50]) if len(sql_block) >= 50 else full_text.find(sql_block)
+            context = get_context_before_position(full_text, block_pos) if block_pos > 0 else ''
 
-        sql_scripts.append({
-            'sql_code': sql_block,
-            'language': 'detected-plain-text',
-            'title': '',
-            'description': context,
-            'source': 'plain-text-scan'
-        })
-        existing_sql_normalized.add(normalized)
+            sql_scripts.append({
+                'sql_code': sql_block,
+                'language': 'detected-plain-text',
+                'title': '',
+                'description': context,
+                'source': 'plain-text-scan'
+            })
+            existing_sql_normalized.add(normalized)
 
     return sql_scripts
 
@@ -808,7 +830,7 @@ def format_sql_result(result, script_num):
     return '\n'.join(lines)
 
 
-def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_lines=1, db_conn=None, seen_hashes=None, confluence_base_url=None):
+def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_lines=1, db_conn=None, seen_hashes=None, confluence_base_url=None, no_dedup=False, scan_plain_text=False):
     """
     Process a single pickle file and output SQL scripts in real-time.
 
@@ -820,6 +842,8 @@ def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_
         db_conn: SQLite connection (or None for text output)
         seen_hashes: Set of already seen SQL hashes (for duplicate detection)
         confluence_base_url: Base URL for Confluence (for generating page links)
+        no_dedup: If True, skip duplicate detection
+        scan_plain_text: If True, scan plain text for SQL patterns
 
     Returns: (page_count, sql_count, duplicate_count, pages_with_sql_set)
     """
@@ -851,7 +875,7 @@ def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_
         if not body:
             continue
 
-        sql_scripts = extract_all_sql_from_page(body, page_title)
+        sql_scripts = extract_all_sql_from_page(body, page_title, scan_plain_text=scan_plain_text)
 
         # Flag pages with many SQL statements for manual review (potential double-counting)
         if len(sql_scripts) > 5:
@@ -866,12 +890,13 @@ def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_
             if min_lines > 1 and script['sql_code'].count('\n') + 1 < min_lines:
                 continue
 
-            # Check for duplicates using hash
-            sql_hash = hash_sql(script['sql_code'])
-            if sql_hash in seen_hashes:
-                duplicate_count += 1
-                continue
-            seen_hashes.add(sql_hash)
+            # Check for duplicates using hash (unless disabled)
+            if not no_dedup:
+                sql_hash = hash_sql(script['sql_code'])
+                if sql_hash in seen_hashes:
+                    duplicate_count += 1
+                    continue
+                seen_hashes.add(sql_hash)
 
             script_counter[0] += 1
             sql_count += 1
@@ -917,6 +942,10 @@ def main():
                         help='Print summary statistics only')
     parser.add_argument('--min-lines', type=int, default=1,
                         help='Minimum lines of SQL to include (default: 1)')
+    parser.add_argument('--no-dedup', action='store_true',
+                        help='Disable duplicate detection (faster)')
+    parser.add_argument('--scan-plain-text', action='store_true',
+                        help='Also scan plain text for SQL (slower, more false positives)')
     args = parser.parse_args()
 
     # Determine pickle directory
@@ -1013,7 +1042,8 @@ def main():
                     continue
 
                 page_count, sql_count, dup_count, pages_with_sql = process_pickle_file_streaming(
-                    pkl_path, output_file, script_counter, args.min_lines, db_conn, seen_hashes, confluence_base_url
+                    pkl_path, output_file, script_counter, args.min_lines, db_conn, seen_hashes, confluence_base_url,
+                    no_dedup=args.no_dedup, scan_plain_text=args.scan_plain_text
                 )
 
                 total_pages += page_count
