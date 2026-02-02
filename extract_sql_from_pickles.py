@@ -808,7 +808,7 @@ def format_sql_result(result, script_num):
     return '\n'.join(lines)
 
 
-def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_lines=1, db_conn=None, seen_hashes=None):
+def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_lines=1, db_conn=None, seen_hashes=None, confluence_base_url=None):
     """
     Process a single pickle file and output SQL scripts in real-time.
 
@@ -819,6 +819,7 @@ def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_
         min_lines: Minimum lines of SQL to include
         db_conn: SQLite connection (or None for text output)
         seen_hashes: Set of already seen SQL hashes (for duplicate detection)
+        confluence_base_url: Base URL for Confluence (for generating page links)
 
     Returns: (page_count, sql_count, duplicate_count, pages_with_sql_set)
     """
@@ -851,6 +852,11 @@ def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_
             continue
 
         sql_scripts = extract_all_sql_from_page(body, page_title)
+
+        # Flag pages with many SQL statements for manual review (potential double-counting)
+        if len(sql_scripts) > 5:
+            page_link = f"{confluence_base_url}/pages/viewpage.action?pageId={page_id}" if confluence_base_url else f"pageId={page_id}"
+            print(f"  ** HIGH SQL COUNT: {len(sql_scripts)} statements in '{page_title[:50]}' - {page_link}")
 
         if sql_scripts:
             pages_with_sql.add((space_key, page_id))
@@ -938,6 +944,15 @@ def main():
     print(f"Found {len(pickle_files)} pickle files in {pickle_dir}")
     print("=" * 80)
 
+    # Load Confluence base URL for generating page links
+    confluence_base_url = None
+    try:
+        from config_loader import load_confluence_settings
+        conf_settings = load_confluence_settings()
+        confluence_base_url = conf_settings.get('base_url', '').rstrip('/')
+    except Exception:
+        pass
+
     # Open output file if specified
     output_file = None
     if args.output and not args.summary:
@@ -998,7 +1013,7 @@ def main():
                     continue
 
                 page_count, sql_count, dup_count, pages_with_sql = process_pickle_file_streaming(
-                    pkl_path, output_file, script_counter, args.min_lines, db_conn, seen_hashes
+                    pkl_path, output_file, script_counter, args.min_lines, db_conn, seen_hashes, confluence_base_url
                 )
 
                 total_pages += page_count
