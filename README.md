@@ -189,6 +189,27 @@ This project helps organizations understand how their Confluence instance is bei
 | Debug pickle structure | `diagnose_pickle_bodies.py` |
 | Inspect pickle format | `inspect_pickle_format.py` |
 
+### SQL Script Extraction & Browsing
+
+Extract SQL scripts from Confluence pages and browse them:
+
+```bash
+# Extract SQL to SQLite database
+python extract_sql_from_pickles.py --sqlite sql_queries.db
+
+# Browse via command line
+python browse_extracted_sql.py --db sql_queries.db
+
+# Browse via web UI (recommended)
+python browse_extracted_sql_web.py --db sql_queries.db --host 0.0.0.0
+# Then open http://localhost:5080
+```
+
+Extraction options:
+- `--no-dedup` - Skip duplicate detection (faster)
+- `--scan-plain-text` - Also scan plain text for SQL (slower, more false positives)
+- `--min-lines N` - Only include SQL with N+ lines
+
 ---
 
 ## File Descriptions
