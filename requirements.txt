@@ -1,3 +1,17 @@
+# Core (required)
 requests
-numpy
 beautifulsoup4
+lxml
+numpy
+
+# Analysis (required for explore_clusters.py)
+scikit-learn
+
+# Full-text search (optional - for Whoosh indexing)
+whoosh
+
+# Visualization (optional)
+matplotlib
+
+# Progress bars
+tqdm

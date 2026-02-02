@@ -1,60 +1,37 @@
 # Confluence Visualization 2.0 - Cleanup & Reorganization Plan
 
 **Created:** 2026-01-23
-**Status:** Planning Phase
+**Updated:** 2026-01-28
+**Status:** In Progress
 **Purpose:** Document current state, identify issues, plan systematic cleanup
+
+---
+
+## Quick Wins Completed
+
+- [x] **Phase 1:** Extracted timeline search to separate repo, removed `confluence_unified_search/`
+- [x] **README:** Added Quick Start guide
+- [x] **README:** Added "Which Script Should I Use?" decision tree
+- [x] **requirements.txt:** Updated with actual dependencies
 
 ---
 
 ## Current State Summary
 
 The project has grown organically into a comprehensive Confluence data extraction, analysis, and visualization toolkit. It works but has accumulated:
-- Multiple variants of similar scripts
+- Multiple variants of similar scripts (now documented)
 - Inconsistent configuration approaches
-- A subdirectory (`confluence_unified_search`) that should be its own repo
 - Some stubs and unused code
-- Missing/incomplete requirements.txt
+- ~~A subdirectory (`confluence_unified_search`) that should be its own repo~~ **DONE - removed**
+- ~~Missing/incomplete requirements.txt~~ **DONE - updated**
 
 ---
 
 ## Phase 1: Extract Confluence Timeline Search to Separate Repo
 
-**Priority:** HIGH
-**Reason:** Independent Flask app, version-specific implementations, different deployment model
+**Status:** ✅ COMPLETE (2026-01-28)
 
-### What It Actually Does
-Plots page last-edit timestamps on a timeline, filtered by search terms, grouped by Confluence space. NOT a general unified search - it's a **timeline visualization of edit activity**.
-
-### Suggested Repo Names
-- `confluence-timeline-search` (describes function)
-- `confluence-edit-timeline` (clearer)
-- `confluence-space-timeline` (emphasizes grouping)
-
-### Files to Extract
-```
-confluence_unified_search/  →  rename to match new repo
-├── search_aggregation_service_confluence_9.2.py   [Confluence Cloud]
-├── search_aggregation_service_confluence_6.17.py  [Confluence Server]
-├── app/                                           [Flask modules]
-├── config/                                        [Service config]
-├── templates/                                     [HTML templates]
-│   ├── search.html
-│   └── timeline.html
-├── tests/                                         [Test modules]
-├── utils/                                         [Utility modules]
-└── README.md                                      [Needs rewrite - currently boilerplate]
-```
-
-### Steps
-- [ ] Decide on repo name
-- [ ] Create new repo: `confluence-timeline-search` (or chosen name)
-- [ ] Copy directory contents
-- [ ] Rename internal references from "unified_search" to new name
-- [ ] Write proper README describing timeline visualization feature
-- [ ] Add requirements.txt for Flask app
-- [ ] Add settings.example.ini specific to search service
-- [ ] Update this repo to remove the directory
-- [ ] Add note in main README pointing to new repo
+Timeline search has been extracted to a separate repository. The `confluence_unified_search/` directory has been removed from this repo.
 
 ---
 
@@ -166,12 +143,24 @@ GENERIC_SCRIPTS/
 
 ## Phase 5: Clean Up Duplicate/Legacy Code
 
+### Clarified "Duplicates" (2026-01-28)
+
+These are NOT duplicates - they serve different purposes:
+
+| File 1 | File 2 | Difference |
+|--------|--------|------------|
+| `render_html.py` | `confluence_treemap_visualizer.py` | **render_html.py** reads from pickles (current workflow). **confluence_treemap_visualizer.py** fetches live from API (legacy). |
+| `space_explorer.py` | `explore_pickle_content.py` | **space_explorer.py** explores live API. **explore_pickle_content.py** browses pickle files. |
+
+**Decision:** Keep both pairs. Mark `confluence_treemap_visualizer.py` as legacy in its docstring.
+
+### Scripts to Verify Still Needed
+
 ### Potential Duplicates to Investigate
 
 | File 1 | File 2 | Action |
 |--------|--------|--------|
-| `render_html.py` | `confluence_treemap_visualizer.py` | Compare, archive if duplicate |
-| `space_explorer.py` | `explore_pickle_content.py` | Document different purposes or merge |
+| Multiple OpenWebUI uploaders | - | Document when to use each (see README) |
 
 ### Scripts to Verify Still Needed
 - [ ] `semantic_analysis.py` - Not in main workflow, keep or archive?
@@ -338,14 +327,14 @@ Remove dead code, fix inconsistencies, but keep current structure.
 
 ## Execution Order
 
-1. **Phase 1** - Extract timeline search (independent, can do now)
+1. ~~**Phase 1** - Extract timeline search~~ ✅ DONE
 2. **Phase 3** - TEST HTML cleaner fix at work first, then apply if confirmed
 3. **Phase 2** - Verify features (builds understanding)
 4. **Phase 4** - Commit GENERIC_SCRIPTS changes
-5. **Phase 5** - Remove duplicates
+5. **Phase 5** - Clean up legacy scripts (mark, don't delete)
 6. **Phase 6** - Fix config inconsistencies
-7. **Phase 7** - Update requirements
-8. **Phase 8** - Documentation
+7. ~~**Phase 7** - Update requirements~~ ✅ DONE
+8. ~~**Phase 8** - Documentation~~ ✅ Quick Start + decision tree added
 9. **Phase 9** - Restructure (TBD - maybe Python package, decide later)
 
 ---

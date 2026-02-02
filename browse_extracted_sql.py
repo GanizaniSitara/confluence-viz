@@ -3,25 +3,16 @@
 Simple SQL Browser for Extracted Scripts
 
 A minimal terminal-based browser to navigate through extracted SQL scripts.
-Use arrow keys or n/p to navigate, q to quit.
+Use n/p to navigate, q to quit.
 
 Usage:
-    python browse_extracted_sql.py [database.db]
+    python browse_extracted_sql.py --db sql_queries.db
 """
 
 import sqlite3
 import sys
 import os
-
-# Try to find database
-DB_PATHS = ['sql_scripts.db', 'temp/sql_scripts.db', 'extracted_sql.db']
-
-
-def find_database():
-    for path in DB_PATHS:
-        if os.path.exists(path):
-            return path
-    return None
+import argparse
 
 
 def clear_screen():
@@ -107,18 +98,21 @@ def get_index_for_id(conn, script_id):
 
 
 def main():
-    # Find database
-    if len(sys.argv) > 1:
-        db_path = sys.argv[1]
-    else:
-        db_path = find_database()
+    parser = argparse.ArgumentParser(
+        description='Browse extracted SQL scripts from a SQLite database.',
+        epilog='Example: python browse_extracted_sql.py --db sql_queries.db'
+    )
+    parser.add_argument(
+        '--db',
+        required=True,
+        help='Path to SQLite database file (e.g., sql_queries.db)'
+    )
+    args = parser.parse_args()
 
-    if not db_path or not os.path.exists(db_path):
-        print("ERROR: Could not find SQL scripts database.")
-        print(f"Looked in: {', '.join(DB_PATHS)}")
-        print("\nUsage: python browse_extracted_sql.py [database.db]")
-        print("\nRun extract_sql_from_pickles.py --sqlite sql_scripts.db first.")
-        return
+    db_path = args.db
+    if not os.path.exists(db_path):
+        print(f"ERROR: Database file not found: {db_path}")
+        sys.exit(1)
 
     conn = sqlite3.connect(db_path)
     total = get_total_count(conn)
