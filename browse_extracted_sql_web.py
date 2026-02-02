@@ -12,7 +12,9 @@ Usage:
 import sqlite3
 import argparse
 import os
+import re
 from datetime import datetime
+from collections import Counter, defaultdict
 from flask import Flask, render_template_string, request, g
 
 app = Flask(__name__)
@@ -176,6 +178,7 @@ HTML_TEMPLATE = '''
                     <input type="text" name="search" value="{{ search or '' }}" placeholder="Search SQL...">
                     <button type="submit">Search</button>
                     <button type="submit" formaction="/timeline" style="background: #28a745;">Timeline</button>
+                    <a href="/analytics" style="background: #6f42c1;">Analytics</a>
                     {% if search %}<a href="/">Clear</a>{% endif %}
                 </form>
 
@@ -342,7 +345,8 @@ TIMELINE_TEMPLATE = '''
         </p>
 
         <div class="nav">
-            <a href="/">← Back to Browser</a>
+            <a href="/">← Browser</a>
+            <a href="/analytics">Analytics</a>
             <div class="spacer"></div>
             <form action="/timeline" method="get" style="display: flex; gap: 5px;">
                 <input type="text" name="search" value="{{ search or '' }}" placeholder="Search SQL content...">
@@ -384,6 +388,254 @@ TIMELINE_TEMPLATE = '''
                 </tr>
                 {% endfor %}
             </table>
+        </div>
+    </div>
+</body>
+</html>
+'''
+
+ANALYTICS_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SQL Analytics - Confluence SQL Script Browser</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0; padding: 20px; background: #f5f5f5;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        h1 { color: #333; margin-bottom: 10px; }
+        h2 { color: #555; margin-top: 30px; margin-bottom: 15px; font-size: 18px; }
+        .subtitle { color: #666; margin-bottom: 20px; }
+
+        .nav {
+            background: #fff; padding: 15px; border-radius: 8px;
+            margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex; gap: 10px; align-items: center;
+        }
+        .nav a {
+            padding: 8px 16px; background: #007bff; color: white;
+            text-decoration: none; border-radius: 4px;
+        }
+        .nav a:hover { background: #0056b3; }
+        .nav a.active { background: #0056b3; }
+        .nav .spacer { flex-grow: 1; }
+
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px; }
+
+        .card {
+            background: #fff; border-radius: 8px; padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .card h3 { margin-top: 0; color: #333; font-size: 16px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+
+        .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 20px; }
+        .stat-box {
+            background: #fff; border-radius: 8px; padding: 20px; text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .stat-value { font-size: 32px; font-weight: 700; color: #007bff; }
+        .stat-label { font-size: 12px; color: #666; margin-top: 5px; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; }
+        tr:hover { background: #f8f9fa; }
+
+        .bar-cell { width: 40%; }
+        .bar-container { background: #e9ecef; border-radius: 4px; height: 20px; }
+        .bar { background: #007bff; height: 20px; border-radius: 4px; min-width: 2px; }
+        .bar.green { background: #28a745; }
+        .bar.orange { background: #fd7e14; }
+        .bar.red { background: #dc3545; }
+
+        a.table-link { color: #007bff; text-decoration: none; }
+        a.table-link:hover { text-decoration: underline; }
+
+        .clickable { cursor: pointer; }
+        .clickable:hover { background: #e7f1ff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>SQL Analytics</h1>
+        <p class="subtitle">Analysis of {{ total_scripts }} SQL scripts across {{ total_spaces }} spaces</p>
+
+        <div class="nav">
+            <a href="/">← Browser</a>
+            <a href="/timeline">Timeline</a>
+            <a href="/analytics" class="active">Analytics</a>
+            <div class="spacer"></div>
+        </div>
+
+        <!-- Summary Stats -->
+        <div class="stat-grid">
+            <div class="stat-box">
+                <div class="stat-value">{{ total_scripts }}</div>
+                <div class="stat-label">SQL Scripts</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value">{{ total_lines|default(0) }}</div>
+                <div class="stat-label">Lines of SQL</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value">{{ unique_tables }}</div>
+                <div class="stat-label">Unique Tables</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value">{{ unique_schemas }}</div>
+                <div class="stat-label">Unique Schemas</div>
+            </div>
+        </div>
+
+        <div class="grid">
+            <!-- Top Tables -->
+            <div class="card">
+                <h3>Top 15 Tables Referenced</h3>
+                <table>
+                    <tr><th>Table</th><th>Count</th><th class="bar-cell">Usage</th></tr>
+                    {% for table, count in top_tables %}
+                    <tr class="clickable" onclick="window.location='/?search={{ table }}'">
+                        <td><a class="table-link" href="/?search={{ table }}">{{ table }}</a></td>
+                        <td>{{ count }}</td>
+                        <td class="bar-cell">
+                            <div class="bar-container">
+                                <div class="bar" style="width: {{ (count / max_table_count * 100)|int }}%;"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
+
+            <!-- SQL Types -->
+            <div class="card">
+                <h3>SQL Statement Types</h3>
+                <table>
+                    <tr><th>Type</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
+                    {% for sql_type, count in sql_types %}
+                    <tr class="clickable" onclick="window.location='/?search={{ sql_type }}'">
+                        <td>{{ sql_type }}</td>
+                        <td>{{ count }}</td>
+                        <td class="bar-cell">
+                            <div class="bar-container">
+                                <div class="bar green" style="width: {{ (count / total_scripts * 100)|int }}%;"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
+
+            <!-- Top Schemas -->
+            <div class="card">
+                <h3>Top Schemas</h3>
+                <table>
+                    <tr><th>Schema</th><th>Count</th><th class="bar-cell">Usage</th></tr>
+                    {% for schema, count in top_schemas %}
+                    <tr class="clickable" onclick="window.location='/?search={{ schema }}'">
+                        <td><a class="table-link" href="/?search={{ schema }}">{{ schema }}</a></td>
+                        <td>{{ count }}</td>
+                        <td class="bar-cell">
+                            <div class="bar-container">
+                                <div class="bar orange" style="width: {{ (count / max_schema_count * 100)|int if max_schema_count else 0 }}%;"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
+
+            <!-- Extraction Sources -->
+            <div class="card">
+                <h3>Extraction Sources</h3>
+                <table>
+                    <tr><th>Source</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
+                    {% for source, count in sources %}
+                    <tr>
+                        <td>{{ source }}</td>
+                        <td>{{ count }}</td>
+                        <td class="bar-cell">
+                            <div class="bar-container">
+                                <div class="bar" style="width: {{ (count / total_scripts * 100)|int }}%;"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
+
+            <!-- Script Size Distribution -->
+            <div class="card">
+                <h3>Script Size Distribution</h3>
+                <table>
+                    <tr><th>Size</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
+                    {% for bucket, count in size_distribution %}
+                    <tr>
+                        <td>{{ bucket }}</td>
+                        <td>{{ count }}</td>
+                        <td class="bar-cell">
+                            <div class="bar-container">
+                                <div class="bar green" style="width: {{ (count / total_scripts * 100)|int }}%;"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
+
+            <!-- Complexity Distribution -->
+            <div class="card">
+                <h3>Nesting Depth Distribution</h3>
+                <table>
+                    <tr><th>Depth</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
+                    {% for bucket, count in nesting_distribution %}
+                    <tr>
+                        <td>{{ bucket }}</td>
+                        <td>{{ count }}</td>
+                        <td class="bar-cell">
+                            <div class="bar-container">
+                                <div class="bar orange" style="width: {{ (count / total_scripts * 100)|int }}%;"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
+
+            <!-- Top Spaces by Scripts -->
+            <div class="card">
+                <h3>Top 15 Spaces by Script Count</h3>
+                <table>
+                    <tr><th>Space</th><th>Scripts</th><th>Lines</th><th>Tables</th></tr>
+                    {% for space in top_spaces %}
+                    <tr class="clickable" onclick="window.location='/?space={{ space.space_key }}'">
+                        <td><a class="table-link" href="/?space={{ space.space_key }}">{{ space.space_key }}</a></td>
+                        <td>{{ space.count }}</td>
+                        <td>{{ space.total_lines }}</td>
+                        <td>{{ space.unique_tables }}</td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
+
+            <!-- Most Complex Scripts -->
+            <div class="card">
+                <h3>Most Complex Scripts (by keyword count)</h3>
+                <table>
+                    <tr><th>Page</th><th>Space</th><th>Keywords</th><th>Lines</th></tr>
+                    {% for script in most_complex %}
+                    <tr class="clickable" onclick="window.location='/?id={{ script.id }}'">
+                        <td><a class="table-link" href="/?id={{ script.id }}">{{ script.page_title[:35] }}{% if script.page_title|length > 35 %}...{% endif %}</a></td>
+                        <td>{{ script.space_key }}</td>
+                        <td>{{ script.keywords }}</td>
+                        <td>{{ script.line_count }}</td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
         </div>
     </div>
 </body>
@@ -708,6 +960,234 @@ def timeline():
         min_year=min_year,
         max_year=max_year,
         total_scripts=total_scripts
+    )
+
+
+# === Analytics helper functions (from analyze_extracted_sql.py) ===
+
+def get_table_references(sql_code):
+    """Extract table references from SQL code."""
+    tables = set()
+    patterns = [
+        r'\bFROM\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)',
+        r'\bJOIN\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)',
+        r'\bINTO\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)',
+        r'\bUPDATE\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)',
+        r'\bTABLE\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)',
+    ]
+    for pattern in patterns:
+        matches = re.findall(pattern, sql_code, re.IGNORECASE)
+        for match in matches:
+            if match.upper() not in ('SELECT', 'FROM', 'WHERE', 'SET', 'VALUES', 'INTO', 'TABLE'):
+                tables.add(match.upper())
+    return tables
+
+
+def get_schema_references(sql_code):
+    """Extract schema references (schema.table patterns)."""
+    schemas = set()
+    pattern = r'\b([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\b'
+    matches = re.findall(pattern, sql_code)
+    for schema, table in matches:
+        if schema.upper() not in ('SYS', 'DUAL'):
+            schemas.add(schema.upper())
+    return schemas
+
+
+def get_sql_type(sql_code):
+    """Determine the primary type of SQL statement."""
+    sql_upper = sql_code.strip().upper()
+    if sql_upper.startswith('SELECT') or sql_upper.startswith('WITH'):
+        return 'SELECT'
+    elif sql_upper.startswith('INSERT'):
+        return 'INSERT'
+    elif sql_upper.startswith('UPDATE'):
+        return 'UPDATE'
+    elif sql_upper.startswith('DELETE'):
+        return 'DELETE'
+    elif sql_upper.startswith('CREATE'):
+        if 'PROCEDURE' in sql_upper:
+            return 'CREATE PROCEDURE'
+        elif 'FUNCTION' in sql_upper:
+            return 'CREATE FUNCTION'
+        elif 'VIEW' in sql_upper:
+            return 'CREATE VIEW'
+        elif 'TABLE' in sql_upper:
+            return 'CREATE TABLE'
+        else:
+            return 'CREATE OTHER'
+    elif sql_upper.startswith('ALTER'):
+        return 'ALTER'
+    elif sql_upper.startswith('DROP'):
+        return 'DROP'
+    elif sql_upper.startswith('DECLARE') or sql_upper.startswith('BEGIN'):
+        return 'PL/SQL BLOCK'
+    else:
+        return 'OTHER'
+
+
+def count_nesting_level(sql_code):
+    """Count the maximum nesting level."""
+    max_depth = 0
+    current_depth = 0
+    in_string = False
+    string_char = None
+    for i, char in enumerate(sql_code):
+        if char in ("'", '"') and (i == 0 or sql_code[i-1] != '\\'):
+            if not in_string:
+                in_string = True
+                string_char = char
+            elif char == string_char:
+                in_string = False
+        elif not in_string:
+            if char == '(':
+                current_depth += 1
+                max_depth = max(max_depth, current_depth)
+            elif char == ')':
+                current_depth = max(0, current_depth - 1)
+    return max_depth
+
+
+def count_keywords(sql_code):
+    """Count SQL keywords for complexity estimation."""
+    keywords = [
+        'SELECT', 'FROM', 'WHERE', 'JOIN', 'LEFT', 'RIGHT', 'INNER', 'OUTER',
+        'GROUP BY', 'ORDER BY', 'HAVING', 'UNION', 'INSERT', 'UPDATE', 'DELETE',
+        'BEGIN', 'END', 'IF', 'THEN', 'ELSE', 'CASE', 'WHEN', 'LOOP', 'CURSOR',
+    ]
+    sql_upper = sql_code.upper()
+    count = 0
+    for kw in keywords:
+        count += len(re.findall(r'\b' + kw.replace(' ', r'\s+') + r'\b', sql_upper))
+    return count
+
+
+@app.route('/analytics')
+def analytics():
+    """Analytics view with tables, schemas, types, complexity."""
+    db = get_db()
+
+    cursor = db.execute('''
+        SELECT id, space_key, space_name, page_id, page_title, sql_code, line_count, sql_source
+        FROM sql_scripts
+    ''')
+
+    all_tables = Counter()
+    all_schemas = Counter()
+    sql_types = Counter()
+    source_types = Counter()
+    space_stats = defaultdict(lambda: {'count': 0, 'total_lines': 0, 'tables': set()})
+
+    script_details = []
+    total_lines = 0
+
+    for row in cursor:
+        sql_code = row['sql_code']
+        line_count = row['line_count'] or (sql_code.count('\n') + 1)
+        total_lines += line_count
+
+        tables = get_table_references(sql_code)
+        schemas = get_schema_references(sql_code)
+        sql_type = get_sql_type(sql_code)
+        nesting = count_nesting_level(sql_code)
+        keywords = count_keywords(sql_code)
+
+        all_tables.update(tables)
+        all_schemas.update(schemas)
+        sql_types[sql_type] += 1
+        source_types[row['sql_source'] or 'unknown'] += 1
+
+        space_key = row['space_key']
+        space_stats[space_key]['count'] += 1
+        space_stats[space_key]['total_lines'] += line_count
+        space_stats[space_key]['tables'].update(tables)
+        space_stats[space_key]['name'] = row['space_name']
+
+        script_details.append({
+            'id': row['id'],
+            'space_key': space_key,
+            'page_title': row['page_title'] or 'Untitled',
+            'line_count': line_count,
+            'nesting': nesting,
+            'keywords': keywords,
+        })
+
+    total_scripts = len(script_details)
+
+    # Size distribution
+    size_buckets = [('1-5 lines', 0), ('6-20 lines', 0), ('21-50 lines', 0),
+                    ('51-100 lines', 0), ('101-500 lines', 0), ('500+ lines', 0)]
+    size_dict = {b[0]: 0 for b in size_buckets}
+    for s in script_details:
+        lines = s['line_count']
+        if lines <= 5:
+            size_dict['1-5 lines'] += 1
+        elif lines <= 20:
+            size_dict['6-20 lines'] += 1
+        elif lines <= 50:
+            size_dict['21-50 lines'] += 1
+        elif lines <= 100:
+            size_dict['51-100 lines'] += 1
+        elif lines <= 500:
+            size_dict['101-500 lines'] += 1
+        else:
+            size_dict['500+ lines'] += 1
+    size_distribution = [(k, size_dict[k]) for k, _ in size_buckets]
+
+    # Nesting distribution
+    nest_buckets = [('No nesting (0)', 0), ('Shallow (1-2)', 0), ('Moderate (3-5)', 0),
+                    ('Deep (6-10)', 0), ('Very deep (10+)', 0)]
+    nest_dict = {b[0]: 0 for b in nest_buckets}
+    for s in script_details:
+        depth = s['nesting']
+        if depth == 0:
+            nest_dict['No nesting (0)'] += 1
+        elif depth <= 2:
+            nest_dict['Shallow (1-2)'] += 1
+        elif depth <= 5:
+            nest_dict['Moderate (3-5)'] += 1
+        elif depth <= 10:
+            nest_dict['Deep (6-10)'] += 1
+        else:
+            nest_dict['Very deep (10+)'] += 1
+    nesting_distribution = [(k, nest_dict[k]) for k, _ in nest_buckets]
+
+    # Top spaces
+    top_spaces = sorted([
+        {
+            'space_key': k,
+            'count': v['count'],
+            'total_lines': v['total_lines'],
+            'unique_tables': len(v['tables'])
+        }
+        for k, v in space_stats.items()
+    ], key=lambda x: -x['count'])[:15]
+
+    # Most complex scripts
+    most_complex = sorted(script_details, key=lambda x: -x['keywords'])[:10]
+
+    top_tables = all_tables.most_common(15)
+    top_schemas = all_schemas.most_common(10)
+    max_table_count = top_tables[0][1] if top_tables else 1
+    max_schema_count = top_schemas[0][1] if top_schemas else 1
+
+    return render_template_string(
+        ANALYTICS_TEMPLATE,
+        total_scripts=total_scripts,
+        total_lines=total_lines,
+        total_spaces=len(space_stats),
+        unique_tables=len(all_tables),
+        unique_schemas=len(all_schemas),
+        top_tables=top_tables,
+        max_table_count=max_table_count,
+        top_schemas=top_schemas,
+        max_schema_count=max_schema_count,
+        sql_types=sql_types.most_common(10),
+        sources=source_types.most_common(),
+        size_distribution=size_distribution,
+        nesting_distribution=nesting_distribution,
+        top_spaces=top_spaces,
+        most_complex=most_complex
     )
 
 
