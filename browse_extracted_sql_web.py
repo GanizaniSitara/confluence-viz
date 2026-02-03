@@ -1112,7 +1112,7 @@ def count_keywords(sql_code):
 
 @app.route('/insights')
 def insights():
-    """Insights view with tables, schemas, types, complexity. Supports filtering."""
+    """Insights view using pre-computed columns for fast aggregation."""
     db = get_db()
 
     # Get filter parameters
@@ -1126,152 +1126,191 @@ def insights():
     all_spaces_cursor = db.execute('SELECT DISTINCT space_key FROM sql_scripts ORDER BY space_key')
     all_spaces = [row['space_key'] for row in all_spaces_cursor]
 
-    # Build query with optional space filter (SQL-level filtering for performance)
-    if space_filter:
-        cursor = db.execute('''
-            SELECT id, space_key, space_name, page_id, page_title, sql_code, line_count, sql_source
-            FROM sql_scripts
-            WHERE space_key = ?
-        ''', (space_filter,))
-    else:
-        cursor = db.execute('''
-            SELECT id, space_key, space_name, page_id, page_title, sql_code, line_count, sql_source
-            FROM sql_scripts
-        ''')
+    # Build WHERE clause for filters
+    def build_where_clause(extra_conditions=None):
+        conditions = []
+        params = []
+        if space_filter:
+            conditions.append('space_key = ?')
+            params.append(space_filter)
+        if type_filter:
+            conditions.append('sql_type = ?')
+            params.append(type_filter)
+        if source_filter:
+            conditions.append('sql_source = ?')
+            params.append(source_filter)
+        if size_filter:
+            # Map size bucket to SQL condition
+            size_conditions = {
+                '1-5 lines': 'line_count <= 5',
+                '6-20 lines': 'line_count > 5 AND line_count <= 20',
+                '21-50 lines': 'line_count > 20 AND line_count <= 50',
+                '51-100 lines': 'line_count > 50 AND line_count <= 100',
+                '101-500 lines': 'line_count > 100 AND line_count <= 500',
+                '500+ lines': 'line_count > 500',
+            }
+            if size_filter in size_conditions:
+                conditions.append(f'({size_conditions[size_filter]})')
+        if nesting_filter:
+            # Map nesting bucket to SQL condition
+            nesting_conditions = {
+                'No nesting (0)': 'nesting_depth = 0',
+                'Shallow (1-2)': 'nesting_depth >= 1 AND nesting_depth <= 2',
+                'Moderate (3-5)': 'nesting_depth >= 3 AND nesting_depth <= 5',
+                'Deep (6-10)': 'nesting_depth >= 6 AND nesting_depth <= 10',
+                'Very deep (10+)': 'nesting_depth > 10',
+            }
+            if nesting_filter in nesting_conditions:
+                conditions.append(f'({nesting_conditions[nesting_filter]})')
+        if extra_conditions:
+            conditions.extend(extra_conditions)
+        where = ' WHERE ' + ' AND '.join(conditions) if conditions else ''
+        return where, params
 
-    all_tables = Counter()
-    all_schemas = Counter()
-    sql_types = Counter()
-    source_types = Counter()
-    space_stats = defaultdict(lambda: {'count': 0, 'total_lines': 0, 'tables': set()})
+    where, params = build_where_clause()
 
-    script_details = []
-    total_lines = 0
+    # Get summary stats using SQL aggregates (fast!)
+    summary = db.execute(f'''
+        SELECT COUNT(*) as total_scripts,
+               COALESCE(SUM(line_count), 0) as total_lines,
+               COUNT(DISTINCT space_key) as total_spaces
+        FROM sql_scripts {where}
+    ''', params).fetchone()
+    total_scripts = summary['total_scripts']
+    total_lines = summary['total_lines']
+    total_spaces = summary['total_spaces']
 
-    # Helper to get size bucket
-    def get_size_bucket(lines):
-        if lines <= 5:
-            return '1-5 lines'
-        elif lines <= 20:
-            return '6-20 lines'
-        elif lines <= 50:
-            return '21-50 lines'
-        elif lines <= 100:
-            return '51-100 lines'
-        elif lines <= 500:
-            return '101-500 lines'
-        else:
-            return '500+ lines'
+    # SQL types aggregation
+    sql_types_rows = db.execute(f'''
+        SELECT sql_type, COUNT(*) as cnt
+        FROM sql_scripts {where}
+        GROUP BY sql_type
+        ORDER BY cnt DESC
+        LIMIT 15
+    ''', params).fetchall()
+    sql_types = [(row['sql_type'] or 'OTHER', row['cnt']) for row in sql_types_rows]
 
-    # Helper to get nesting bucket
-    def get_nesting_bucket(depth):
-        if depth == 0:
-            return 'No nesting (0)'
-        elif depth <= 2:
-            return 'Shallow (1-2)'
-        elif depth <= 5:
-            return 'Moderate (3-5)'
-        elif depth <= 10:
-            return 'Deep (6-10)'
-        else:
-            return 'Very deep (10+)'
+    # Source types aggregation
+    sources_rows = db.execute(f'''
+        SELECT COALESCE(sql_source, 'unknown') as source, COUNT(*) as cnt
+        FROM sql_scripts {where}
+        GROUP BY sql_source
+        ORDER BY cnt DESC
+    ''', params).fetchall()
+    sources = [(row['source'], row['cnt']) for row in sources_rows]
 
-    for row in cursor:
-        sql_code = row['sql_code']
-        line_count = row['line_count'] or (sql_code.count('\n') + 1)
-        sql_type = get_sql_type(sql_code)
-        nesting = count_nesting_level(sql_code)
-        source = row['sql_source'] or 'unknown'
+    # Size distribution using SQL CASE
+    size_dist_rows = db.execute(f'''
+        SELECT
+            CASE
+                WHEN line_count <= 5 THEN '1-5 lines'
+                WHEN line_count <= 20 THEN '6-20 lines'
+                WHEN line_count <= 50 THEN '21-50 lines'
+                WHEN line_count <= 100 THEN '51-100 lines'
+                WHEN line_count <= 500 THEN '101-500 lines'
+                ELSE '500+ lines'
+            END as bucket,
+            COUNT(*) as cnt
+        FROM sql_scripts {where}
+        GROUP BY bucket
+    ''', params).fetchall()
+    size_dict = {row['bucket']: row['cnt'] for row in size_dist_rows}
+    size_buckets_order = ['1-5 lines', '6-20 lines', '21-50 lines', '51-100 lines', '101-500 lines', '500+ lines']
+    size_distribution = [(b, size_dict.get(b, 0)) for b in size_buckets_order]
 
-        # Apply filters (post-fetch filtering for computed fields)
-        if type_filter and sql_type != type_filter:
-            continue
-        if source_filter and source != source_filter:
-            continue
-        if size_filter and get_size_bucket(line_count) != size_filter:
-            continue
-        if nesting_filter and get_nesting_bucket(nesting) != nesting_filter:
-            continue
+    # Nesting distribution using SQL CASE
+    nesting_dist_rows = db.execute(f'''
+        SELECT
+            CASE
+                WHEN nesting_depth = 0 THEN 'No nesting (0)'
+                WHEN nesting_depth <= 2 THEN 'Shallow (1-2)'
+                WHEN nesting_depth <= 5 THEN 'Moderate (3-5)'
+                WHEN nesting_depth <= 10 THEN 'Deep (6-10)'
+                ELSE 'Very deep (10+)'
+            END as bucket,
+            COUNT(*) as cnt
+        FROM sql_scripts {where}
+        GROUP BY bucket
+    ''', params).fetchall()
+    nest_dict = {row['bucket']: row['cnt'] for row in nesting_dist_rows}
+    nest_buckets_order = ['No nesting (0)', 'Shallow (1-2)', 'Moderate (3-5)', 'Deep (6-10)', 'Very deep (10+)']
+    nesting_distribution = [(b, nest_dict.get(b, 0)) for b in nest_buckets_order]
 
-        total_lines += line_count
-        tables = get_table_references(sql_code)
-        schemas = get_schema_references(sql_code)
-        keywords = count_keywords(sql_code)
+    # Top spaces by script count
+    top_spaces_rows = db.execute(f'''
+        SELECT space_key, COUNT(*) as cnt, SUM(line_count) as total_lines
+        FROM sql_scripts {where}
+        GROUP BY space_key
+        ORDER BY cnt DESC
+        LIMIT 15
+    ''', params).fetchall()
+    top_spaces = [{'space_key': row['space_key'], 'count': row['cnt'],
+                   'total_lines': row['total_lines'], 'unique_tables': 0} for row in top_spaces_rows]
 
-        all_tables.update(tables)
-        all_schemas.update(schemas)
-        sql_types[sql_type] += 1
-        source_types[source] += 1
+    # Most complex scripts (by keyword_count)
+    most_complex_rows = db.execute(f'''
+        SELECT id, space_key, page_title, line_count, nesting_depth, keyword_count
+        FROM sql_scripts {where}
+        ORDER BY keyword_count DESC
+        LIMIT 10
+    ''', params).fetchall()
+    most_complex = [{'id': row['id'], 'space_key': row['space_key'],
+                     'page_title': row['page_title'] or 'Untitled',
+                     'line_count': row['line_count'], 'nesting': row['nesting_depth'],
+                     'keywords': row['keyword_count']} for row in most_complex_rows]
 
-        space_key = row['space_key']
-        space_stats[space_key]['count'] += 1
-        space_stats[space_key]['total_lines'] += line_count
-        space_stats[space_key]['tables'].update(tables)
-        space_stats[space_key]['name'] = row['space_name']
+    # For filtered results, get script list
+    filtered_scripts = []
+    if type_filter or source_filter or size_filter or nesting_filter:
+        scripts_rows = db.execute(f'''
+            SELECT id, space_key, page_title, line_count, nesting_depth, keyword_count, sql_type, sql_source
+            FROM sql_scripts {where}
+            ORDER BY id
+            LIMIT 50
+        ''', params).fetchall()
+        filtered_scripts = [{'id': row['id'], 'space_key': row['space_key'],
+                            'page_title': row['page_title'] or 'Untitled',
+                            'line_count': row['line_count'], 'nesting': row['nesting_depth'],
+                            'keywords': row['keyword_count'], 'sql_type': row['sql_type'],
+                            'source': row['sql_source']} for row in scripts_rows]
 
-        script_details.append({
-            'id': row['id'],
-            'space_key': space_key,
-            'page_title': row['page_title'] or 'Untitled',
-            'line_count': line_count,
-            'nesting': nesting,
-            'keywords': keywords,
-            'sql_type': sql_type,
-            'source': source,
-        })
+    # Tables and schemas still need text parsing - only do for small result sets or skip
+    # For now, skip table/schema extraction for large datasets (too slow)
+    top_tables = []
+    top_schemas = []
+    max_table_count = 1
+    max_schema_count = 1
+    unique_tables = 0
+    unique_schemas = 0
 
-    total_scripts = len(script_details)
-
-    # Size distribution (using helper function)
-    size_buckets = [('1-5 lines', 0), ('6-20 lines', 0), ('21-50 lines', 0),
-                    ('51-100 lines', 0), ('101-500 lines', 0), ('500+ lines', 0)]
-    size_dict = {b[0]: 0 for b in size_buckets}
-    for s in script_details:
-        bucket = get_size_bucket(s['line_count'])
-        size_dict[bucket] += 1
-    size_distribution = [(k, size_dict[k]) for k, _ in size_buckets]
-
-    # Nesting distribution (using helper function)
-    nest_buckets = [('No nesting (0)', 0), ('Shallow (1-2)', 0), ('Moderate (3-5)', 0),
-                    ('Deep (6-10)', 0), ('Very deep (10+)', 0)]
-    nest_dict = {b[0]: 0 for b in nest_buckets}
-    for s in script_details:
-        bucket = get_nesting_bucket(s['nesting'])
-        nest_dict[bucket] += 1
-    nesting_distribution = [(k, nest_dict[k]) for k, _ in nest_buckets]
-
-    # Top spaces
-    top_spaces = sorted([
-        {
-            'space_key': k,
-            'count': v['count'],
-            'total_lines': v['total_lines'],
-            'unique_tables': len(v['tables'])
-        }
-        for k, v in space_stats.items()
-    ], key=lambda x: -x['count'])[:15]
-
-    # Most complex scripts
-    most_complex = sorted(script_details, key=lambda x: -x['keywords'])[:10]
-
-    top_tables = all_tables.most_common(15)
-    top_schemas = all_schemas.most_common(10)
-    max_table_count = top_tables[0][1] if top_tables else 1
-    max_schema_count = top_schemas[0][1] if top_schemas else 1
+    if total_scripts <= 1000:
+        # Only parse SQL for small result sets
+        all_tables = Counter()
+        all_schemas = Counter()
+        sql_codes = db.execute(f'SELECT sql_code FROM sql_scripts {where} LIMIT 1000', params).fetchall()
+        for row in sql_codes:
+            all_tables.update(get_table_references(row['sql_code']))
+            all_schemas.update(get_schema_references(row['sql_code']))
+        top_tables = all_tables.most_common(15)
+        top_schemas = all_schemas.most_common(10)
+        max_table_count = top_tables[0][1] if top_tables else 1
+        max_schema_count = top_schemas[0][1] if top_schemas else 1
+        unique_tables = len(all_tables)
+        unique_schemas = len(all_schemas)
 
     return render_template_string(
         INSIGHTS_TEMPLATE,
         total_scripts=total_scripts,
         total_lines=total_lines,
-        total_spaces=len(space_stats),
-        unique_tables=len(all_tables),
-        unique_schemas=len(all_schemas),
+        total_spaces=total_spaces,
+        unique_tables=unique_tables,
+        unique_schemas=unique_schemas,
         top_tables=top_tables,
         max_table_count=max_table_count,
         top_schemas=top_schemas,
         max_schema_count=max_schema_count,
-        sql_types=sql_types.most_common(10),
-        sources=source_types.most_common(),
+        sql_types=sql_types,
+        sources=sources,
         size_distribution=size_distribution,
         nesting_distribution=nesting_distribution,
         top_spaces=top_spaces,
@@ -1282,7 +1321,7 @@ def insights():
         size_filter=size_filter,
         nesting_filter=nesting_filter,
         all_spaces=all_spaces,
-        filtered_scripts=script_details
+        filtered_scripts=filtered_scripts
     )
 
 
