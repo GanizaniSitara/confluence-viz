@@ -380,6 +380,41 @@ def fetch_all_spaces_with_details(auth_details, verify_ssl_cert):
     print(f"Total non-user spaces fetched: {len(spaces_data)}")
     return spaces_data
 
+
+def fetch_personal_spaces_with_details(auth_details, verify_ssl_cert):
+    """Fetches personal/user spaces only (those starting with ~)."""
+    print("Fetching personal/user spaces with details...")
+    spaces_data = []
+    start = 0
+    limit = 100
+
+    while True:
+        url = f"{BASE_URL}{API_ENDPOINT}/space"
+        params = {
+            "start": start,
+            "limit": limit,
+            "type": "personal",  # Fetch personal spaces
+            "expand": "description.plain,icon"
+        }
+        print(f"  Fetching next batch of personal spaces from Confluence: {url}?start={start}&limit={limit}")
+        r = get_with_retry(url, params=params, auth=auth_details, verify=verify_ssl_cert)
+        if r.status_code != 200:
+            print(f"Failed to fetch personal spaces. Status code: {r.status_code}. Response: {r.text}")
+            break
+        results = r.json().get("results", [])
+        if not results:
+            break
+        for sp in results:
+            # Only include personal spaces (those starting with ~)
+            if sp.get("key", "").startswith("~"):
+                spaces_data.append(sp)
+        if len(results) < limit:
+            break
+        start += len(results)
+    print(f"Total personal/user spaces fetched: {len(spaces_data)}")
+    return spaces_data
+
+
 def fetch_pages_for_space_concurrently(space_key, auth_details, verify_ssl_cert, max_workers=10):
     """
     Fetches all pages for a given space key concurrently, including their content and version history.
@@ -1378,8 +1413,9 @@ def main():
                            "  10: List all non-user spaces (Key, Name, Description)\n"
                            "  11: List all non-user space KEYS only\n"
                            "  12: Compare pickled spaces with live instance (suggest pruning)\n"
+                           "  13: Fetch PERSONAL spaces only (user spaces starting with ~)\n"
                            "  q: Quit\n"
-                           "Enter choice (1-12 or q): ").strip().lower() # UPDATED PROMPT
+                           "Enter choice (1-13 or q): ").strip().lower()
             if choice == '1':
                 # Defunct option - file checkpoint deprecated
                 print("This option has been deprecated. File checkpoints are no longer used.")
@@ -1472,13 +1508,89 @@ def main():
             elif choice == '12':
                 # Compare pickled spaces with live instance
                 print("Action: Comparing pickled spaces with live instance...")
-                
+
                 # Setup logging for comparison
                 log_file = setup_simple_logging('.')
                 if log_file:
                     print(f"Logging to: {log_file}")
-                
+
                 compare_and_suggest_pruning(OUTPUT_DIR, log_file)
+                print("\nReturning to menu...")
+                continue
+            elif choice == '13':
+                # Fetch personal spaces
+                print("Mode: Fetching PERSONAL spaces only (user spaces starting with ~)")
+
+                # Setup logging
+                log_file = setup_simple_logging('.')
+                if log_file:
+                    print(f"Logging to: {log_file}")
+
+                write_log(log_file, "INFO", "Starting personal spaces fetch")
+
+                # Fetch personal spaces
+                personal_spaces = fetch_personal_spaces_with_details((USERNAME, PASSWORD), VERIFY_SSL)
+
+                if not personal_spaces:
+                    print("No personal spaces found.")
+                    print("\nReturning to menu...")
+                    continue
+
+                print(f"\nFound {len(personal_spaces)} personal spaces")
+
+                # Ask for confirmation
+                confirm = input(f"Proceed to fetch all pages from {len(personal_spaces)} personal spaces? (y/n): ").strip().lower()
+                if confirm != 'y':
+                    print("Aborted.")
+                    print("\nReturning to menu...")
+                    continue
+
+                # Process each personal space
+                for i, space in enumerate(personal_spaces, 1):
+                    space_key = space.get('key', 'UNKNOWN')
+                    space_name = space.get('name', 'N/A')
+
+                    # Check if already pickled
+                    out_filename = f'{space_key}.pkl'
+                    out_path = os.path.join(OUTPUT_DIR, out_filename)
+                    if os.path.exists(out_path):
+                        print(f"[{i}/{len(personal_spaces)}] Skipping {space_key} - already exists")
+                        continue
+
+                    print(f"[{i}/{len(personal_spaces)}] Processing personal space: {space_key} ({space_name})")
+                    write_log(log_file, "INFO", f"Processing personal space: {space_key}")
+
+                    try:
+                        # Fetch all pages for this space
+                        pages = fetch_all_pages_for_space(space_key, (USERNAME, PASSWORD), VERIFY_SSL)
+
+                        if not pages:
+                            print(f"  No pages found in {space_key}")
+                            continue
+
+                        # Build pickle data structure
+                        pickle_data = {
+                            'space_key': space_key,
+                            'name': space_name,
+                            'space_name': space_name,
+                            'sampled_pages': pages,
+                            'total_pages_in_space': len(pages),
+                            'created_from': 'personal_spaces_fetch'
+                        }
+
+                        # Save pickle
+                        with open(out_path, 'wb') as f:
+                            pickle.dump(pickle_data, f)
+
+                        print(f"  Saved {len(pages)} pages to {out_path}")
+                        write_log(log_file, "INFO", f"Saved {len(pages)} pages for {space_key}")
+
+                    except Exception as e:
+                        print(f"  ERROR processing {space_key}: {e}")
+                        write_log(log_file, "ERROR", f"Failed to process {space_key}: {e}")
+                        continue
+
+                print("\nPersonal spaces fetch complete!")
                 print("\nReturning to menu...")
                 continue
             elif choice == 'q':

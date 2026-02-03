@@ -1074,6 +1074,8 @@ def main():
     parser.add_argument('--pickle-dir', '-d', help='Directory containing pickle files')
     parser.add_argument('--output', '-o', help='Output text file path (default: stdout)')
     parser.add_argument('--sqlite', '--db', help='Output to SQLite database file')
+    parser.add_argument('--append', '-a', action='store_true',
+                        help='Append to existing SQLite database instead of recreating')
     parser.add_argument('--summary', '-s', action='store_true',
                         help='Print summary statistics only')
     parser.add_argument('--min-lines', type=int, default=1,
@@ -1125,13 +1127,35 @@ def main():
 
     # Open SQLite database if specified
     db_conn = None
+    existing_spaces = set()  # Spaces already in DB (for append mode)
     if args.sqlite and not args.summary:
-        db_conn = init_sqlite_db(args.sqlite)
+        if args.append and os.path.exists(args.sqlite):
+            # Append mode - connect to existing DB and get already-processed spaces
+            db_conn = sqlite3.connect(args.sqlite)
+            db_conn.row_factory = sqlite3.Row
+            try:
+                cursor = db_conn.execute('SELECT DISTINCT space_key FROM sql_scripts')
+                existing_spaces = {row['space_key'] for row in cursor}
+                print(f"Append mode: Found {len(existing_spaces)} spaces already in database")
+            except sqlite3.OperationalError:
+                # Table doesn't exist yet, will be created
+                pass
+            # Ensure schema is up to date (adds new columns if missing)
+            init_sqlite_db(args.sqlite)
+            db_conn = sqlite3.connect(args.sqlite)
+            db_conn.row_factory = sqlite3.Row
+        else:
+            # Fresh start - recreate database
+            if os.path.exists(args.sqlite) and not args.append:
+                os.remove(args.sqlite)
+                print(f"Removed existing database: {args.sqlite}")
+            db_conn = init_sqlite_db(args.sqlite)
         print(f"Writing to SQLite database: {args.sqlite}")
 
     total_pages = 0
     total_sql_found = 0
     total_duplicates = 0
+    total_skipped_spaces = 0
     all_pages_with_sql = set()
     script_counter = [0]  # Use list to allow mutation in nested function
     seen_hashes = set()   # Track seen SQL hashes for duplicate detection
@@ -1139,6 +1163,13 @@ def main():
     try:
         for i, pkl_file in enumerate(pickle_files, 1):
             pkl_path = os.path.join(pickle_dir, pkl_file)
+
+            # Check if space already processed (append mode)
+            space_key_from_filename = pkl_file.replace('.pkl', '')
+            if space_key_from_filename in existing_spaces:
+                print(f"[{i}/{len(pickle_files)}] Skipping {pkl_file} - already in database")
+                total_skipped_spaces += 1
+                continue
 
             if args.summary:
                 # Summary mode - just count, don't output SQL
@@ -1200,7 +1231,10 @@ def main():
 
     print("=" * 80)
     print(f"\nSUMMARY:")
-    print(f"  Total pickle files processed: {len(pickle_files)}")
+    print(f"  Total pickle files found: {len(pickle_files)}")
+    if total_skipped_spaces > 0:
+        print(f"  Spaces skipped (already in DB): {total_skipped_spaces}")
+        print(f"  Spaces processed this run: {len(pickle_files) - total_skipped_spaces}")
     print(f"  Total pages scanned: {total_pages:,}")
     print(f"  Pages containing SQL: {len(all_pages_with_sql):,}")
     print(f"  Total SQL scripts found: {total_sql_found:,}")
