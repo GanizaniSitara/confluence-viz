@@ -853,6 +853,35 @@ def count_sql_keywords(sql_code):
     return count
 
 
+def get_table_references(sql_code):
+    """Extract table references from SQL code."""
+    tables = set()
+    patterns = [
+        r'\bFROM\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)',
+        r'\bJOIN\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)',
+        r'\bINTO\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)',
+        r'\bUPDATE\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)',
+        r'\bTABLE\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)',
+    ]
+    for pattern in patterns:
+        matches = re.findall(pattern, sql_code, re.IGNORECASE)
+        for match in matches:
+            if match.upper() not in ('SELECT', 'FROM', 'WHERE', 'SET', 'VALUES', 'INTO', 'TABLE'):
+                tables.add(match.upper())
+    return tables
+
+
+def get_schema_references(sql_code):
+    """Extract schema references (schema.table patterns)."""
+    schemas = set()
+    pattern = r'\b([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\b'
+    matches = re.findall(pattern, sql_code)
+    for schema, table in matches:
+        if schema.upper() not in ('SYS', 'DUAL'):
+            schemas.add(schema.upper())
+    return schemas
+
+
 def init_sqlite_db(db_path):
     """Initialize SQLite database with schema for SQL scripts."""
     conn = sqlite3.connect(db_path)
@@ -877,6 +906,8 @@ def init_sqlite_db(db_path):
             sql_type TEXT,
             nesting_depth INTEGER,
             keyword_count INTEGER,
+            tables_referenced TEXT,
+            schemas_referenced TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -918,13 +949,18 @@ def insert_sql_to_db(conn, result):
     sql_type = get_sql_type(sql_code)
     nesting_depth = count_nesting_depth(sql_code)
     keyword_count = count_sql_keywords(sql_code)
+    tables = get_table_references(sql_code)
+    schemas = get_schema_references(sql_code)
+    tables_str = ','.join(sorted(tables)) if tables else ''
+    schemas_str = ','.join(sorted(schemas)) if schemas else ''
 
     cursor.execute('''
         INSERT INTO sql_scripts (
             space_key, space_name, page_id, page_title, last_modified,
             last_editor, sql_language, sql_title, sql_description,
-            sql_source, sql_code, line_count, sql_type, nesting_depth, keyword_count
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            sql_source, sql_code, line_count, sql_type, nesting_depth, keyword_count,
+            tables_referenced, schemas_referenced
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         result['space_key'],
         result['space_name'],
@@ -940,7 +976,9 @@ def insert_sql_to_db(conn, result):
         line_count,
         sql_type,
         nesting_depth,
-        keyword_count
+        keyword_count,
+        tables_str,
+        schemas_str
     ))
 
 

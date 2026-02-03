@@ -1274,8 +1274,7 @@ def insights():
                             'keywords': row['keyword_count'], 'sql_type': row['sql_type'],
                             'source': row['sql_source']} for row in scripts_rows]
 
-    # Tables and schemas still need text parsing - only do for small result sets or skip
-    # For now, skip table/schema extraction for large datasets (too slow)
+    # Tables and schemas - use pre-computed columns if available, otherwise parse SQL
     top_tables = []
     top_schemas = []
     max_table_count = 1
@@ -1283,8 +1282,35 @@ def insights():
     unique_tables = 0
     unique_schemas = 0
 
-    if total_scripts <= 1000:
-        # Only parse SQL for small result sets
+    # Check if pre-computed columns exist
+    try:
+        db.execute('SELECT tables_referenced FROM sql_scripts LIMIT 1')
+        has_precomputed = True
+    except Exception:
+        has_precomputed = False
+
+    if has_precomputed:
+        # Use pre-computed tables_referenced and schemas_referenced columns (fast!)
+        all_tables = Counter()
+        all_schemas = Counter()
+        tables_rows = db.execute(f'''
+            SELECT tables_referenced, schemas_referenced
+            FROM sql_scripts {where}
+            WHERE tables_referenced IS NOT NULL AND tables_referenced != ''
+        ''', params).fetchall()
+        for row in tables_rows:
+            if row['tables_referenced']:
+                all_tables.update(row['tables_referenced'].split(','))
+            if row['schemas_referenced']:
+                all_schemas.update(row['schemas_referenced'].split(','))
+        top_tables = all_tables.most_common(15)
+        top_schemas = all_schemas.most_common(10)
+        max_table_count = top_tables[0][1] if top_tables else 1
+        max_schema_count = top_schemas[0][1] if top_schemas else 1
+        unique_tables = len(all_tables)
+        unique_schemas = len(all_schemas)
+    elif total_scripts <= 1000:
+        # Fall back to parsing SQL for small result sets (legacy databases)
         all_tables = Counter()
         all_schemas = Counter()
         sql_codes = db.execute(f'SELECT sql_code FROM sql_scripts {where} LIMIT 1000', params).fetchall()
