@@ -707,16 +707,24 @@ def close_db(error):
         db.close()
 
 
-def get_tree():
-    """Get hierarchical tree of spaces -> pages -> scripts."""
+def get_tree(search=None):
+    """Get hierarchical tree of spaces -> pages -> scripts, optionally filtered by search."""
     db = get_db()
 
-    # Get all scripts grouped by space and page
-    cursor = db.execute('''
-        SELECT id, space_key, space_name, page_id, page_title, line_count
-        FROM sql_scripts
-        ORDER BY space_key, page_title, id
-    ''')
+    # Get all scripts grouped by space and page, with optional search filter
+    if search:
+        cursor = db.execute('''
+            SELECT id, space_key, space_name, page_id, page_title, line_count
+            FROM sql_scripts
+            WHERE sql_code LIKE ? OR page_title LIKE ? OR space_key LIKE ?
+            ORDER BY space_key, page_title, id
+        ''', (f'%{search}%', f'%{search}%', f'%{search}%'))
+    else:
+        cursor = db.execute('''
+            SELECT id, space_key, space_name, page_id, page_title, line_count
+            FROM sql_scripts
+            ORDER BY space_key, page_title, id
+        ''')
 
     tree = {}
     for row in cursor:
@@ -832,8 +840,8 @@ def browse():
     page_filter = request.args.get('page', '').strip() or None
     script_id = request.args.get('id', '').strip() or None
 
-    # Get tree for sidebar
-    tree = get_tree()
+    # Get tree for sidebar (filtered by search if present)
+    tree = get_tree(search)
     total_scripts = sum(s['script_count'] for s in tree)
 
     # If specific script ID requested
