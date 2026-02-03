@@ -1561,11 +1561,18 @@ def main():
                     write_log(log_file, "INFO", f"Processing personal space: {space_key}")
 
                     try:
-                        # Fetch all pages for this space
-                        pages = fetch_all_pages_for_space(space_key, (USERNAME, PASSWORD), VERIFY_SSL)
+                        # Fetch page metadata first
+                        pages_metadata = fetch_page_metadata(space_key)
 
-                        if not pages:
+                        if not pages_metadata:
                             print(f"  No pages found in {space_key}")
+                            continue
+
+                        # Fetch all page bodies (fetch_all=True for full mode)
+                        pages_with_bodies, total_pages = sample_and_fetch_bodies(space_key, pages_metadata, fetch_all=True)
+
+                        if not pages_with_bodies:
+                            print(f"  No page bodies fetched for {space_key}")
                             continue
 
                         # Build pickle data structure
@@ -1573,8 +1580,8 @@ def main():
                             'space_key': space_key,
                             'name': space_name,
                             'space_name': space_name,
-                            'sampled_pages': pages,
-                            'total_pages_in_space': len(pages),
+                            'sampled_pages': pages_with_bodies,
+                            'total_pages_in_space': total_pages,
                             'created_from': 'personal_spaces_fetch'
                         }
 
@@ -1582,8 +1589,8 @@ def main():
                         with open(out_path, 'wb') as f:
                             pickle.dump(pickle_data, f)
 
-                        print(f"  Saved {len(pages)} pages to {out_path}")
-                        write_log(log_file, "INFO", f"Saved {len(pages)} pages for {space_key}")
+                        print(f"  Saved {len(pages_with_bodies)} pages to {out_path}")
+                        write_log(log_file, "INFO", f"Saved {len(pages_with_bodies)} pages for {space_key}")
 
                     except Exception as e:
                         print(f"  ERROR processing {space_key}: {e}")
