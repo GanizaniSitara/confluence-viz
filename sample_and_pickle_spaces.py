@@ -415,24 +415,6 @@ def fetch_personal_spaces_with_details(auth_details, verify_ssl_cert):
     return spaces_data
 
 
-def fetch_pages_for_space_concurrently(space_key, auth_details, verify_ssl_cert, max_workers=10):
-    """
-    Fetches all pages for a given space key concurrently, including their content and version history.
-    """
-    # Initialize start and page_limit for this function
-    start = 0
-    page_limit = 100 # Or another appropriate limit
-    while True:
-        # Construct URL using BASE_URL and API_ENDPOINT
-        url = f"{BASE_URL}{API_ENDPOINT}/content"
-        params = {
-            "spaceKey": space_key,
-            "start": start, # Now defined
-            "limit": page_limit, # Now defined
-            "expand": "body.storage,version,history.previousVersion"
-        }
-        # ...existing code...
-
 def download_attachments_for_space(space_key, pages_metadata_list, base_output_dir, auth_tuple, verify_ssl_flag, base_confluence_url):
     if not pages_metadata_list:
         print(f"  No page metadata provided for space {space_key}, cannot download attachments.")
