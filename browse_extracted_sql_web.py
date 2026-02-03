@@ -456,6 +456,9 @@ INSIGHTS_TEMPLATE = '''
 
         .clickable { cursor: pointer; }
         .clickable:hover { background: #e7f1ff; }
+
+        .drill-link { color: #007bff; }
+        .drill-link:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
@@ -538,7 +541,7 @@ INSIGHTS_TEMPLATE = '''
                     <tr><th>Type</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
                     {% for sql_type, count in sql_types %}
                     <tr class="clickable" onclick="window.location='/insights?type={{ sql_type }}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
-                        <td>{{ sql_type }}</td>
+                        <td><span class="drill-link">{{ sql_type }}</span></td>
                         <td>{{ count }}</td>
                         <td class="bar-cell">
                             <div class="bar-container">
@@ -576,7 +579,7 @@ INSIGHTS_TEMPLATE = '''
                     <tr><th>Source</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
                     {% for source, count in sources %}
                     <tr class="clickable" onclick="window.location='/insights?source={{ source }}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
-                        <td>{{ source }}</td>
+                        <td><span class="drill-link">{{ source }}</span></td>
                         <td>{{ count }}</td>
                         <td class="bar-cell">
                             <div class="bar-container">
@@ -595,7 +598,7 @@ INSIGHTS_TEMPLATE = '''
                     <tr><th>Size</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
                     {% for bucket, count in size_distribution %}
                     <tr class="clickable" onclick="window.location='/insights?size={{ bucket }}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
-                        <td>{{ bucket }}</td>
+                        <td><span class="drill-link">{{ bucket }}</span></td>
                         <td>{{ count }}</td>
                         <td class="bar-cell">
                             <div class="bar-container">
@@ -614,7 +617,7 @@ INSIGHTS_TEMPLATE = '''
                     <tr><th>Depth</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
                     {% for bucket, count in nesting_distribution %}
                     <tr class="clickable" onclick="window.location='/insights?nesting={{ bucket }}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
-                        <td>{{ bucket }}</td>
+                        <td><span class="drill-link">{{ bucket }}</span></td>
                         <td>{{ count }}</td>
                         <td class="bar-cell">
                             <div class="bar-container">
