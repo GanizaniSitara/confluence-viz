@@ -966,7 +966,7 @@ def format_sql_result(result, script_num):
     return '\n'.join(lines)
 
 
-def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_lines=1, db_conn=None, seen_hashes=None, confluence_base_url=None, no_dedup=False, scan_plain_text=False):
+def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_lines=1, db_conn=None, seen_hashes=None, confluence_base_url=None, no_dedup=False, scan_plain_text=False, duplicates_file=None):
     """
     Process a single pickle file and output SQL scripts in real-time.
 
@@ -976,10 +976,11 @@ def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_
         script_counter: List with single int for counting scripts
         min_lines: Minimum lines of SQL to include
         db_conn: SQLite connection (or None for text output)
-        seen_hashes: Set of already seen SQL hashes (for duplicate detection)
+        seen_hashes: Dict mapping SQL hash to (space_key, page_id, page_title) for duplicate detection
         confluence_base_url: Base URL for Confluence (for generating page links)
         no_dedup: If True, skip duplicate detection
         scan_plain_text: If True, scan plain text for SQL patterns
+        duplicates_file: File handle for writing duplicate info (or None)
 
     Returns: (page_count, sql_count, duplicate_count, pages_with_sql_set)
     """
@@ -988,7 +989,7 @@ def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_
     duplicate_count = 0
 
     if seen_hashes is None:
-        seen_hashes = set()
+        seen_hashes = {}
 
     try:
         with open(pickle_path, 'rb') as f:
@@ -1031,8 +1032,25 @@ def process_pickle_file_streaming(pickle_path, output_file, script_counter, min_
                 sql_hash = hash_sql(script['sql_code'])
                 if sql_hash in seen_hashes:
                     duplicate_count += 1
+                    # Write duplicate info to file if specified
+                    if duplicates_file:
+                        orig_space, orig_page_id, orig_title = seen_hashes[sql_hash]
+                        if confluence_base_url:
+                            orig_link = f"{confluence_base_url}/pages/viewpage.action?pageId={orig_page_id}"
+                            dup_link = f"{confluence_base_url}/pages/viewpage.action?pageId={page_id}"
+                        else:
+                            orig_link = f"pageId={orig_page_id}"
+                            dup_link = f"pageId={page_id}"
+                        duplicates_file.write(f"DUPLICATE SQL FOUND:\n")
+                        duplicates_file.write(f"  Original: [{orig_space}] {orig_title}\n")
+                        duplicates_file.write(f"    Link: {orig_link}\n")
+                        duplicates_file.write(f"  Duplicate: [{space_key}] {page_title}\n")
+                        duplicates_file.write(f"    Link: {dup_link}\n")
+                        duplicates_file.write(f"  SQL Preview: {script['sql_code'][:100].replace(chr(10), ' ')}...\n")
+                        duplicates_file.write("-" * 60 + "\n")
+                        duplicates_file.flush()
                     continue
-                seen_hashes.add(sql_hash)
+                seen_hashes[sql_hash] = (space_key, page_id, page_title)
 
             script_counter[0] += 1
             sql_count += 1
@@ -1076,6 +1094,7 @@ def main():
     parser.add_argument('--sqlite', '--db', help='Output to SQLite database file')
     parser.add_argument('--append', '-a', action='store_true',
                         help='Append to existing SQLite database instead of recreating')
+    parser.add_argument('--duplicates-file', help='Write duplicate SQL info to this file (with links to both pages)')
     parser.add_argument('--summary', '-s', action='store_true',
                         help='Print summary statistics only')
     parser.add_argument('--min-lines', type=int, default=1,
@@ -1152,13 +1171,19 @@ def main():
             db_conn = init_sqlite_db(args.sqlite)
         print(f"Writing to SQLite database: {args.sqlite}")
 
+    # Open duplicates file if specified
+    duplicates_file = None
+    if args.duplicates_file:
+        duplicates_file = open(args.duplicates_file, 'w', encoding='utf-8')
+        print(f"Writing duplicates to: {args.duplicates_file}")
+
     total_pages = 0
     total_sql_found = 0
     total_duplicates = 0
     total_skipped_spaces = 0
     all_pages_with_sql = set()
     script_counter = [0]  # Use list to allow mutation in nested function
-    seen_hashes = set()   # Track seen SQL hashes for duplicate detection
+    seen_hashes = {}  # Dict mapping SQL hash to (space_key, page_id, page_title)
 
     try:
         for i, pkl_file in enumerate(pickle_files, 1):
@@ -1210,7 +1235,7 @@ def main():
 
                 page_count, sql_count, dup_count, pages_with_sql = process_pickle_file_streaming(
                     pkl_path, output_file, script_counter, args.min_lines, db_conn, seen_hashes, confluence_base_url,
-                    no_dedup=args.no_dedup, scan_plain_text=args.scan_plain_text
+                    no_dedup=args.no_dedup, scan_plain_text=args.scan_plain_text, duplicates_file=duplicates_file
                 )
 
                 total_pages += page_count
@@ -1228,6 +1253,8 @@ def main():
             output_file.close()
         if db_conn:
             db_conn.close()
+        if duplicates_file:
+            duplicates_file.close()
 
     print("=" * 80)
     print(f"\nSUMMARY:")
@@ -1239,6 +1266,8 @@ def main():
     print(f"  Pages containing SQL: {len(all_pages_with_sql):,}")
     print(f"  Total SQL scripts found: {total_sql_found:,}")
     print(f"  Duplicates skipped: {total_duplicates:,}")
+    if args.duplicates_file and total_duplicates > 0:
+        print(f"  Duplicates log written to: {args.duplicates_file}")
 
     if args.output and not args.summary:
         print(f"\nText results written to: {args.output}")
