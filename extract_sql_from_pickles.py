@@ -149,27 +149,65 @@ def looks_like_sql(text):
 
     text_upper = text.upper()
 
-    # Must have at least one strong SQL statement keyword (SELECT, INSERT, CREATE, etc.)
-    # This prevents matching on single keywords like EXECUTE in prose
-    strong_keywords = [
-        r'\bSELECT\b.*\bFROM\b',  # SELECT ... FROM pattern
-        r'\bINSERT\s+INTO\b',
-        r'\bUPDATE\b.*\bSET\b',
-        r'\bDELETE\s+FROM\b',
-        r'\bCREATE\s+(TABLE|VIEW|INDEX|PROCEDURE|FUNCTION|TRIGGER|PACKAGE)\b',
-        r'\bALTER\s+TABLE\b',
-        r'\bDROP\s+(TABLE|VIEW|INDEX|PROCEDURE|FUNCTION)\b',
-        r'\bDECLARE\b.*\b(BEGIN|CURSOR|VARCHAR|NUMBER|INTEGER)\b',
-        r'\bBEGIN\b.*\bEND\b',
+    # Quick rejection: if it looks like a shell command, reject it
+    shell_patterns = [
+        r'\bsudo\b',
+        r'\bsu\s+-',
+        r'\bbash\b',
+        r'\b/bin/',
+        r'\b/usr/',
+        r'\bchmod\b',
+        r'\bchown\b',
+        r'\bmkdir\b',
+        r'\bcd\s+/',
+        r'\becho\s+\$',
+        r'\bexport\s+\w+=',
+        r'\bsource\s+',
+        r'\b\.sh\b',
+        r'\bgrep\s+',
+        r'\bawk\s+',
+        r'\bsed\s+',
+        r'\bcat\s+/',
+        r'\brm\s+-',
+        r'\bcp\s+-',
+        r'\bmv\s+',
+        r'\bls\s+-',
+        r'\bcurl\s+',
+        r'\bwget\s+',
+        r'\bssh\s+',
+        r'\bscp\s+',
+    ]
+    if any(re.search(pattern, text, re.IGNORECASE) for pattern in shell_patterns):
+        return False
+
+    # Must have at least one strong SQL statement pattern
+    # These are patterns that are unambiguously SQL
+    strong_patterns = [
+        r'\bSELECT\b.*\bFROM\b',           # SELECT ... FROM
+        r'\bSELECT\b.*\bINTO\b',           # SELECT ... INTO
+        r'\bINSERT\s+INTO\b',              # INSERT INTO
+        r'\bUPDATE\b.*\bSET\b',            # UPDATE ... SET
+        r'\bDELETE\s+FROM\b',              # DELETE FROM
+        r'\bCREATE\s+(OR\s+REPLACE\s+)?(TABLE|VIEW|INDEX|PROCEDURE|FUNCTION|TRIGGER|PACKAGE|TYPE|SEQUENCE|SYNONYM)\b',
+        r'\bALTER\s+(TABLE|VIEW|INDEX|PROCEDURE|FUNCTION|TRIGGER|PACKAGE|SEQUENCE|SESSION)\b',
+        r'\bDROP\s+(TABLE|VIEW|INDEX|PROCEDURE|FUNCTION|TRIGGER|PACKAGE|SEQUENCE)\b',
+        r'\bTRUNCATE\s+TABLE\b',
+        r'\bMERGE\s+INTO\b',
+        r'\bGRANT\s+\w+\s+ON\b',           # GRANT ... ON
+        r'\bREVOKE\s+\w+\s+ON\b',          # REVOKE ... ON
+        r'\bDECLARE\b.*\b(BEGIN|CURSOR|TYPE|VARCHAR|NUMBER|INTEGER|BOOLEAN|EXCEPTION)\b',
+        r'\bBEGIN\b.*\bEND\s*;',           # PL/SQL block (must have END;)
+        r'\bWITH\b.*\bAS\s*\(\s*SELECT\b', # CTE
+        r'\bEXEC(UTE)?\s+(IMMEDIATE|SP_|XP_|DBMS_|UTL_)\b',  # EXECUTE only with specific SQL patterns
     ]
 
-    has_strong_pattern = any(re.search(pattern, text_upper, re.DOTALL) for pattern in strong_keywords)
+    has_strong_pattern = any(re.search(pattern, text_upper, re.DOTALL) for pattern in strong_patterns)
     if has_strong_pattern:
         return True
 
-    # Fallback: require multiple keywords
-    keyword_count = sum(1 for pattern in SQL_KEYWORDS if re.search(pattern, text_upper))
-    return keyword_count >= MIN_SQL_KEYWORDS
+    # No fallback - if it doesn't match a strong pattern, it's not SQL
+    # This eliminates false positives from prose that happens to contain SQL keywords
+    return False
 
 
 def is_sql_starter_line(line):
@@ -732,12 +770,95 @@ def format_datetime(iso_string):
         return iso_string
 
 
+def get_sql_type(sql_code):
+    """Determine the primary type of SQL statement."""
+    sql_upper = sql_code.strip().upper()
+    if sql_upper.startswith('SELECT') or sql_upper.startswith('WITH'):
+        return 'SELECT'
+    elif sql_upper.startswith('INSERT'):
+        return 'INSERT'
+    elif sql_upper.startswith('UPDATE'):
+        return 'UPDATE'
+    elif sql_upper.startswith('DELETE'):
+        return 'DELETE'
+    elif sql_upper.startswith('CREATE'):
+        if 'PROCEDURE' in sql_upper:
+            return 'CREATE PROCEDURE'
+        elif 'FUNCTION' in sql_upper:
+            return 'CREATE FUNCTION'
+        elif 'VIEW' in sql_upper:
+            return 'CREATE VIEW'
+        elif 'TABLE' in sql_upper:
+            return 'CREATE TABLE'
+        elif 'INDEX' in sql_upper:
+            return 'CREATE INDEX'
+        elif 'PACKAGE' in sql_upper:
+            return 'CREATE PACKAGE'
+        elif 'TRIGGER' in sql_upper:
+            return 'CREATE TRIGGER'
+        else:
+            return 'CREATE OTHER'
+    elif sql_upper.startswith('ALTER'):
+        return 'ALTER'
+    elif sql_upper.startswith('DROP'):
+        return 'DROP'
+    elif sql_upper.startswith('MERGE'):
+        return 'MERGE'
+    elif sql_upper.startswith('TRUNCATE'):
+        return 'TRUNCATE'
+    elif sql_upper.startswith('DECLARE') or sql_upper.startswith('BEGIN'):
+        return 'PL/SQL BLOCK'
+    elif sql_upper.startswith('GRANT') or sql_upper.startswith('REVOKE'):
+        return 'DCL'
+    elif sql_upper.startswith('EXEC'):
+        return 'EXECUTE'
+    else:
+        return 'OTHER'
+
+
+def count_nesting_depth(sql_code):
+    """Count the maximum nesting level (parentheses depth)."""
+    max_depth = 0
+    current_depth = 0
+    in_string = False
+    string_char = None
+    for i, char in enumerate(sql_code):
+        if char in ("'", '"') and (i == 0 or sql_code[i-1] != '\\'):
+            if not in_string:
+                in_string = True
+                string_char = char
+            elif char == string_char:
+                in_string = False
+        elif not in_string:
+            if char == '(':
+                current_depth += 1
+                max_depth = max(max_depth, current_depth)
+            elif char == ')':
+                current_depth = max(0, current_depth - 1)
+    return max_depth
+
+
+def count_sql_keywords(sql_code):
+    """Count SQL keywords for complexity estimation."""
+    keywords = [
+        'SELECT', 'FROM', 'WHERE', 'JOIN', 'LEFT', 'RIGHT', 'INNER', 'OUTER',
+        'GROUP BY', 'ORDER BY', 'HAVING', 'UNION', 'INSERT', 'UPDATE', 'DELETE',
+        'BEGIN', 'END', 'IF', 'THEN', 'ELSE', 'CASE', 'WHEN', 'LOOP', 'CURSOR',
+        'FETCH', 'EXCEPTION', 'DECLARE', 'INTO', 'VALUES', 'SET', 'AND', 'OR',
+    ]
+    sql_upper = sql_code.upper()
+    count = 0
+    for kw in keywords:
+        count += len(re.findall(r'\b' + kw.replace(' ', r'\s+') + r'\b', sql_upper))
+    return count
+
+
 def init_sqlite_db(db_path):
     """Initialize SQLite database with schema for SQL scripts."""
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # Create main table for SQL scripts
+    # Create main table for SQL scripts with pre-computed analysis columns
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS sql_scripts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -753,15 +874,21 @@ def init_sqlite_db(db_path):
             sql_source TEXT,
             sql_code TEXT NOT NULL,
             line_count INTEGER,
+            sql_type TEXT,
+            nesting_depth INTEGER,
+            keyword_count INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
 
-    # Create indexes for common queries
+    # Create indexes for common queries and filtering
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_space_key ON sql_scripts(space_key)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_page_id ON sql_scripts(page_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_sql_language ON sql_scripts(sql_language)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_sql_source ON sql_scripts(sql_source)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_sql_type ON sql_scripts(sql_type)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_line_count ON sql_scripts(line_count)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_nesting_depth ON sql_scripts(nesting_depth)')
 
     # Create a summary view
     cursor.execute('''
@@ -782,16 +909,22 @@ def init_sqlite_db(db_path):
 
 
 def insert_sql_to_db(conn, result):
-    """Insert a single SQL result into the database."""
+    """Insert a single SQL result into the database with pre-computed analysis."""
     cursor = conn.cursor()
-    line_count = result['sql_code'].count('\n') + 1
+    sql_code = result['sql_code']
+    line_count = sql_code.count('\n') + 1
+
+    # Pre-compute analysis columns for fast filtering/aggregation
+    sql_type = get_sql_type(sql_code)
+    nesting_depth = count_nesting_depth(sql_code)
+    keyword_count = count_sql_keywords(sql_code)
 
     cursor.execute('''
         INSERT INTO sql_scripts (
             space_key, space_name, page_id, page_title, last_modified,
             last_editor, sql_language, sql_title, sql_description,
-            sql_source, sql_code, line_count
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            sql_source, sql_code, line_count, sql_type, nesting_depth, keyword_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         result['space_key'],
         result['space_name'],
@@ -803,8 +936,11 @@ def insert_sql_to_db(conn, result):
         result['sql_title'],
         result['sql_description'],
         result['sql_source'],
-        result['sql_code'],
-        line_count
+        sql_code,
+        line_count,
+        sql_type,
+        nesting_depth,
+        keyword_count
     ))
 
 
