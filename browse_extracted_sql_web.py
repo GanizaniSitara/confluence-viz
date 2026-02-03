@@ -460,13 +460,16 @@ INSIGHTS_TEMPLATE = '''
 </head>
 <body>
     <div class="container">
-        <h1>SQL Insights{% if space_filter %} - {{ space_filter }}{% endif %}</h1>
+        <h1>SQL Insights</h1>
         <p class="subtitle">
-            {% if space_filter %}
-                Filtered to space: {{ space_filter }} |
-                <a href="/insights">Show all spaces</a>
-            {% else %}
-                {{ total_scripts }} SQL scripts across {{ total_spaces }} spaces
+            {{ total_scripts }} SQL scripts
+            {% if space_filter %} in <strong>{{ space_filter }}</strong>{% else %} across {{ total_spaces }} spaces{% endif %}
+            {% if type_filter %} | Type: <strong>{{ type_filter }}</strong>{% endif %}
+            {% if source_filter %} | Source: <strong>{{ source_filter }}</strong>{% endif %}
+            {% if size_filter %} | Size: <strong>{{ size_filter }}</strong>{% endif %}
+            {% if nesting_filter %} | Nesting: <strong>{{ nesting_filter }}</strong>{% endif %}
+            {% if space_filter or type_filter or source_filter or size_filter or nesting_filter %}
+                | <a href="/insights">Clear all filters</a>
             {% endif %}
         </p>
 
@@ -483,6 +486,9 @@ INSIGHTS_TEMPLATE = '''
                     {% endfor %}
                 </select>
             </form>
+            {% if type_filter or source_filter or size_filter or nesting_filter %}
+            <a href="/insights{% if space_filter %}?space={{ space_filter }}{% endif %}" style="background: #dc3545;">Clear dimension filters</a>
+            {% endif %}
         </div>
 
         <!-- Summary Stats -->
@@ -531,7 +537,7 @@ INSIGHTS_TEMPLATE = '''
                 <table>
                     <tr><th>Type</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
                     {% for sql_type, count in sql_types %}
-                    <tr class="clickable" onclick="window.location='/?search={{ sql_type }}'">
+                    <tr class="clickable" onclick="window.location='/insights?type={{ sql_type }}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
                         <td>{{ sql_type }}</td>
                         <td>{{ count }}</td>
                         <td class="bar-cell">
@@ -569,7 +575,7 @@ INSIGHTS_TEMPLATE = '''
                 <table>
                     <tr><th>Source</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
                     {% for source, count in sources %}
-                    <tr>
+                    <tr class="clickable" onclick="window.location='/insights?source={{ source }}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
                         <td>{{ source }}</td>
                         <td>{{ count }}</td>
                         <td class="bar-cell">
@@ -588,7 +594,7 @@ INSIGHTS_TEMPLATE = '''
                 <table>
                     <tr><th>Size</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
                     {% for bucket, count in size_distribution %}
-                    <tr>
+                    <tr class="clickable" onclick="window.location='/insights?size={{ bucket }}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
                         <td>{{ bucket }}</td>
                         <td>{{ count }}</td>
                         <td class="bar-cell">
@@ -607,7 +613,7 @@ INSIGHTS_TEMPLATE = '''
                 <table>
                     <tr><th>Depth</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
                     {% for bucket, count in nesting_distribution %}
-                    <tr>
+                    <tr class="clickable" onclick="window.location='/insights?nesting={{ bucket }}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
                         <td>{{ bucket }}</td>
                         <td>{{ count }}</td>
                         <td class="bar-cell">
@@ -652,6 +658,30 @@ INSIGHTS_TEMPLATE = '''
                 </table>
             </div>
         </div>
+
+        {% if type_filter or source_filter or size_filter or nesting_filter %}
+        <!-- Filtered Scripts List -->
+        <h2>Matching Scripts ({{ total_scripts }} results)</h2>
+        <div class="card">
+            <table>
+                <tr><th>ID</th><th>Page</th><th>Space</th><th>Type</th><th>Source</th><th>Lines</th><th>Nesting</th></tr>
+                {% for script in filtered_scripts[:50] %}
+                <tr class="clickable" onclick="window.location='/?id={{ script.id }}'">
+                    <td>{{ script.id }}</td>
+                    <td><a class="table-link" href="/?id={{ script.id }}">{{ script.page_title[:30] }}{% if script.page_title|length > 30 %}...{% endif %}</a></td>
+                    <td>{{ script.space_key }}</td>
+                    <td>{{ script.sql_type }}</td>
+                    <td>{{ script.source }}</td>
+                    <td>{{ script.line_count }}</td>
+                    <td>{{ script.nesting }}</td>
+                </tr>
+                {% endfor %}
+                {% if total_scripts > 50 %}
+                <tr><td colspan="7" style="text-align: center; color: #666;">... and {{ total_scripts - 50 }} more scripts</td></tr>
+                {% endif %}
+            </table>
+        </div>
+        {% endif %}
     </div>
 </body>
 </html>
@@ -1079,15 +1109,21 @@ def count_keywords(sql_code):
 
 @app.route('/insights')
 def insights():
-    """Insights view with tables, schemas, types, complexity. Supports space filtering."""
+    """Insights view with tables, schemas, types, complexity. Supports filtering."""
     db = get_db()
+
+    # Get filter parameters
     space_filter = request.args.get('space', '').strip() or None
+    type_filter = request.args.get('type', '').strip() or None
+    source_filter = request.args.get('source', '').strip() or None
+    size_filter = request.args.get('size', '').strip() or None
+    nesting_filter = request.args.get('nesting', '').strip() or None
 
     # Get list of all spaces for dropdown
     all_spaces_cursor = db.execute('SELECT DISTINCT space_key FROM sql_scripts ORDER BY space_key')
     all_spaces = [row['space_key'] for row in all_spaces_cursor]
 
-    # Build query with optional space filter
+    # Build query with optional space filter (SQL-level filtering for performance)
     if space_filter:
         cursor = db.execute('''
             SELECT id, space_key, space_name, page_id, page_title, sql_code, line_count, sql_source
@@ -1109,21 +1145,60 @@ def insights():
     script_details = []
     total_lines = 0
 
+    # Helper to get size bucket
+    def get_size_bucket(lines):
+        if lines <= 5:
+            return '1-5 lines'
+        elif lines <= 20:
+            return '6-20 lines'
+        elif lines <= 50:
+            return '21-50 lines'
+        elif lines <= 100:
+            return '51-100 lines'
+        elif lines <= 500:
+            return '101-500 lines'
+        else:
+            return '500+ lines'
+
+    # Helper to get nesting bucket
+    def get_nesting_bucket(depth):
+        if depth == 0:
+            return 'No nesting (0)'
+        elif depth <= 2:
+            return 'Shallow (1-2)'
+        elif depth <= 5:
+            return 'Moderate (3-5)'
+        elif depth <= 10:
+            return 'Deep (6-10)'
+        else:
+            return 'Very deep (10+)'
+
     for row in cursor:
         sql_code = row['sql_code']
         line_count = row['line_count'] or (sql_code.count('\n') + 1)
-        total_lines += line_count
-
-        tables = get_table_references(sql_code)
-        schemas = get_schema_references(sql_code)
         sql_type = get_sql_type(sql_code)
         nesting = count_nesting_level(sql_code)
+        source = row['sql_source'] or 'unknown'
+
+        # Apply filters (post-fetch filtering for computed fields)
+        if type_filter and sql_type != type_filter:
+            continue
+        if source_filter and source != source_filter:
+            continue
+        if size_filter and get_size_bucket(line_count) != size_filter:
+            continue
+        if nesting_filter and get_nesting_bucket(nesting) != nesting_filter:
+            continue
+
+        total_lines += line_count
+        tables = get_table_references(sql_code)
+        schemas = get_schema_references(sql_code)
         keywords = count_keywords(sql_code)
 
         all_tables.update(tables)
         all_schemas.update(schemas)
         sql_types[sql_type] += 1
-        source_types[row['sql_source'] or 'unknown'] += 1
+        source_types[source] += 1
 
         space_key = row['space_key']
         space_stats[space_key]['count'] += 1
@@ -1138,46 +1213,28 @@ def insights():
             'line_count': line_count,
             'nesting': nesting,
             'keywords': keywords,
+            'sql_type': sql_type,
+            'source': source,
         })
 
     total_scripts = len(script_details)
 
-    # Size distribution
+    # Size distribution (using helper function)
     size_buckets = [('1-5 lines', 0), ('6-20 lines', 0), ('21-50 lines', 0),
                     ('51-100 lines', 0), ('101-500 lines', 0), ('500+ lines', 0)]
     size_dict = {b[0]: 0 for b in size_buckets}
     for s in script_details:
-        lines = s['line_count']
-        if lines <= 5:
-            size_dict['1-5 lines'] += 1
-        elif lines <= 20:
-            size_dict['6-20 lines'] += 1
-        elif lines <= 50:
-            size_dict['21-50 lines'] += 1
-        elif lines <= 100:
-            size_dict['51-100 lines'] += 1
-        elif lines <= 500:
-            size_dict['101-500 lines'] += 1
-        else:
-            size_dict['500+ lines'] += 1
+        bucket = get_size_bucket(s['line_count'])
+        size_dict[bucket] += 1
     size_distribution = [(k, size_dict[k]) for k, _ in size_buckets]
 
-    # Nesting distribution
+    # Nesting distribution (using helper function)
     nest_buckets = [('No nesting (0)', 0), ('Shallow (1-2)', 0), ('Moderate (3-5)', 0),
                     ('Deep (6-10)', 0), ('Very deep (10+)', 0)]
     nest_dict = {b[0]: 0 for b in nest_buckets}
     for s in script_details:
-        depth = s['nesting']
-        if depth == 0:
-            nest_dict['No nesting (0)'] += 1
-        elif depth <= 2:
-            nest_dict['Shallow (1-2)'] += 1
-        elif depth <= 5:
-            nest_dict['Moderate (3-5)'] += 1
-        elif depth <= 10:
-            nest_dict['Deep (6-10)'] += 1
-        else:
-            nest_dict['Very deep (10+)'] += 1
+        bucket = get_nesting_bucket(s['nesting'])
+        nest_dict[bucket] += 1
     nesting_distribution = [(k, nest_dict[k]) for k, _ in nest_buckets]
 
     # Top spaces
@@ -1217,7 +1274,12 @@ def insights():
         top_spaces=top_spaces,
         most_complex=most_complex,
         space_filter=space_filter,
-        all_spaces=all_spaces
+        type_filter=type_filter,
+        source_filter=source_filter,
+        size_filter=size_filter,
+        nesting_filter=nesting_filter,
+        all_spaces=all_spaces,
+        filtered_scripts=script_details
     )
 
 
