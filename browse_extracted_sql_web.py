@@ -1340,10 +1340,14 @@ def insights():
         # Use pre-computed tables_referenced and schemas_referenced columns (fast!)
         all_tables = Counter()
         all_schemas = Counter()
+        tables_condition = "tables_referenced IS NOT NULL AND tables_referenced != ''"
+        if where:
+            tables_where = f"{where} AND {tables_condition}"
+        else:
+            tables_where = f"WHERE {tables_condition}"
         tables_rows = db.execute(f'''
             SELECT tables_referenced, schemas_referenced
-            FROM sql_scripts {where}
-            WHERE tables_referenced IS NOT NULL AND tables_referenced != ''
+            FROM sql_scripts {tables_where}
         ''', params).fetchall()
         for row in tables_rows:
             if row['tables_referenced']:
