@@ -345,7 +345,7 @@ TIMELINE_TEMPLATE = '''
         </p>
 
         <div class="nav">
-            <a href="/">← Browser</a>
+            <a href="/{% if search %}?search={{ search }}{% endif %}">← Browser</a>
             <a href="/insights{% if search %}?search={{ search }}{% endif %}">Insights</a>
             <div class="spacer"></div>
             <form action="/timeline" method="get" style="display: flex; gap: 5px;">
@@ -478,7 +478,7 @@ INSIGHTS_TEMPLATE = '''
         </p>
 
         <div class="nav">
-            <a href="/">← Browser</a>
+            <a href="/{% if search %}?search={{ search }}{% endif %}">← Browser</a>
             <a href="/timeline{% if search %}?search={{ search }}{% endif %}">Timeline</a>
             <a href="/insights{% if search %}?search={{ search }}{% endif %}" class="active">Insights</a>
             <div class="spacer"></div>
