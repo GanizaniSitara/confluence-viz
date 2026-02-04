@@ -1504,15 +1504,19 @@ def main():
 
     parser = argparse.ArgumentParser(
         description='Web-based SQL script browser',
-        epilog='Example: python browse_extracted_sql_web.py --db sql_queries.db --port 5080'
+        epilog='Example: python browse_extracted_sql_web.py --db sql_queries.db --env prod'
     )
     parser.add_argument(
         '--db', required=True,
         help='Path to SQLite database file'
     )
     parser.add_argument(
-        '--port', type=int, default=5080,
-        help='Port to run server on (default: 5080)'
+        '--env', choices=['prod', 'dev'], default='prod',
+        help='Environment: prod (port 5080) or dev (port 5081)'
+    )
+    parser.add_argument(
+        '--port', type=int,
+        help='Port to run server on (overrides --env default)'
     )
     parser.add_argument(
         '--host', default='127.0.0.1',
@@ -1523,6 +1527,10 @@ def main():
         help='Confluence base URL for click-through links (e.g., https://wiki.example.com)'
     )
     args = parser.parse_args()
+
+    # Set port based on env if not explicitly provided
+    if args.port is None:
+        args.port = 5080 if args.env == 'prod' else 5081
 
     if not os.path.exists(args.db):
         print(f"ERROR: Database file not found: {args.db}")
