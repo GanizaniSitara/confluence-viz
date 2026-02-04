@@ -178,7 +178,7 @@ HTML_TEMPLATE = '''
                     <input type="text" name="search" value="{{ search or '' }}" placeholder="Search SQL...">
                     <button type="submit">Search</button>
                     <button type="submit" formaction="/timeline" style="background: #28a745;">Timeline</button>
-                    <a href="/insights" style="background: #6f42c1;">Insights</a>
+                    <button type="submit" formaction="/insights" style="background: #6f42c1;">Insights</button>
                     {% if search %}<a href="/">Clear</a>{% endif %}
                 </form>
 
@@ -346,7 +346,7 @@ TIMELINE_TEMPLATE = '''
 
         <div class="nav">
             <a href="/">← Browser</a>
-            <a href="/insights">Insights</a>
+            <a href="/insights{% if search %}?search={{ search }}{% endif %}">Insights</a>
             <div class="spacer"></div>
             <form action="/timeline" method="get" style="display: flex; gap: 5px;">
                 <input type="text" name="search" value="{{ search or '' }}" placeholder="Search SQL content...">
@@ -466,22 +466,29 @@ INSIGHTS_TEMPLATE = '''
         <h1>SQL Insights</h1>
         <p class="subtitle">
             {{ total_scripts }} SQL scripts
+            {% if search %} matching "<strong>{{ search }}</strong>"{% endif %}
             {% if space_filter %} in <strong>{{ space_filter }}</strong>{% else %} across {{ total_spaces }} spaces{% endif %}
             {% if type_filter %} | Type: <strong>{{ type_filter }}</strong>{% endif %}
             {% if source_filter %} | Source: <strong>{{ source_filter }}</strong>{% endif %}
             {% if size_filter %} | Size: <strong>{{ size_filter }}</strong>{% endif %}
             {% if nesting_filter %} | Nesting: <strong>{{ nesting_filter }}</strong>{% endif %}
-            {% if space_filter or type_filter or source_filter or size_filter or nesting_filter %}
+            {% if search or space_filter or type_filter or source_filter or size_filter or nesting_filter %}
                 | <a href="/insights">Clear all filters</a>
             {% endif %}
         </p>
 
         <div class="nav">
             <a href="/">← Browser</a>
-            <a href="/timeline">Timeline</a>
-            <a href="/insights" class="active">Insights</a>
+            <a href="/timeline{% if search %}?search={{ search }}{% endif %}">Timeline</a>
+            <a href="/insights{% if search %}?search={{ search }}{% endif %}" class="active">Insights</a>
             <div class="spacer"></div>
+            <form action="/insights" method="get" style="display: flex; gap: 5px; align-items: center;">
+                <input type="text" name="search" value="{{ search or '' }}" placeholder="Search SQL..." style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; width: 200px;">
+                <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Search</button>
+                {% if search %}<a href="/insights" style="padding: 8px 16px; background: #6c757d; color: white; text-decoration: none; border-radius: 4px;">Clear</a>{% endif %}
+            </form>
             <form action="/insights" method="get" style="display: flex; gap: 5px;">
+                {% if search %}<input type="hidden" name="search" value="{{ search }}">{% endif %}
                 <select name="space" onchange="this.form.submit()" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
                     <option value="">All Spaces</option>
                     {% for space in all_spaces %}
@@ -490,7 +497,7 @@ INSIGHTS_TEMPLATE = '''
                 </select>
             </form>
             {% if type_filter or source_filter or size_filter or nesting_filter %}
-            <a href="/insights{% if space_filter %}?space={{ space_filter }}{% endif %}" style="background: #dc3545;">Clear dimension filters</a>
+            <a href="/insights?{% if search %}search={{ search }}&{% endif %}{% if space_filter %}space={{ space_filter }}{% endif %}" style="background: #dc3545; padding: 8px 16px; color: white; text-decoration: none; border-radius: 4px;">Clear dimension filters</a>
             {% endif %}
         </div>
 
@@ -540,7 +547,7 @@ INSIGHTS_TEMPLATE = '''
                 <table>
                     <tr><th>Type</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
                     {% for sql_type, count in sql_types %}
-                    <tr class="clickable" onclick="window.location='/insights?type={{ sql_type }}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
+                    <tr class="clickable" onclick="window.location='/insights?type={{ sql_type }}{% if search %}&search={{ search }}{% endif %}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
                         <td><span class="drill-link">{{ sql_type }}</span></td>
                         <td>{{ count }}</td>
                         <td class="bar-cell">
@@ -578,7 +585,7 @@ INSIGHTS_TEMPLATE = '''
                 <table>
                     <tr><th>Source</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
                     {% for source, count in sources %}
-                    <tr class="clickable" onclick="window.location='/insights?source={{ source }}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
+                    <tr class="clickable" onclick="window.location='/insights?source={{ source }}{% if search %}&search={{ search }}{% endif %}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
                         <td><span class="drill-link">{{ source }}</span></td>
                         <td>{{ count }}</td>
                         <td class="bar-cell">
@@ -597,7 +604,7 @@ INSIGHTS_TEMPLATE = '''
                 <table>
                     <tr><th>Size</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
                     {% for bucket, count in size_distribution %}
-                    <tr class="clickable" onclick="window.location='/insights?size={{ bucket }}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
+                    <tr class="clickable" onclick="window.location='/insights?size={{ bucket }}{% if search %}&search={{ search }}{% endif %}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
                         <td><span class="drill-link">{{ bucket }}</span></td>
                         <td>{{ count }}</td>
                         <td class="bar-cell">
@@ -616,7 +623,7 @@ INSIGHTS_TEMPLATE = '''
                 <table>
                     <tr><th>Depth</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
                     {% for bucket, count in nesting_distribution %}
-                    <tr class="clickable" onclick="window.location='/insights?nesting={{ bucket }}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
+                    <tr class="clickable" onclick="window.location='/insights?nesting={{ bucket }}{% if search %}&search={{ search }}{% endif %}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
                         <td><span class="drill-link">{{ bucket }}</span></td>
                         <td>{{ count }}</td>
                         <td class="bar-cell">
@@ -656,6 +663,22 @@ INSIGHTS_TEMPLATE = '''
                         <td>{{ script.space_key }}</td>
                         <td>{{ script.keywords }}</td>
                         <td>{{ script.line_count }}</td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
+
+            <!-- Top Pages by Script Count -->
+            <div class="card">
+                <h3>Top 15 Pages by Script Count</h3>
+                <table>
+                    <tr><th>Page</th><th>Space</th><th>Scripts</th><th>Lines</th></tr>
+                    {% for page in top_pages %}
+                    <tr class="clickable" onclick="window.location='/?page={{ page.page_id }}{% if search %}&search={{ search }}{% endif %}'">
+                        <td><a class="table-link" href="/?page={{ page.page_id }}{% if search %}&search={{ search }}{% endif %}">{{ page.page_title[:35] }}{% if page.page_title|length > 35 %}...{% endif %}</a></td>
+                        <td>{{ page.space_key }}</td>
+                        <td>{{ page.script_count }}</td>
+                        <td>{{ page.total_lines }}</td>
                     </tr>
                     {% endfor %}
                 </table>
@@ -1124,6 +1147,7 @@ def insights():
     db = get_db()
 
     # Get filter parameters
+    search = request.args.get('search', '').strip() or None
     space_filter = request.args.get('space', '').strip() or None
     type_filter = request.args.get('type', '').strip() or None
     source_filter = request.args.get('source', '').strip() or None
@@ -1138,6 +1162,9 @@ def insights():
     def build_where_clause(extra_conditions=None):
         conditions = []
         params = []
+        if search:
+            conditions.append('sql_code LIKE ?')
+            params.append(f'%{search}%')
         if space_filter:
             conditions.append('space_key = ?')
             params.append(space_filter)
@@ -1267,6 +1294,18 @@ def insights():
                      'line_count': row['line_count'], 'nesting': row['nesting_depth'],
                      'keywords': row['keyword_count']} for row in most_complex_rows]
 
+    # Top pages by script count
+    top_pages_rows = db.execute(f'''
+        SELECT page_id, page_title, space_key, COUNT(*) as cnt, SUM(line_count) as total_lines
+        FROM sql_scripts {where}
+        GROUP BY page_id
+        ORDER BY cnt DESC
+        LIMIT 15
+    ''', params).fetchall()
+    top_pages = [{'page_id': row['page_id'], 'page_title': row['page_title'] or 'Untitled',
+                  'space_key': row['space_key'], 'script_count': row['cnt'],
+                  'total_lines': row['total_lines']} for row in top_pages_rows]
+
     # For filtered results, get script list
     filtered_scripts = []
     if type_filter or source_filter or size_filter or nesting_filter:
@@ -1348,7 +1387,9 @@ def insights():
         size_distribution=size_distribution,
         nesting_distribution=nesting_distribution,
         top_spaces=top_spaces,
+        top_pages=top_pages,
         most_complex=most_complex,
+        search=search,
         space_filter=space_filter,
         type_filter=type_filter,
         source_filter=source_filter,
