@@ -685,7 +685,7 @@ INSIGHTS_TEMPLATE = '''
             </div>
         </div>
 
-        {% if type_filter or source_filter or size_filter or nesting_filter %}
+        {% if search or type_filter or source_filter or size_filter or nesting_filter %}
         <!-- Filtered Scripts List -->
         <h2>Matching Scripts ({{ total_scripts }} results)</h2>
         <div class="card">
@@ -1308,15 +1308,15 @@ def insights():
 
     # For filtered results, get script list
     filtered_scripts = []
-    if type_filter or source_filter or size_filter or nesting_filter:
+    if search or type_filter or source_filter or size_filter or nesting_filter:
         scripts_rows = db.execute(f'''
-            SELECT id, space_key, page_title, line_count, nesting_depth, keyword_count, sql_type, sql_source
+            SELECT id, space_key, page_id, page_title, line_count, nesting_depth, keyword_count, sql_type, sql_source
             FROM sql_scripts {where}
             ORDER BY id
             LIMIT 50
         ''', params).fetchall()
         filtered_scripts = [{'id': row['id'], 'space_key': row['space_key'],
-                            'page_title': row['page_title'] or 'Untitled',
+                            'page_id': row['page_id'], 'page_title': row['page_title'] or 'Untitled',
                             'line_count': row['line_count'], 'nesting': row['nesting_depth'],
                             'keywords': row['keyword_count'], 'sql_type': row['sql_type'],
                             'source': row['sql_source']} for row in scripts_rows]
