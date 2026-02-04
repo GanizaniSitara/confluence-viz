@@ -13,6 +13,7 @@ import sqlite3
 import argparse
 import os
 import re
+import json
 from datetime import datetime
 from collections import Counter, defaultdict
 from flask import Flask, render_template_string, request, g
@@ -20,6 +21,28 @@ from flask import Flask, render_template_string, request, g
 app = Flask(__name__)
 DATABASE = None
 CONFLUENCE_BASE_URL = None
+SUGGESTION_EMAIL = None
+DB_LAST_MODIFIED = None
+
+def load_config():
+    """Load configuration from config.json if it exists."""
+    global SUGGESTION_EMAIL
+    config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                SUGGESTION_EMAIL = config.get('suggestion_email')
+        except Exception:
+            pass
+
+def get_db_last_modified():
+    """Get the last modified timestamp of the database file."""
+    global DB_LAST_MODIFIED
+    if DATABASE and os.path.exists(DATABASE):
+        mtime = os.path.getmtime(DATABASE)
+        DB_LAST_MODIFIED = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M')
+    return DB_LAST_MODIFIED
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
@@ -157,7 +180,20 @@ HTML_TEMPLATE = '''
     <!-- Main content -->
     <div class="main">
         <div class="container">
-            <h1>Confluence SQL Script Browser</h1>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h1 style="margin: 0;">Confluence SQL Script Browser</h1>
+                <div style="display: flex; gap: 15px; align-items: center;">
+                    {% if db_last_modified %}
+                    <span style="color: #666; font-size: 13px;">Last rebuild: {{ db_last_modified }}</span>
+                    {% endif %}
+                    {% if suggestion_email %}
+                    <a href="mailto:{{ suggestion_email }}?subject=SQL%20Browser%20Suggestion"
+                       style="padding: 8px 16px; background: #17a2b8; color: white; text-decoration: none; border-radius: 4px; font-size: 14px;">
+                        ✉ Submit Suggestion
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
 
             <div class="nav">
                 <a href="/?index=0" {% if index == 0 %}class="disabled"{% endif %}>First</a>
@@ -904,7 +940,9 @@ def browse():
                     page_filter=script['page_id'],
                     current_id=script['id'],
                     tree=tree,
-                    confluence_url=CONFLUENCE_BASE_URL
+                    confluence_url=CONFLUENCE_BASE_URL,
+                    suggestion_email=SUGGESTION_EMAIL,
+                    db_last_modified=get_db_last_modified()
                 )
         except ValueError:
             pass
@@ -940,7 +978,9 @@ def browse():
         page_filter=page_filter,
         current_id=current_id,
         tree=tree,
-        confluence_url=CONFLUENCE_BASE_URL
+        confluence_url=CONFLUENCE_BASE_URL,
+        suggestion_email=SUGGESTION_EMAIL,
+        db_last_modified=get_db_last_modified()
     )
 
 
@@ -1458,6 +1498,8 @@ def insights():
 
 def main():
     global DATABASE, CONFLUENCE_BASE_URL
+
+    load_config()
 
     parser = argparse.ArgumentParser(
         description='Web-based SQL script browser',
