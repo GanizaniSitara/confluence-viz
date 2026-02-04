@@ -189,10 +189,7 @@ HTML_TEMPLATE = '''
                     <span style="color: #666; font-size: 13px;">Last rebuild: {{ db_last_modified }}</span>
                     {% endif %}
                     {% if suggestion_email %}
-                    <button onclick="window.location.href='mailto:{{ suggestion_email }}?subject=SQL%20Browser%20Suggestion'"
-                       style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; font-size: 14px; cursor: pointer;">
-                        ✉ Submit Suggestion
-                    </button>
+                    <span style="color: #666; font-size: 13px;">Suggestions to: {{ suggestion_email }}</span>
                     {% endif %}
                 </div>
             </div>
