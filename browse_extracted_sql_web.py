@@ -689,9 +689,19 @@ INSIGHTS_TEMPLATE = '''
         <!-- Filtered Scripts List -->
         <h2>Matching Scripts ({{ total_scripts }} results)</h2>
         <div class="card">
+            {% if total_scripts > page_size %}
+            <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 15px; flex-wrap: wrap;">
+                <a href="/insights?{{ filter_params }}&page=1" style="padding: 6px 12px; background: {% if scripts_page == 1 %}#ccc{% else %}#007bff{% endif %}; color: white; text-decoration: none; border-radius: 4px;">First</a>
+                <a href="/insights?{{ filter_params }}&page={{ scripts_page - 1 }}" style="padding: 6px 12px; background: {% if scripts_page == 1 %}#ccc{% else %}#007bff{% endif %}; color: white; text-decoration: none; border-radius: 4px;">Prev</a>
+                <span style="color: #666;">Page {{ scripts_page }} of {{ total_pages }}</span>
+                <a href="/insights?{{ filter_params }}&page={{ scripts_page + 1 }}" style="padding: 6px 12px; background: {% if scripts_page >= total_pages %}#ccc{% else %}#007bff{% endif %}; color: white; text-decoration: none; border-radius: 4px;">Next</a>
+                <a href="/insights?{{ filter_params }}&page={{ total_pages }}" style="padding: 6px 12px; background: {% if scripts_page >= total_pages %}#ccc{% else %}#007bff{% endif %}; color: white; text-decoration: none; border-radius: 4px;">Last</a>
+                <span style="color: #888; font-size: 13px;">(showing {{ (scripts_page - 1) * page_size + 1 }}-{{ [scripts_page * page_size, total_scripts]|min }} of {{ total_scripts }})</span>
+            </div>
+            {% endif %}
             <table>
                 <tr><th>ID</th><th>Page</th><th>Space</th><th>Type</th><th>Source</th><th>Lines</th><th>Nesting</th></tr>
-                {% for script in filtered_scripts[:50] %}
+                {% for script in filtered_scripts %}
                 <tr class="clickable" onclick="window.location='/?id={{ script.id }}'">
                     <td>{{ script.id }}</td>
                     <td><a class="table-link" href="/?id={{ script.id }}">{{ script.page_title[:30] }}{% if script.page_title|length > 30 %}...{% endif %}</a></td>
@@ -702,10 +712,16 @@ INSIGHTS_TEMPLATE = '''
                     <td>{{ script.nesting }}</td>
                 </tr>
                 {% endfor %}
-                {% if total_scripts > 50 %}
-                <tr><td colspan="7" style="text-align: center; color: #666;">... and {{ total_scripts - 50 }} more scripts</td></tr>
-                {% endif %}
             </table>
+            {% if total_scripts > page_size %}
+            <div style="display: flex; gap: 10px; align-items: center; margin-top: 15px; flex-wrap: wrap;">
+                <a href="/insights?{{ filter_params }}&page=1" style="padding: 6px 12px; background: {% if scripts_page == 1 %}#ccc{% else %}#007bff{% endif %}; color: white; text-decoration: none; border-radius: 4px;">First</a>
+                <a href="/insights?{{ filter_params }}&page={{ scripts_page - 1 }}" style="padding: 6px 12px; background: {% if scripts_page == 1 %}#ccc{% else %}#007bff{% endif %}; color: white; text-decoration: none; border-radius: 4px;">Prev</a>
+                <span style="color: #666;">Page {{ scripts_page }} of {{ total_pages }}</span>
+                <a href="/insights?{{ filter_params }}&page={{ scripts_page + 1 }}" style="padding: 6px 12px; background: {% if scripts_page >= total_pages %}#ccc{% else %}#007bff{% endif %}; color: white; text-decoration: none; border-radius: 4px;">Next</a>
+                <a href="/insights?{{ filter_params }}&page={{ total_pages }}" style="padding: 6px 12px; background: {% if scripts_page >= total_pages %}#ccc{% else %}#007bff{% endif %}; color: white; text-decoration: none; border-radius: 4px;">Last</a>
+            </div>
+            {% endif %}
         </div>
         {% endif %}
     </div>
@@ -1154,6 +1170,13 @@ def insights():
     size_filter = request.args.get('size', '').strip() or None
     nesting_filter = request.args.get('nesting', '').strip() or None
 
+    # Pagination for scripts list
+    page_size = 50
+    try:
+        scripts_page = max(1, int(request.args.get('page', 1)))
+    except ValueError:
+        scripts_page = 1
+
     # Get list of all spaces for dropdown
     all_spaces_cursor = db.execute('SELECT DISTINCT space_key FROM sql_scripts ORDER BY space_key')
     all_spaces = [row['space_key'] for row in all_spaces_cursor]
@@ -1306,14 +1329,20 @@ def insights():
                   'space_key': row['space_key'], 'script_count': row['cnt'],
                   'total_lines': row['total_lines']} for row in top_pages_rows]
 
-    # For filtered results, get script list
+    # For filtered results, get script list with pagination
     filtered_scripts = []
+    total_pages = 1
     if search or type_filter or source_filter or size_filter or nesting_filter:
+        # Calculate total pages
+        total_pages = max(1, (total_scripts + page_size - 1) // page_size)
+        scripts_page = min(scripts_page, total_pages)  # Clamp to valid range
+        offset = (scripts_page - 1) * page_size
+
         scripts_rows = db.execute(f'''
             SELECT id, space_key, page_id, page_title, line_count, nesting_depth, keyword_count, sql_type, sql_source
             FROM sql_scripts {where}
             ORDER BY id
-            LIMIT 50
+            LIMIT {page_size} OFFSET {offset}
         ''', params).fetchall()
         filtered_scripts = [{'id': row['id'], 'space_key': row['space_key'],
                             'page_id': row['page_id'], 'page_title': row['page_title'] or 'Untitled',
@@ -1375,6 +1404,22 @@ def insights():
         unique_tables = len(all_tables)
         unique_schemas = len(all_schemas)
 
+    # Build filter params string for pagination links
+    filter_parts = []
+    if search:
+        filter_parts.append(f'search={search}')
+    if space_filter:
+        filter_parts.append(f'space={space_filter}')
+    if type_filter:
+        filter_parts.append(f'type={type_filter}')
+    if source_filter:
+        filter_parts.append(f'source={source_filter}')
+    if size_filter:
+        filter_parts.append(f'size={size_filter}')
+    if nesting_filter:
+        filter_parts.append(f'nesting={nesting_filter}')
+    filter_params = '&'.join(filter_parts)
+
     return render_template_string(
         INSIGHTS_TEMPLATE,
         total_scripts=total_scripts,
@@ -1400,7 +1445,11 @@ def insights():
         size_filter=size_filter,
         nesting_filter=nesting_filter,
         all_spaces=all_spaces,
-        filtered_scripts=filtered_scripts
+        filtered_scripts=filtered_scripts,
+        scripts_page=scripts_page,
+        total_pages=total_pages,
+        page_size=page_size,
+        filter_params=filter_params
     )
 
 
