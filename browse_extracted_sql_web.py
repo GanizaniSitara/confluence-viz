@@ -143,7 +143,7 @@ HTML_TEMPLATE = '''
                 <div class="page-scripts" style="display: {% if page.page_id == page_filter %}block{% else %}none{% endif %};">
                     {% for script in page.scripts %}
                     <div class="script-item {% if script.id == current_id %}active{% endif %}"
-                         onclick="window.location='/?id={{ script.id }}'">
+                         onclick="window.location='/?id={{ script.id }}{% if search %}&search={{ search }}{% endif %}'">
                         #{{ script.id }} - {{ script.line_count }} lines
                     </div>
                     {% endfor %}
@@ -256,13 +256,16 @@ HTML_TEMPLATE = '''
     </div>
 
     <script>
+        var currentSearch = '{{ search or '' }}';
         function toggleSpace(el) {
             const pages = el.nextElementSibling;
             pages.classList.toggle('open');
         }
         function togglePage(el, spaceKey, pageId) {
-            // Navigate to filter by page
-            window.location = '/?page=' + pageId;
+            // Navigate to filter by page, preserving search
+            var url = '/?page=' + pageId;
+            if (currentSearch) url += '&search=' + encodeURIComponent(currentSearch);
+            window.location = url;
         }
     </script>
 </body>
