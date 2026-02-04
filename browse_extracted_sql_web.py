@@ -16,6 +16,7 @@ import re
 import configparser
 from datetime import datetime
 from collections import Counter, defaultdict
+from urllib.parse import quote
 from flask import Flask, render_template_string, request, g
 
 app = Flask(__name__)
@@ -537,7 +538,7 @@ INSIGHTS_TEMPLATE = '''
                 </select>
             </form>
             {% if type_filter or source_filter or size_filter or nesting_filter %}
-            <a href="/insights?{% if search %}search={{ search }}&{% endif %}{% if space_filter %}space={{ space_filter }}{% endif %}" style="background: #dc3545; padding: 8px 16px; color: white; text-decoration: none; border-radius: 4px;">Clear dimension filters</a>
+            <a href="/insights?{% if search_encoded %}search={{ search_encoded }}&{% endif %}{% if space_filter_encoded %}space={{ space_filter_encoded }}{% endif %}" style="background: #dc3545; padding: 8px 16px; color: white; text-decoration: none; border-radius: 4px;">Clear dimension filters</a>
             {% endif %}
         </div>
 
@@ -587,7 +588,7 @@ INSIGHTS_TEMPLATE = '''
                 <table>
                     <tr><th>Type</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
                     {% for sql_type, count in sql_types %}
-                    <tr class="clickable" onclick="window.location='/insights?type={{ sql_type }}{% if search %}&search={{ search }}{% endif %}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
+                    <tr class="clickable" onclick="window.location='/insights?type={{ sql_type }}{% if search_encoded %}&search={{ search_encoded }}{% endif %}{% if space_filter_encoded %}&space={{ space_filter_encoded }}{% endif %}'">
                         <td><span class="drill-link">{{ sql_type }}</span></td>
                         <td>{{ count }}</td>
                         <td class="bar-cell">
@@ -625,7 +626,7 @@ INSIGHTS_TEMPLATE = '''
                 <table>
                     <tr><th>Source</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
                     {% for source, count in sources %}
-                    <tr class="clickable" onclick="window.location='/insights?source={{ source }}{% if search %}&search={{ search }}{% endif %}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
+                    <tr class="clickable" onclick="window.location='/insights?source={{ source }}{% if search_encoded %}&search={{ search_encoded }}{% endif %}{% if space_filter_encoded %}&space={{ space_filter_encoded }}{% endif %}'">
                         <td><span class="drill-link">{{ source }}</span></td>
                         <td>{{ count }}</td>
                         <td class="bar-cell">
@@ -644,7 +645,7 @@ INSIGHTS_TEMPLATE = '''
                 <table>
                     <tr><th>Size</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
                     {% for bucket, count in size_distribution %}
-                    <tr class="clickable" onclick="window.location='/insights?size={{ bucket }}{% if search %}&search={{ search }}{% endif %}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
+                    <tr class="clickable" onclick="window.location='/insights?size={{ bucket }}{% if search_encoded %}&search={{ search_encoded }}{% endif %}{% if space_filter_encoded %}&space={{ space_filter_encoded }}{% endif %}'">
                         <td><span class="drill-link">{{ bucket }}</span></td>
                         <td>{{ count }}</td>
                         <td class="bar-cell">
@@ -663,7 +664,7 @@ INSIGHTS_TEMPLATE = '''
                 <table>
                     <tr><th>Depth</th><th>Count</th><th class="bar-cell">Distribution</th></tr>
                     {% for bucket, count in nesting_distribution %}
-                    <tr class="clickable" onclick="window.location='/insights?nesting={{ bucket }}{% if search %}&search={{ search }}{% endif %}{% if space_filter %}&space={{ space_filter }}{% endif %}'">
+                    <tr class="clickable" onclick="window.location='/insights?nesting={{ bucket }}{% if search_encoded %}&search={{ search_encoded }}{% endif %}{% if space_filter_encoded %}&space={{ space_filter_encoded }}{% endif %}'">
                         <td><span class="drill-link">{{ bucket }}</span></td>
                         <td>{{ count }}</td>
                         <td class="bar-cell">
@@ -1448,20 +1449,20 @@ def insights():
         unique_tables = len(all_tables)
         unique_schemas = len(all_schemas)
 
-    # Build filter params string for pagination links
+    # Build filter params string for pagination links (URL-encoded)
     filter_parts = []
     if search:
-        filter_parts.append(f'search={search}')
+        filter_parts.append(f'search={quote(search, safe="")}')
     if space_filter:
-        filter_parts.append(f'space={space_filter}')
+        filter_parts.append(f'space={quote(space_filter, safe="")}')
     if type_filter:
-        filter_parts.append(f'type={type_filter}')
+        filter_parts.append(f'type={quote(type_filter, safe="")}')
     if source_filter:
-        filter_parts.append(f'source={source_filter}')
+        filter_parts.append(f'source={quote(source_filter, safe="")}')
     if size_filter:
-        filter_parts.append(f'size={size_filter}')
+        filter_parts.append(f'size={quote(size_filter, safe="")}')
     if nesting_filter:
-        filter_parts.append(f'nesting={nesting_filter}')
+        filter_parts.append(f'nesting={quote(nesting_filter, safe="")}')
     filter_params = '&'.join(filter_parts)
 
     return render_template_string(
@@ -1483,7 +1484,9 @@ def insights():
         top_pages=top_pages,
         most_complex=most_complex,
         search=search,
+        search_encoded=quote(search, safe='') if search else '',
         space_filter=space_filter,
+        space_filter_encoded=quote(space_filter, safe='') if space_filter else '',
         type_filter=type_filter,
         source_filter=source_filter,
         size_filter=size_filter,
