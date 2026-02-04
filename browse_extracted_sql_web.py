@@ -13,7 +13,7 @@ import sqlite3
 import argparse
 import os
 import re
-import json
+import configparser
 from datetime import datetime
 from collections import Counter, defaultdict
 from flask import Flask, render_template_string, request, g
@@ -25,14 +25,15 @@ SUGGESTION_EMAIL = None
 DB_LAST_MODIFIED = None
 
 def load_config():
-    """Load configuration from config.json if it exists."""
+    """Load configuration from settings.ini if it exists."""
     global SUGGESTION_EMAIL
-    config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+    config_path = os.path.join(os.path.dirname(__file__), 'settings.ini')
     if os.path.exists(config_path):
         try:
-            with open(config_path, 'r') as f:
-                config = json.load(f)
-                SUGGESTION_EMAIL = config.get('suggestion_email')
+            config = configparser.ConfigParser()
+            config.read(config_path)
+            if config.has_option('sql_browser', 'suggestion_email'):
+                SUGGESTION_EMAIL = config.get('sql_browser', 'suggestion_email')
         except Exception:
             pass
 
