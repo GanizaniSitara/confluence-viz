@@ -369,14 +369,14 @@ TIMELINE_TEMPLATE = '''
                 </tr>
                 {% for space in spaces %}
                 <tr>
-                    <td class="space-name"><a href="/?space={{ space.space_key }}">{{ space.space_key }}</a></td>
+                    <td class="space-name"><a href="/?space={{ space.space_key }}{% if search %}&search={{ search }}{% endif %}">{{ space.space_key }}</a></td>
                     <td class="script-count">{{ space.script_count }}</td>
                     <td class="timeline-cell">
                         <div class="timeline">
                             {% for event in space.events %}
                             <div class="event" style="left: {{ event.position }}%;"
                                  title="{{ event.page_title }} ({{ event.date }})"
-                                 onclick="window.location='/?id={{ event.id }}'"></div>
+                                 onclick="window.location='/?id={{ event.id }}{% if search %}&search={{ search }}{% endif %}'"></div>
                             {% endfor %}
                         </div>
                         <div class="year-markers">
