@@ -189,6 +189,12 @@ This project helps organizations understand how their Confluence instance is bei
 | Debug pickle structure | `diagnose_pickle_bodies.py` |
 | Inspect pickle format | `inspect_pickle_format.py` |
 
+### Utilities
+| Goal | Script |
+|------|--------|
+| Delete a page by URL | `delete_confluence_page.py` |
+| Find empty/deletable pages | `confluence_empty_pages_checker.py` |
+
 ### SQL Script Extraction & Browsing
 
 Extract SQL scripts from Confluence pages and browse them:
