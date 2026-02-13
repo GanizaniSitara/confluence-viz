@@ -1,4 +1,4 @@
-# description: Deletes a Confluence page given its URL.
+# description: Deletes a Confluence page given its URL or page ID.
 
 import argparse
 import sys
@@ -129,22 +129,36 @@ def delete_page(session, page_id):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Delete a Confluence page given its URL.",
-        epilog="Example: python delete_confluence_page.py https://confluence.example.com/pages/12345/My-Page"
+        description="Delete a Confluence page given its URL or page ID.",
+        epilog="""Examples:
+  python delete_confluence_page.py https://confluence.example.com/pages/12345/My-Page
+  python delete_confluence_page.py --id 12345
+  python delete_confluence_page.py --id 12345 -y"""
     )
-    parser.add_argument("url", help="The Confluence page URL to delete")
+    parser.add_argument("url", nargs='?', help="The Confluence page URL to delete")
+    parser.add_argument("--id", dest="page_id", help="The Confluence page ID to delete")
     parser.add_argument("-y", "--yes", action="store_true",
                         help="Skip confirmation prompt")
 
     args = parser.parse_args()
 
-    # Extract page ID from URL
-    page_id = extract_page_id(args.url)
-    if not page_id:
-        print(f"Error: Could not extract page ID from URL: {args.url}")
-        print("Supported URL formats:")
-        print("  - https://domain/wiki/spaces/SPACE/pages/12345/Page+Title")
-        print("  - https://domain/pages/viewpage.action?pageId=12345")
+    # Get page ID from --id or extract from URL
+    if args.page_id:
+        page_id = args.page_id
+        if not page_id.isdigit():
+            print(f"Error: Page ID must be numeric: {page_id}")
+            sys.exit(1)
+    elif args.url:
+        page_id = extract_page_id(args.url)
+        if not page_id:
+            print(f"Error: Could not extract page ID from URL: {args.url}")
+            print("Supported URL formats:")
+            print("  - https://domain/wiki/spaces/SPACE/pages/12345/Page+Title")
+            print("  - https://domain/pages/viewpage.action?pageId=12345")
+            sys.exit(1)
+    else:
+        print("Error: Either a URL or --id must be provided.")
+        parser.print_help()
         sys.exit(1)
 
     print(f"Confluence URL: {CONFLUENCE_URL}")
