@@ -19,20 +19,20 @@ failed=0
 
 check_file() {
     if [ -f "$1" ]; then
-        echo -e "${GREEN}✓${NC} $1"
+        echo -e "${GREEN}[PASS]${NC} $1"
         ((passed++))
     else
-        echo -e "${RED}✗${NC} $1 (missing)"
+        echo -e "${RED}[FAIL]${NC} $1 (missing)"
         ((failed++))
     fi
 }
 
 check_dir() {
     if [ -d "$1" ]; then
-        echo -e "${GREEN}✓${NC} $1/"
+        echo -e "${GREEN}[PASS]${NC} $1/"
         ((passed++))
     else
-        echo -e "${RED}✗${NC} $1/ (missing)"
+        echo -e "${RED}[FAIL]${NC} $1/ (missing)"
         ((failed++))
     fi
 }
@@ -94,7 +94,7 @@ echo "======================================================================"
 echo ""
 
 if [ $failed -eq 0 ]; then
-    echo -e "${GREEN}✓ All files present!${NC}"
+    echo -e "${GREEN}[PASS] All files present!${NC}"
     echo ""
     echo "Next steps:"
     echo "1. Install dependencies: pip3 install --user fastmcp whoosh beautifulsoup4 lxml pydantic requests python-dateutil"
@@ -104,7 +104,7 @@ if [ $failed -eq 0 ]; then
     echo ""
     exit 0
 else
-    echo -e "${RED}✗ Some files are missing${NC}"
+    echo -e "${RED}[FAIL] Some files are missing${NC}"
     echo ""
     exit 1
 fi
