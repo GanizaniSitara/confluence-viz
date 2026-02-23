@@ -21,8 +21,13 @@ pip install fastmcp whoosh beautifulsoup4 lxml pydantic requests python-dateutil
 
 ## Configuration
 
-Edit `settings.ini` if your pickle directory is not `../temp/`:
+Copy the example settings file and edit if needed:
 
+```bash
+cp settings.example.ini settings.ini
+```
+
+Default configuration (works if pickles are in `../temp/`):
 ```ini
 [data]
 pickle_dir = ../temp
@@ -31,13 +36,15 @@ index_dir = ./whoosh_index
 
 ## Usage
 
-### 1. Build WHOOSH Index (first time only)
+### 1. Build WHOOSH Index
+
+Build the search index from your pickle files (takes 10-30 seconds):
 
 ```bash
-PYTHONPATH=$PWD/src python3 -m confluence_fast_mcp.server
+python3 build_index.py
 ```
 
-The server will automatically build the search index on first run (10-30 seconds). Subsequent starts are instant.
+This only needs to be done once, or when you update your pickle files.
 
 ### 2. Add to Claude Desktop
 
@@ -51,17 +58,17 @@ Add to your MCP settings file:
 {
   "mcpServers": {
     "confluence-fast": {
-      "command": "python3",
+      "command": "/usr/bin/python3",
       "args": ["-m", "confluence_fast_mcp.server"],
       "env": {
-        "PYTHONPATH": "/absolute/path/to/confluence-viz/confluence-fast-mcp/src"
+        "PYTHONPATH": "/home/user/git/confluence-viz/confluence-fast-mcp/src"
       }
     }
   }
 }
 ```
 
-Replace `/absolute/path/to/` with your actual path.
+Update the `PYTHONPATH` to match your actual installation path.
 
 ### 3. Restart Claude Desktop
 
@@ -85,6 +92,14 @@ title ~ "getting started"
 text ~ "api" AND space = DOCS
 ```
 
+## Rebuilding the Index
+
+If you update your pickle files, rebuild the index:
+
+```bash
+python3 build_index.py
+```
+
 ## Testing
 
 ```bash
@@ -101,9 +116,9 @@ python3 test_basic.py
 - Install dependencies: `pip install -r requirements.txt`
 - Ensure `PYTHONPATH` is set correctly
 
-**"Index building is slow"**
-- First-time indexing takes 10-30 seconds for large datasets
-- Subsequent starts use existing index (instant)
+**"Index not found" / "Index is empty"**
+- Run `python3 build_index.py` to create the search index
+- This must be done before starting the server
 
 ## Performance
 
