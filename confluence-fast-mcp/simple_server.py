@@ -282,8 +282,10 @@ def main():
     # Check if running in HTTP mode
     if len(sys.argv) > 1 and sys.argv[1] == "--http":
         port = int(sys.argv[2]) if len(sys.argv) > 2 else 8070
-        logger.info(f"Starting Simple FastMCP server in HTTP mode on 0.0.0.0:{port}...")
-        mcp.run(transport="sse", sse_params={"host": "0.0.0.0", "port": port})
+        host = "0.0.0.0"
+        logger.info(f"Starting Simple FastMCP server in HTTP mode on {host}:{port}...")
+        logger.info("Note: If server binds to 127.0.0.1, update fastmcp: pip install --upgrade fastmcp")
+        mcp.run(transport="sse", host=host, port=port)
     else:
         logger.info("Starting Simple FastMCP server in stdio mode...")
         mcp.run(transport="stdio")
