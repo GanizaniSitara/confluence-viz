@@ -28,41 +28,38 @@ Server starts on http://localhost:8070
 
 ### 4. Add to Claude Code
 
-**Command line** (easiest):
-```bash
-claude mcp add --transport http confluence http://localhost:8070/sse
-```
-
-**Or manually edit** `~/.claude/mcp_settings.json`:
+**Edit** `~/.claude/mcp_settings.json`:
 ```json
 {
   "mcpServers": {
     "confluence": {
+      "transport": "http",
       "url": "http://localhost:8070/sse"
     }
   }
 }
 ```
 
+The server runs independently. Restart Claude Code to connect.
+
 ### 5. Share with Team
 
-Team members connect to your server:
+Team members edit their `~/.claude/mcp_settings.json`:
 
-```bash
-# Replace YOUR_IP with your machine's IP (use `hostname -I` on Linux)
-claude mcp add --transport http confluence http://YOUR_IP:8070/sse
-```
-
-Or manually add to their `~/.claude/mcp_settings.json`:
 ```json
 {
   "mcpServers": {
     "confluence": {
+      "transport": "http",
       "url": "http://YOUR_IP:8070/sse"
     }
   }
 }
 ```
+
+Replace `YOUR_IP` with your machine's IP (use `hostname -I` on Linux).
+
+Restart Claude Code to connect.
 
 ## Load Testing
 

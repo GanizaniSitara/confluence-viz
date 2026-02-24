@@ -109,30 +109,26 @@ Update paths to match your actual installation.
 
 ### Add to Claude Code (CLI)
 
-Start the server in HTTP mode:
+**Step 1: Start the server** (runs independently, visible via ps):
 
 ```bash
 python3 simple_server.py --http 8070
 ```
 
-Then add to Claude Code:
+**Step 2: Configure Claude Code** - Edit `~/.claude/mcp_settings.json`:
 
-```bash
-claude mcp add --transport http confluence-simple http://localhost:8070/sse
-```
-
-Or manually edit `~/.claude/mcp_settings.json`:
 ```json
 {
   "mcpServers": {
     "confluence-simple": {
+      "transport": "http",
       "url": "http://localhost:8070/sse"
     }
   }
 }
 ```
 
-The Confluence tools will be available immediately.
+The server keeps running independently. Multiple Claude Code instances can connect to it.
 
 ### Restart
 
