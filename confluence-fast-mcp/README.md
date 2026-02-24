@@ -2,6 +2,10 @@
 
 FastMCP server for serving Confluence data from pickled files. 10-100x faster than live API calls.
 
+Supports 30+ concurrent users for hackathons and team collaboration.
+
+**For hackathons**: See [HACKATHON.md](HACKATHON.md) for quick setup guide.
+
 ## Prerequisites
 
 - Python 3.8+
@@ -38,10 +42,11 @@ index_dir = ./whoosh_index
 
 ### Option 1: Simple Server (Recommended for Getting Started)
 
-Just loads pickles into memory - instant startup, no indexing required:
+Just loads pickles into memory - instant startup, no indexing required.
 
+**Start server:**
 ```bash
-python3 simple_server.py
+python3 simple_server.py --http 8070
 ```
 
 Features:
@@ -49,6 +54,7 @@ Features:
 - In-memory title search
 - All basic MCP tools work
 - No WHOOSH dependency
+- Supports 30+ concurrent users
 
 ### Option 2: Full Server with WHOOSH Search
 
@@ -99,11 +105,38 @@ Add to your MCP settings file:
 }
 ```
 
-Update the `PYTHONPATH` to match your actual installation path.
+Update paths to match your actual installation.
 
-### 3. Restart Claude Desktop
+### Add to Claude Code (CLI)
 
-The Confluence tools will now be available in Claude.
+Start the server in HTTP mode:
+
+```bash
+python3 simple_server.py --http 8070
+```
+
+Then add to Claude Code:
+
+```bash
+claude mcp add confluence-simple http://localhost:8070/sse
+```
+
+Or manually edit `~/.claude/mcp_settings.json`:
+```json
+{
+  "mcpServers": {
+    "confluence-simple": {
+      "url": "http://localhost:8070/sse"
+    }
+  }
+}
+```
+
+The Confluence tools will be available immediately.
+
+### Restart
+
+Restart Claude Desktop or Claude Code for changes to take effect.
 
 ## Available MCP Tools
 
