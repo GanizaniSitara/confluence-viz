@@ -272,9 +272,18 @@ def initialize_server():
 
 def main():
     """Main entry point."""
+    import sys
+
     initialize_server()
-    logger.info("Starting Simple FastMCP server...")
-    mcp.run()
+
+    # Check if running in HTTP mode
+    if len(sys.argv) > 1 and sys.argv[1] == "--http":
+        port = int(sys.argv[2]) if len(sys.argv) > 2 else 8070
+        logger.info(f"Starting Simple FastMCP server in HTTP mode on port {port}...")
+        mcp.run(transport="sse", port=port)
+    else:
+        logger.info("Starting Simple FastMCP server in stdio mode...")
+        mcp.run()
 
 
 if __name__ == "__main__":
