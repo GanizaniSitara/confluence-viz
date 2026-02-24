@@ -107,24 +107,19 @@ Update paths to match your actual installation.
 
 ### Add to Claude Code (CLI)
 
-Claude Code requires HTTP transport. Start the server in HTTP mode:
+Start the server in HTTP mode:
 
 ```bash
-# Start server on default port 8070
 python3 simple_server.py --http
-
-# Or specify custom port
-python3 simple_server.py --http 8080
 ```
 
-Then edit `~/.claude/mcp_settings.json`:
+Then add to Claude Code:
 
 ```bash
-mkdir -p ~/.claude
-nano ~/.claude/mcp_settings.json
+claude mcp add confluence-simple http://localhost:8070/sse
 ```
 
-Add the HTTP connection:
+Or manually edit `~/.claude/mcp_settings.json`:
 ```json
 {
   "mcpServers": {
@@ -135,7 +130,7 @@ Add the HTTP connection:
 }
 ```
 
-Save and restart Claude Code. The Confluence tools will be available.
+The Confluence tools will be available immediately.
 
 ### Restart
 

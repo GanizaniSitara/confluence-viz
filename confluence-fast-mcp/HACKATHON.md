@@ -26,10 +26,34 @@ python3 simple_server.py --http 8070
 
 Server starts on http://localhost:8070
 
-### 4. Share with Team
+### 4. Add to Claude Code
 
-Give your team this config for `~/.claude/mcp_settings.json`:
+**Command line** (easiest):
+```bash
+claude mcp add confluence http://localhost:8070/sse
+```
 
+**Or manually edit** `~/.claude/mcp_settings.json`:
+```json
+{
+  "mcpServers": {
+    "confluence": {
+      "url": "http://localhost:8070/sse"
+    }
+  }
+}
+```
+
+### 5. Share with Team
+
+Team members connect to your server:
+
+```bash
+# Replace YOUR_IP with your machine's IP (use `hostname -I` on Linux)
+claude mcp add confluence http://YOUR_IP:8070/sse
+```
+
+Or manually add to their `~/.claude/mcp_settings.json`:
 ```json
 {
   "mcpServers": {
@@ -39,8 +63,6 @@ Give your team this config for `~/.claude/mcp_settings.json`:
   }
 }
 ```
-
-Replace `YOUR_IP` with your machine's IP address (use `hostname -I` on Linux).
 
 ## Load Testing
 
