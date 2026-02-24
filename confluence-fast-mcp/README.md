@@ -118,7 +118,7 @@ python3 simple_server.py --http 8070
 Then add to Claude Code:
 
 ```bash
-claude mcp add confluence-simple http://localhost:8070/sse
+claude mcp add --transport http confluence-simple http://localhost:8070/sse
 ```
 
 Or manually edit `~/.claude/mcp_settings.json`:
