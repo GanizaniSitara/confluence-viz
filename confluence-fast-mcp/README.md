@@ -20,7 +20,7 @@ pip install -r requirements.txt
 
 Or install dependencies individually:
 ```bash
-pip install fastmcp whoosh beautifulsoup4 lxml pydantic requests python-dateutil
+pip install fastmcp whoosh beautifulsoup4 lxml pydantic requests python3-dateutil
 ```
 
 ## Configuration
@@ -46,7 +46,7 @@ Just loads pickles into memory - instant startup, no indexing required.
 
 **Start server:**
 ```bash
-python simple_server.py --http 8070
+python3 simple_server.py --http 8070
 ```
 
 Features:
@@ -61,8 +61,8 @@ Features:
 Build search index first (for advanced full-text search):
 
 ```bash
-python build_index.py
-PYTHONPATH=$PWD/src python -m confluence_fast_mcp.server
+python3 build_index.py
+PYTHONPATH=$PWD/src python3 -m confluence_fast_mcp.server
 ```
 
 Features:
@@ -83,7 +83,7 @@ Add to your MCP settings file:
 {
   "mcpServers": {
     "confluence-simple": {
-      "command": "/usr/bin/python",
+      "command": "/usr/bin/python3",
       "args": ["/home/user/git/confluence-viz/confluence-fast-mcp/simple_server.py"]
     }
   }
@@ -95,7 +95,7 @@ Add to your MCP settings file:
 {
   "mcpServers": {
     "confluence-fast": {
-      "command": "/usr/bin/python",
+      "command": "/usr/bin/python3",
       "args": ["-m", "confluence_fast_mcp.server"],
       "env": {
         "PYTHONPATH": "/home/user/git/confluence-viz/confluence-fast-mcp/src"
@@ -112,7 +112,7 @@ Update paths to match your actual installation.
 **Step 1: Start the server** (runs independently, visible via ps):
 
 ```bash
-python simple_server.py --http 8070
+python3 simple_server.py --http 8070
 ```
 
 **Step 2: Configure Claude Code** - Edit `~/.claude/mcp_settings.json`:
@@ -157,13 +157,13 @@ text ~ "api" AND space = DOCS
 If you update your pickle files, rebuild the index:
 
 ```bash
-python build_index.py
+python3 build_index.py
 ```
 
 ## Testing
 
 ```bash
-python test_basic.py
+python3 test_basic.py
 ```
 
 ## Troubleshooting
@@ -177,7 +177,7 @@ python test_basic.py
 - Ensure `PYTHONPATH` is set correctly
 
 **"Index not found" / "Index is empty"**
-- Run `python build_index.py` to create the search index
+- Run `python3 build_index.py` to create the search index
 - This must be done before starting the server
 
 ## Performance
