@@ -36,17 +36,35 @@ index_dir = ./whoosh_index
 
 ## Usage
 
-### 1. Build WHOOSH Index
+### Option 1: Simple Server (Recommended for Getting Started)
 
-Build the search index from your pickle files (takes 10-30 seconds):
+Just loads pickles into memory - instant startup, no indexing required:
+
+```bash
+python3 simple_server.py
+```
+
+Features:
+- Instant startup (loads 80K pages in seconds)
+- In-memory title search
+- All basic MCP tools work
+- No WHOOSH dependency
+
+### Option 2: Full Server with WHOOSH Search
+
+Build search index first (for advanced full-text search):
 
 ```bash
 python3 build_index.py
+PYTHONPATH=$PWD/src python3 -m confluence_fast_mcp.server
 ```
 
-This only needs to be done once, or when you update your pickle files.
+Features:
+- Full-text search with CQL
+- Index build required (can take time for large datasets)
+- Advanced search capabilities
 
-### 2. Add to Claude Desktop
+### Add to Claude Desktop
 
 Add to your MCP settings file:
 
@@ -54,6 +72,19 @@ Add to your MCP settings file:
 **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
+**Simple server** (no indexing):
+```json
+{
+  "mcpServers": {
+    "confluence-simple": {
+      "command": "/usr/bin/python3",
+      "args": ["/home/user/git/confluence-viz/confluence-fast-mcp/simple_server.py"]
+    }
+  }
+}
+```
+
+**Full server** (with WHOOSH):
 ```json
 {
   "mcpServers": {
