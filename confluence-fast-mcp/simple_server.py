@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Simple in-memory FastMCP server for Confluence - no WHOOSH indexing required.
 
 Supports 30+ concurrent users for hackathons and team use.
@@ -282,8 +282,8 @@ def main():
     # Check if running in HTTP mode
     if len(sys.argv) > 1 and sys.argv[1] == "--http":
         port = int(sys.argv[2]) if len(sys.argv) > 2 else 8070
-        logger.info(f"Starting Simple FastMCP server in HTTP mode on port {port}...")
-        mcp.run(transport="sse", port=port)
+        logger.info(f"Starting Simple FastMCP server in HTTP mode on 0.0.0.0:{port}...")
+        mcp.run(transport="sse", host="0.0.0.0", port=port)
     else:
         logger.info("Starting Simple FastMCP server in stdio mode...")
         mcp.run(transport="stdio")
