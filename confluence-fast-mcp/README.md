@@ -99,11 +99,35 @@ Add to your MCP settings file:
 }
 ```
 
-Update the `PYTHONPATH` to match your actual installation path.
+Update paths to match your actual installation.
 
-### 3. Restart Claude Desktop
+### Add to Claude Code (CLI)
 
-The Confluence tools will now be available in Claude.
+Edit `~/.claude/mcp_settings.json`:
+
+```bash
+# Create/edit the config file
+mkdir -p ~/.claude
+nano ~/.claude/mcp_settings.json
+```
+
+Add the simple server:
+```json
+{
+  "mcpServers": {
+    "confluence-simple": {
+      "command": "/usr/bin/python3",
+      "args": ["/home/user/git/confluence-viz/confluence-fast-mcp/simple_server.py"]
+    }
+  }
+}
+```
+
+Save and restart Claude Code. The Confluence tools will be available.
+
+### Restart
+
+Restart Claude Desktop or Claude Code for changes to take effect.
 
 ## Available MCP Tools
 
