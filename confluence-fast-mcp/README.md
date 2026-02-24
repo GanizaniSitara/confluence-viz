@@ -42,10 +42,11 @@ index_dir = ./whoosh_index
 
 ### Option 1: Simple Server (Recommended for Getting Started)
 
-Just loads pickles into memory - instant startup, no indexing required:
+Just loads pickles into memory - instant startup, no indexing required.
 
+**Start server:**
 ```bash
-python3 simple_server.py
+python3 simple_server.py --http 8070
 ```
 
 Features:
@@ -53,6 +54,7 @@ Features:
 - In-memory title search
 - All basic MCP tools work
 - No WHOOSH dependency
+- Supports 30+ concurrent users
 
 ### Option 2: Full Server with WHOOSH Search
 
@@ -110,7 +112,7 @@ Update paths to match your actual installation.
 Start the server in HTTP mode:
 
 ```bash
-python3 simple_server.py --http
+python3 simple_server.py --http 8070
 ```
 
 Then add to Claude Code:
