@@ -2,6 +2,10 @@
 
 FastMCP server for serving Confluence data from pickled files. 10-100x faster than live API calls.
 
+Supports 30+ concurrent users for hackathons and team collaboration.
+
+**For hackathons**: See [HACKATHON.md](HACKATHON.md) for quick setup guide.
+
 ## Prerequisites
 
 - Python 3.8+
