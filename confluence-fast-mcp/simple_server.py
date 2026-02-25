@@ -12,20 +12,23 @@ from typing import Optional, Dict, Any, List
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-from fastmcp import FastMCP
-from confluence_fast_mcp.config import get_config
-from confluence_fast_mcp.pickle_loader import PickleLoader
-from confluence_fast_mcp.converters import html_to_adf
-
-# Setup logging
+# Setup logging BEFORE importing FastMCP to prevent it from reconfiguring
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Initialize FastMCP server
-mcp = FastMCP("confluence-simple")
+# Set environment variable to disable FastMCP logging configuration
+os.environ['FASTMCP_LOG_ENABLED'] = 'false'
+
+from fastmcp import FastMCP
+from confluence_fast_mcp.config import get_config
+from confluence_fast_mcp.pickle_loader import PickleLoader
+from confluence_fast_mcp.converters import html_to_adf
+
+# Initialize FastMCP server with logging disabled
+mcp = FastMCP("confluence-simple", log_enabled=False)
 
 # Global instances
 config = None
