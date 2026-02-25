@@ -290,11 +290,8 @@ def main():
         port = int(sys.argv[2]) if len(sys.argv) > 2 else 8070
         host = "0.0.0.0"
         logger.info(f"Starting Simple FastMCP server in HTTP mode on {host}:{port}...")
-
-        # Use sse_app() and uvicorn directly for better control
-        import uvicorn
-        app = mcp.sse_app()
-        uvicorn.run(app, host=host, port=port, log_level="info")
+        logger.info("Note: Requires FastMCP 3.0+ for proper SSE support")
+        mcp.run(transport="sse", host=host, port=port)
     else:
         logger.info("Starting Simple FastMCP server in stdio mode...")
         mcp.run(transport="stdio")
