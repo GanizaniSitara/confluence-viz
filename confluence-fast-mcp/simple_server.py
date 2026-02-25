@@ -1,10 +1,10 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Simple in-memory FastMCP server for Confluence - no WHOOSH indexing required.
 
 Supports 30+ concurrent users for hackathons and team use.
 """
 
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Simple in-memory FastMCP server for Confluence - no WHOOSH indexing required.
 
 Supports 30+ concurrent users for hackathons and team use.
