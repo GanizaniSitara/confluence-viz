@@ -4,6 +4,12 @@
 Supports 30+ concurrent users for hackathons and team use.
 """
 
+#!/usr/bin/env python3
+"""Simple in-memory FastMCP server for Confluence - no WHOOSH indexing required.
+
+Supports 30+ concurrent users for hackathons and team use.
+"""
+
 import sys
 import os
 import logging
@@ -12,23 +18,20 @@ from typing import Optional, Dict, Any, List
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-# Setup logging BEFORE importing FastMCP to prevent it from reconfiguring
+from fastmcp import FastMCP
+from confluence_fast_mcp.config import get_config
+from confluence_fast_mcp.pickle_loader import PickleLoader
+from confluence_fast_mcp.converters import html_to_adf
+
+# Setup logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Set environment variable to disable FastMCP logging configuration
-os.environ['FASTMCP_LOG_ENABLED'] = 'false'
-
-from fastmcp import FastMCP
-from confluence_fast_mcp.config import get_config
-from confluence_fast_mcp.pickle_loader import PickleLoader
-from confluence_fast_mcp.converters import html_to_adf
-
-# Initialize FastMCP server with logging disabled
-mcp = FastMCP("confluence-simple", log_enabled=False)
+# Initialize FastMCP server
+mcp = FastMCP("confluence-simple")
 
 # Global instances
 config = None
