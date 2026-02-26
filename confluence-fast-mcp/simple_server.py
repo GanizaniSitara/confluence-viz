@@ -19,16 +19,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Set environment variable to disable FastMCP logging configuration
-os.environ['FASTMCP_LOG_ENABLED'] = 'false'
+# Disable FastMCP's rich logging to avoid tracebacks_max_frames errors
+# Must be done before FastMCP() is called. Works on fastmcp 3.0+.
+import fastmcp as _fastmcp_mod
+_fastmcp_mod.settings.log_enabled = False
+_fastmcp_mod.settings.enable_rich_logging = False
 
 from fastmcp import FastMCP
 from confluence_fast_mcp.config import get_config
 from confluence_fast_mcp.pickle_loader import PickleLoader
 from confluence_fast_mcp.converters import html_to_adf
 
-# Initialize FastMCP server with logging disabled to fix tracebacks_max_frames error
-mcp = FastMCP("confluence-simple", log_enabled=False)
+# Initialize FastMCP server
+mcp = FastMCP("confluence-simple")
 
 # Global instances
 config = None
@@ -287,11 +290,7 @@ def main():
         port = int(sys.argv[2]) if len(sys.argv) > 2 else 8070
         host = "0.0.0.0"
         logger.info(f"Starting Simple FastMCP server in HTTP mode on {host}:{port}...")
-
-        # Use sse_app() and uvicorn directly for better control
-        import uvicorn
-        app = mcp.sse_app()
-        uvicorn.run(app, host=host, port=port, log_level="info")
+        mcp.run(transport="sse", host=host, port=port)
     else:
         logger.info("Starting Simple FastMCP server in stdio mode...")
         mcp.run(transport="stdio")

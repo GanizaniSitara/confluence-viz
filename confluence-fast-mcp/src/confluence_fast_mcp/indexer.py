@@ -4,27 +4,35 @@ import os
 import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-from whoosh import index
-from whoosh.fields import Schema, ID, TEXT, DATETIME, NUMERIC
-from whoosh.qparser import MultifieldParser
-from whoosh.writing import AsyncWriter
+try:
+    from whoosh import index
+    from whoosh.fields import Schema, ID, TEXT, DATETIME, NUMERIC
+    from whoosh.qparser import MultifieldParser
+    from whoosh.writing import AsyncWriter
+    WHOOSH_AVAILABLE = True
+except (ImportError, AttributeError) as e:
+    # whoosh 2.7.4 is incompatible with Python 3.10+ (collections.MutableMapping removed)
+    WHOOSH_AVAILABLE = False
+    _whoosh_import_error = e
 
 from .converters import html_to_text
 
 logger = logging.getLogger(__name__)
 
 
-# WHOOSH schema definition
-SCHEMA = Schema(
-    page_id=ID(stored=True, unique=True),
-    space_key=ID(stored=True),
-    space_name=TEXT(stored=True),
-    title=TEXT(stored=True, field_boost=2.0),
-    body_text=TEXT(stored=False),  # Not stored to save space
-    updated=DATETIME(stored=True),
-    parent_id=ID(stored=True),
-    level=NUMERIC(stored=True)
-)
+# WHOOSH schema definition - only created if whoosh is available
+SCHEMA = None
+if WHOOSH_AVAILABLE:
+    SCHEMA = Schema(
+        page_id=ID(stored=True, unique=True),
+        space_key=ID(stored=True),
+        space_name=TEXT(stored=True),
+        title=TEXT(stored=True, field_boost=2.0),
+        body_text=TEXT(stored=False),  # Not stored to save space
+        updated=DATETIME(stored=True),
+        parent_id=ID(stored=True),
+        level=NUMERIC(stored=True)
+    )
 
 
 class ConfluenceIndexer:
@@ -36,6 +44,11 @@ class ConfluenceIndexer:
         Args:
             index_dir: Directory to store WHOOSH index
         """
+        if not WHOOSH_AVAILABLE:
+            raise ImportError(
+                f"whoosh is not available: {_whoosh_import_error}. "
+                "On Python 3.10+, install whoosh3: pip install whoosh3"
+            )
         self.index_dir = index_dir
         self.ix = None
 
