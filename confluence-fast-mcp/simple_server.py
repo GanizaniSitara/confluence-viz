@@ -29,17 +29,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ── Ensure fastmcp's MemoryStore dependency (cachetools) is available ──
+# ── Ensure fastmcp's MemoryStore dependency (cachetools >=5.3) is available ──
 # fastmcp 3.0+ imports MemoryStore at module level which requires
-# py-key-value-aio[memory] (i.e. cachetools).  If the MCP host launched
-# us with a Python that doesn't have it, install it on the fly.
+# TLRUCache from cachetools (added in 5.3.0) via py-key-value-aio[memory].
+# If the MCP host's Python is missing it or has an old version, upgrade now.
 try:
-    import cachetools  # noqa: F401
-except ImportError:
+    from cachetools import TLRUCache  # noqa: F401
+except (ImportError, AttributeError):
     import subprocess
-    logger.warning("cachetools not found – installing py-key-value-aio[memory]...")
+    logger.warning("cachetools missing or too old – upgrading cachetools...")
     subprocess.check_call([sys.executable, "-m", "pip", "install",
-                           "py-key-value-aio[memory]", "--quiet"])
+                           "cachetools>=5.3", "--quiet"])
 
 # Disable FastMCP's rich logging to avoid tracebacks_max_frames errors
 # Must be done before FastMCP() is called. Works on fastmcp 3.0+.
