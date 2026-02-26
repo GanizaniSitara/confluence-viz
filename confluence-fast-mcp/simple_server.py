@@ -7,7 +7,17 @@ Supports 30+ concurrent users for hackathons and team use.
 import sys
 import os
 import logging
+import collections
+import collections.abc
 from typing import Optional, Dict, Any, List
+
+# Python 3.10+ removed these aliases from collections.
+# Patch them back so transitive dependencies that still use the old
+# import path (e.g. "from collections import MutableMapping") don't crash.
+for _attr in ("MutableMapping", "Mapping", "MutableSequence", "Sequence",
+              "MutableSet", "Callable"):
+    if not hasattr(collections, _attr) and hasattr(collections.abc, _attr):
+        setattr(collections, _attr, getattr(collections.abc, _attr))
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
