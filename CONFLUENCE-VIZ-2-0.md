@@ -114,30 +114,9 @@ except Exception:
 
 ## Phase 4: Consolidate GENERIC_SCRIPTS
 
-### Current State
-```
-GENERIC_SCRIPTS/
-├── qdrant_markdown_uploader.py              [Main markdown uploader]
-├── qdrant_md_uploader_with_postgres.py      [NEW - untracked]
-├── qdrant_confluence_pickle_uploader.py     [With Ollama]
-├── qdrant_confluence_pickle_uploader_direct.py    [Direct Nomic]
-├── qdrant_confluence_pickle_uploader_no_ollama.py [sentence-transformers]
-├── qdrant_tika_uploader.py                  [Office docs via Tika]
-├── qdrant_confluence_update_after_baseline.py
-├── check_knowledge_stats.py
-├── SYNC_PROPOSAL.md                         [NEW - untracked]
-├── README.md
-└── settings.example.ini
-```
+**Status:** ✅ COMPLETE (2026-02-26)
 
-### Actions
-- [ ] Commit uncommitted files (qdrant_md_uploader_with_postgres.py, SYNC_PROPOSAL.md)
-- [ ] Review if markdown uploaders can be merged
-- [ ] Document which confluence pickle uploader variant to use when:
-  - `_no_ollama.py` - When Ollama not available, use sentence-transformers locally
-  - `_direct.py` - Direct Nomic embeddings
-  - Main - Full Ollama integration
-- [ ] Consider if these should be a separate repo (`qdrant-loaders`?)
+GENERIC_SCRIPTS has been merged into `uploaders/qdrant/` as part of the Phase 9 directory reorganization.
 
 ---
 
@@ -180,26 +159,14 @@ test_*.py files (10+)
 
 ## Phase 6: Fix Configuration Inconsistencies
 
-### Issue: Hardcoded Values
-`counter_pages_from_pickles.py` has:
-```python
-settings['api_base_url']  # Should be settings['base_url']
-```
+**Status:** ✅ PARTIALLY COMPLETE (2026-02-26)
 
+Config loader consolidated: `utils/config_loader.py` now parses `settings.ini` once via `lru_cache` and exposes the same 3 functions (`load_confluence_settings`, `load_data_settings`, `load_visualization_settings`). All 19 importing files updated.
+
+### Remaining
 - [ ] Audit all scripts for hardcoded URLs/paths
-- [ ] Migrate all to use `config_loader.py`
-
-### Issue: Multiple Settings Files
-```
-settings.ini                      [Main config]
-settings.example.ini              [Template]
-settings_gpu_load.ini             [GPU variant]
-settings_gpu_load.example.ini     [GPU template]
-GENERIC_SCRIPTS/settings.example.ini  [Extended for Qdrant]
-```
-
-- [ ] Document which settings file each script uses
-- [ ] Consider consolidating into single settings.ini with all sections
+- [ ] `settings_gpu_load.example.ini` - decide if still needed
+- [ ] `uploaders/qdrant/settings.example.ini` - document relationship to main settings.ini
 
 ---
 
@@ -267,61 +234,39 @@ flask
 
 ---
 
-## Phase 9: Project Structure Reorganization (TBD)
+## Phase 9: Project Structure Reorganization
 
-**Status:** NOT DECIDED - needs more thought
+**Status:** ✅ COMPLETE (2026-02-26)
 
-### Options
+**Decision:** Option A (Simple Directory Reorganization) - implemented.
 
-#### Option A: Simple Directory Reorganization
-Move files into subdirectories but keep as standalone scripts.
+### New Structure
 ```
-confluence_visualization/
-├── src/
-│   ├── collectors/           [Data extraction]
-│   ├── explorers/            [Interactive tools]
-│   ├── visualizers/          [Rendering]
-│   ├── uploaders/            [External integrations]
-│   └── utils/
-├── tests/
-├── docs/
-├── data/                     [Replaces temp/]
-└── config/
+confluence-viz/
+├── collectors/       Data extraction (sample_and_pickle_spaces.py, etc.)
+├── explorers/        Interactive analysis (explore_clusters.py, etc.)
+├── visualizers/      Rendering (render_html.py, scatter_plot_visualizer.py, etc.)
+├── uploaders/        OpenWebUI uploaders (open-webui.py, etc.)
+│   └── qdrant/       Qdrant uploaders (formerly GENERIC_SCRIPTS/)
+├── sql/              SQL extraction & browsing
+├── confluence_ops/   Confluence operations (empty pages checker, audit, etc.)
+├── diagnostics/      Check/diagnostic scripts
+├── tests/            All test files
+├── utils/            Shared utilities (config_loader.py, html_cleaner.py)
+├── confluence-fast-mcp/  MCP server (separate sub-project)
+└── temp/             Pickle data files
 ```
-**Pros:** Organized, low effort
-**Cons:** Not installable, import paths change
 
-#### Option B: Python Package
-Convert to installable package with CLI entry points.
-```
-confluence_viz/
-├── pyproject.toml
-├── src/
-│   └── confluence_viz/
-│       ├── __init__.py
-│       ├── collectors/
-│       ├── explorers/
-│       ├── visualizers/
-│       ├── uploaders/
-│       └── utils/
-├── tests/
-└── docs/
-```
-**Pros:** `pip install .`, proper imports, versioning, distributable
-**Cons:** More effort, breaking change, need to learn packaging
+### Implementation Details
+- Each moved script has a `sys.path.insert` preamble to find project root
+- All `from config_loader import` → `from utils.config_loader import`
+- Cross-module imports updated (e.g., `from visualizers.scatter_plot_visualizer import`)
+- `config_loader.py` consolidated: parses config once via `lru_cache`, same 3-function API
+- GENERIC_SCRIPTS merged into `uploaders/qdrant/`
+- All `__init__.py` files created for each directory
 
-#### Option C: Keep Flat, Just Clean Up
-Remove dead code, fix inconsistencies, but keep current structure.
-**Pros:** Minimal disruption, works today
-**Cons:** Doesn't scale, harder to navigate
-
-### Decision Needed
-- [ ] Evaluate actual pain points with current structure
-- [ ] Decide if package distribution is a goal
-- [ ] Consider if GENERIC_SCRIPTS should be separate package
-- [ ] Make decision after Phases 1-8 complete
-
-**Note:** This is a breaking change - defer until other cleanup complete and we have clearer requirements
+### Known Pre-existing Issue
+- `visualizers/render_semantic_html.py` has a SyntaxError (JS `//` comments inside Python f-string) - this existed before the restructuring
 
 ---
 
@@ -330,12 +275,12 @@ Remove dead code, fix inconsistencies, but keep current structure.
 1. ~~**Phase 1** - Extract timeline search~~ ✅ DONE
 2. **Phase 3** - TEST HTML cleaner fix at work first, then apply if confirmed
 3. **Phase 2** - Verify features (builds understanding)
-4. **Phase 4** - Commit GENERIC_SCRIPTS changes
+4. ~~**Phase 4** - Consolidate GENERIC_SCRIPTS~~ ✅ DONE (merged into uploaders/qdrant/)
 5. **Phase 5** - Clean up legacy scripts (mark, don't delete)
-6. **Phase 6** - Fix config inconsistencies
+6. ~~**Phase 6** - Fix config inconsistencies~~ ✅ PARTIALLY DONE (config_loader consolidated)
 7. ~~**Phase 7** - Update requirements~~ ✅ DONE
 8. ~~**Phase 8** - Documentation~~ ✅ Quick Start + decision tree added
-9. **Phase 9** - Restructure (TBD - maybe Python package, decide later)
+9. ~~**Phase 9** - Restructure~~ ✅ DONE (directory reorganization)
 
 ---
 
@@ -343,36 +288,35 @@ Remove dead code, fix inconsistencies, but keep current structure.
 
 ### To fetch Confluence data:
 ```bash
-python sample_and_pickle_spaces.py
+python collectors/sample_and_pickle_spaces.py
 ```
 
 ### To explore/analyze spaces:
 ```bash
-python explore_clusters.py
+python explorers/explore_clusters.py
 ```
 
 ### To debug content issues:
 ```bash
-python explore_pickle_content.py SPACENAME
+python explorers/explore_pickle_content.py SPACENAME
 # Option 5 → 'r' for raw → 'c' for cleaned
 ```
 
 ### To generate treemap:
 ```bash
-python render_html.py
+python visualizers/render_html.py
 ```
 
 ### To upload to OpenWebUI:
 ```bash
-python open-webui.py              # Sequential
-python open-webui-parallel.py     # Parallel (faster)
-python open-webui-sideloader-gpu.py  # With GPU embeddings
+python uploaders/open-webui.py              # Sequential
+python uploaders/open-webui-parallel.py     # Parallel (faster)
+python uploaders/open-webui-sideloader-gpu.py  # With GPU embeddings
 ```
 
 ### To upload to Qdrant:
 ```bash
-cd GENERIC_SCRIPTS
-python qdrant_confluence_pickle_uploader.py --space-keys SPACE1 SPACE2
+python uploaders/qdrant/qdrant_confluence_pickle_uploader.py --space-keys SPACE1 SPACE2
 ```
 
 ---

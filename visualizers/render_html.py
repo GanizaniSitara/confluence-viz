@@ -1,0 +1,289 @@
+# description: Renders HTML for Confluence visualization from individual space pickle files.
+
+import sys as _sys, os as _os; _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), ".."))
+import pickle
+import json
+import os
+import sys
+import webbrowser
+import numpy as np
+from datetime import datetime
+import argparse
+from utils.config_loader import load_data_settings
+
+OUTPUT_HTML = "confluence_treepack.html"
+DEFAULT_PICKLE_DIR = "temp"  # Default directory for individual space pickles
+
+# Color constants
+GRADIENT_STEPS = 10  # Number of color steps
+GREY_COLOR_HEX = '#cccccc'  # Color for spaces with no pages/timestamps
+# Use the same gradient basis colors as viz.py (Red -> Yellow -> Green)
+GRADIENT_COLORS_FOR_INTERP_HEX = ['#ffcccc', '#ffffcc', '#ccffcc']
+
+
+def hex_to_rgb(hex_color):
+    """Converts a hex color string (e.g., '#RRGGBB') to an RGB tuple."""
+    hex_color = hex_color.lstrip('#')
+    # Ensure hex_color has length 6 before attempting conversion
+    if len(hex_color) != 6:
+        # Return a default color (e.g., black) or raise an error
+        # print(f"Warning: Invalid hex color format '{hex_color}'. Using black.", file=sys.stderr)
+        return (0, 0, 0) # Or raise ValueError("Invalid hex color format")
+    try:
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2 ,4))
+    except ValueError:
+        # Handle cases where conversion fails (e.g., non-hex characters)
+        # print(f"Warning: Could not convert hex '{hex_color}' to RGB. Using black.", file=sys.stderr)
+        return (0, 0, 0) # Or raise
+
+
+def rgb_to_hex(rgb_tuple):
+    """Convert an RGB tuple to hex color string"""
+    return f'#{int(rgb_tuple[0]):02x}{int(rgb_tuple[1]):02x}{int(rgb_tuple[2]):02x}'
+
+
+def get_interpolated_color_from_fraction(fraction, gradient_colors_rgb_basis):
+    """Interpolate between color basis points based on a fraction between 0-1"""
+    if fraction <= 0:
+        return gradient_colors_rgb_basis[0]
+    if fraction >= 1:
+        return gradient_colors_rgb_basis[-1]
+
+    # Determine which segment of the gradient we're in
+    segment_count = len(gradient_colors_rgb_basis) - 1
+    segment_size = 1.0 / segment_count
+    segment_index = min(int(fraction / segment_size), segment_count - 1)
+    segment_fraction = (fraction - segment_index * segment_size) / segment_size
+
+    # Interpolate between the two colors in this segment
+    start_color = gradient_colors_rgb_basis[segment_index]
+    end_color = gradient_colors_rgb_basis[segment_index + 1]
+
+    return [
+        start_color[0] + segment_fraction * (end_color[0] - start_color[0]),
+        start_color[1] + segment_fraction * (end_color[1] - start_color[1]),
+        start_color[2] + segment_fraction * (end_color[2] - start_color[2])
+    ]
+
+def calculate_color_data(data):
+    """Extract avg timestamps and calculate color thresholds"""
+    # Extract avg timestamps from all nodes with avg data
+    def extract_avg_values(node, avg_values):
+        if 'avg' in node and node['avg'] > 0:
+            avg_values.append(node['avg'])
+        if 'children' in node:
+            for child in node['children']:
+                extract_avg_values(child, avg_values)
+        return avg_values
+
+    avg_values = extract_avg_values(data, [])
+
+    # Calculate percentile thresholds (if we have data)
+    if avg_values:
+        percentile_thresholds = [
+            np.percentile(avg_values, 100 * i / GRADIENT_STEPS)
+            for i in range(1, GRADIENT_STEPS)
+        ]
+    else:
+        percentile_thresholds = []
+
+    # Generate color gradient - use the hex colors defined above
+    # Convert hex basis colors to RGB for interpolation
+    gradient_colors_rgb_basis = [hex_to_rgb(c) for c in GRADIENT_COLORS_FOR_INTERP_HEX]
+
+    # Generate color range
+    color_range_hex = []
+    for i in range(GRADIENT_STEPS):
+        f = i / (GRADIENT_STEPS - 1) if GRADIENT_STEPS > 1 else 0.0
+        rgb = get_interpolated_color_from_fraction(f, gradient_colors_rgb_basis)
+        hex_color = rgb_to_hex(rgb)
+        color_range_hex.append(hex_color)
+
+    return percentile_thresholds, color_range_hex
+
+
+def parse_timestamp(ts_str):
+    """Parse various timestamp formats to Unix timestamp."""
+    if not ts_str:
+        return 0
+
+    try:
+        # Handle timezone suffix
+        if ts_str.endswith('Z'):
+            ts_str = ts_str[:-1]
+        elif '+' in ts_str:
+            ts_str = ts_str.split('+')[0]
+
+        dt = datetime.fromisoformat(ts_str)
+        return dt.timestamp()
+    except Exception:
+        return 0
+
+
+def load_spaces_from_pickles(pickle_dir):
+    """Load individual space pickle files and build visualization data structure."""
+    if not os.path.exists(pickle_dir):
+        print(f"Error: Pickle directory '{pickle_dir}' does not exist.", file=sys.stderr)
+        sys.exit(1)
+
+    pickle_files = [f for f in os.listdir(pickle_dir) if f.endswith('.pkl')]
+
+    if not pickle_files:
+        print(f"Error: No pickle files found in '{pickle_dir}'.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Loading {len(pickle_files)} space pickle files from '{pickle_dir}'...")
+
+    spaces = []
+    skipped = 0
+
+    for pkl_file in sorted(pickle_files):
+        pkl_path = os.path.join(pickle_dir, pkl_file)
+        try:
+            with open(pkl_path, 'rb') as f:
+                data = pickle.load(f)
+
+            # Skip placeholder/processing pickles
+            if data.get('status') == 'processing':
+                skipped += 1
+                continue
+
+            space_key = data.get('space_key', os.path.splitext(pkl_file)[0])
+            space_name = data.get('name', space_key)
+            pages = data.get('sampled_pages', [])
+            total_pages = data.get('total_pages_in_space', len(pages))
+
+            # Calculate average timestamp from pages
+            timestamps = []
+            for page in pages:
+                # Try different timestamp fields
+                ts_str = (page.get('lastModified') or
+                         page.get('when') or
+                         page.get('version', {}).get('when', ''))
+                ts = parse_timestamp(ts_str)
+                if ts > 0:
+                    timestamps.append(ts)
+
+            avg_timestamp = sum(timestamps) / len(timestamps) if timestamps else 0
+
+            spaces.append({
+                'key': space_key,
+                'name': space_name,
+                'value': total_pages,
+                'avg': avg_timestamp
+            })
+
+        except Exception as e:
+            print(f"  Warning: Error reading {pkl_file}: {e}", file=sys.stderr)
+            skipped += 1
+
+    if not spaces:
+        print("Error: No valid space data found.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Loaded {len(spaces)} spaces (skipped {skipped})")
+
+    # Build hierarchical structure
+    return {"name": "Confluence", "children": spaces}
+
+
+def load_data_and_render():
+    # Try to get pickle dir from config, fall back to default
+    try:
+        data_settings = load_data_settings()
+        config_pickle_dir = data_settings.get('remote_full_pickle_dir') or DEFAULT_PICKLE_DIR
+    except Exception:
+        config_pickle_dir = DEFAULT_PICKLE_DIR
+
+    parser = argparse.ArgumentParser(description="Render Confluence visualization as HTML.")
+    parser.add_argument('--min-pages', type=int, default=0, help='Minimum number of pages for a space to be included')
+    parser.add_argument('--pickle-dir', type=str, default=config_pickle_dir,
+                        help=f'Directory containing space pickle files (default: {config_pickle_dir})')
+    args = parser.parse_args()
+
+    # Load data from individual space pickle files
+    data = load_spaces_from_pickles(args.pickle_dir)
+
+    # Filter spaces with less than min-pages
+    def filter_spaces(node):
+        if 'children' in node:
+            node['children'] = [filter_spaces(child) for child in node['children'] if filter_spaces(child) is not None]
+        if 'value' in node and node['value'] < args.min_pages:
+            return None
+        return node
+    if args.min_pages > 0:
+        data = filter_spaces(data)
+        if data is None:
+            print(f"No spaces with >= {args.min_pages} pages.")
+            sys.exit(0)
+
+    # Calculate color thresholds and gradient
+    percentile_thresholds, color_range_hex = calculate_color_data(data)
+
+    # Prepare data for HTML embedding
+    data_json = json.dumps(data)
+    percentile_thresholds_json = json.dumps(percentile_thresholds)
+    color_range_hex_json = json.dumps(color_range_hex)
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Confluence Circle Packing</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body {{ margin:0; font-family:sans-serif; }}
+    .node text {{ text-anchor:middle; alignment-baseline:middle; font-size:3pt; pointer-events:none; }}
+  </style>
+</head>
+<body>
+<div id="chart"></div>
+<script>
+const data = {data_json};
+const PERCENTILE_THRESHOLDS = {percentile_thresholds_json};
+const COLOR_RANGE_HEX = {color_range_hex_json};
+const GREY_COLOR_HEX = '{GREY_COLOR_HEX}';
+
+// Color scale based on thresholds
+const colorScale = d3.scaleThreshold()
+  .domain(PERCENTILE_THRESHOLDS)
+  .range(COLOR_RANGE_HEX);
+
+const width = 3000, height = 2000;
+const root = d3.pack().size([width, height]).padding(6)(d3.hierarchy(data).sum(d => d.value));
+const leaf = root.descendants().filter(d => d.data.avg !== undefined);
+const svg = d3.select('#chart').append('svg').attr('width',width).attr('height',height);
+const g = svg.selectAll('g').data(leaf).enter().append('g')
+  .attr('transform', node => `translate(${{node.x}},${{node.y}})`);
+g.append('circle')
+  .attr('r', node => node.r)
+  .attr('fill', node => node.data.avg > 0 ? colorScale(node.data.avg) : GREY_COLOR_HEX);
+g.append('text')
+  .attr('dy','-0.35em')
+  .attr('text-anchor', 'middle')
+  .attr('style', 'font-size:6pt;')
+  .text(node => node.data.key);
+g.append('text')
+  .attr('dy','0.75em')
+  .attr('text-anchor', 'middle')
+  .attr('style', 'font-size:6pt;')
+  .text(node => node.data.value);
+</script>
+</body>
+</html>"""
+
+    with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
+        f.write(html)
+    print(f"HTML written to {OUTPUT_HTML}")
+
+    # Open the HTML file in the default browser
+    try:
+        print(f"Opening {OUTPUT_HTML} in browser...")
+        webbrowser.open('file://' + os.path.realpath(OUTPUT_HTML))
+    except Exception as e:
+        print(f"Could not automatically open browser: {e}", file=sys.stderr)
+        print(f"Please open the file manually: {os.path.realpath(OUTPUT_HTML)}")
+
+
+if __name__ == "__main__":
+    load_data_and_render()

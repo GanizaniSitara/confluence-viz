@@ -12,19 +12,19 @@ cp settings.example.ini settings.ini
 
 ### 2. Fetch Confluence data
 ```bash
-python sample_and_pickle_spaces.py
+python collectors/sample_and_pickle_spaces.py
 ```
 This fetches all spaces and pages, storing them as pickle files in `temp/`.
 
 ### 3. Explore and analyze
 ```bash
-python explore_clusters.py
+python explorers/explore_clusters.py
 ```
 Interactive menu with 20+ options: clustering, search, visualizations.
 
 ### 4. Generate visualizations
 ```bash
-python render_html.py
+python visualizers/render_html.py
 ```
 Creates `confluence_treepack.html` - an interactive treemap.
 
@@ -109,13 +109,13 @@ This project helps organizations understand how their Confluence instance is bei
 
 1. Fetch data from Confluence:
    ```
-   python fetch_data.py
+   python collectors/sample_and_pickle_spaces.py
    ```
    This creates a `confluence_data.pkl` file with space and page data.
 
 2. Run semantic analysis (optional):
    ```
-   python semantic_analysis.py
+   python explorers/semantic_analysis.py
    ```
    This creates a `confluence_semantic_data.pkl` file with semantic analysis results.
 
@@ -123,19 +123,19 @@ This project helps organizations understand how their Confluence instance is bei
 
 1. Generate treemap visualization:
    ```
-   python render_html.py
+   python visualizers/render_html.py
    ```
    This creates `confluence_treepack.html`, an interactive visualization of spaces.
 
 2. Explore clusters and generate additional visualizations:
    ```
-   python explore_clusters.py
+   python explorers/explore_clusters.py
    ```
    This provides an interactive menu with multiple visualization and analysis options.
 
 3. Generate semantic visualizations:
    ```
-   python render_semantic_html.py
+   python visualizers/render_semantic_html.py
    ```
    This creates semantic-based visualizations.
 
@@ -143,12 +143,7 @@ This project helps organizations understand how their Confluence instance is bei
 
 - **Space Explorer**: Browse and analyze individual Confluence spaces
   ```
-  python space_explorer.py
-  ```
-
-- **Application Search**: Find and analyze applications mentioned in Confluence
-  ```
-  python seed_applications.py
+  python explorers/space_explorer.py
   ```
 
 ## Which Script Should I Use?
@@ -156,44 +151,45 @@ This project helps organizations understand how their Confluence instance is bei
 ### Data Collection
 | Goal | Script |
 |------|--------|
-| Fetch all spaces & pages to pickles | `sample_and_pickle_spaces.py` |
-| Fetch attachments only | `sample_and_pickle_attachments.py` |
+| Fetch all spaces & pages to pickles | `collectors/sample_and_pickle_spaces.py` |
+| Fetch attachments only | `collectors/sample_and_pickle_attachments.py` |
 
 ### Exploration & Analysis
 | Goal | Script |
 |------|--------|
-| Interactive analysis (clustering, search, viz) | `explore_clusters.py` |
-| Browse pickle file contents | `explore_pickle_content.py` |
-| Live API exploration | `space_explorer.py` |
+| Interactive analysis (clustering, search, viz) | `explorers/explore_clusters.py` |
+| Browse pickle file contents | `explorers/explore_pickle_content.py` |
+| Live API exploration | `explorers/space_explorer.py` |
 
 ### Visualization
 | Goal | Script |
 |------|--------|
-| Treemap from pickles | `render_html.py` |
-| Treemap from live API | `confluence_treemap_visualizer.py` *(legacy)* |
-| Scatter plots | `scatter_plot_visualizer.py` |
-| Semantic relationships | `render_semantic_html.py` |
+| Treemap from pickles | `visualizers/render_html.py` |
+| Treemap from live API | `visualizers/confluence_treemap_visualizer.py` *(legacy)* |
+| Scatter plots | `visualizers/scatter_plot_visualizer.py` |
+| Semantic relationships | `visualizers/render_semantic_html.py` |
 
 ### Upload to External Systems
 | Goal | Script |
 |------|--------|
-| Upload to OpenWebUI (sequential) | `open-webui.py` |
-| Upload to OpenWebUI (parallel, faster) | `open-webui-parallel.py` |
-| Upload to OpenWebUI (GPU embeddings) | `open-webui-sideloader-gpu.py` |
-| Upload to Qdrant | `GENERIC_SCRIPTS/qdrant_confluence_pickle_uploader.py` |
+| Upload to OpenWebUI (sequential) | `uploaders/open-webui.py` |
+| Upload to OpenWebUI (parallel, faster) | `uploaders/open-webui-parallel.py` |
+| Upload to OpenWebUI (GPU embeddings) | `uploaders/open-webui-sideloader-gpu.py` |
+| Upload to Qdrant | `uploaders/qdrant/qdrant_confluence_pickle_uploader.py` |
 
 ### Diagnostics
 | Goal | Script |
 |------|--------|
-| Check settings.ini | `check_config.py` |
-| Debug pickle structure | `diagnose_pickle_bodies.py` |
-| Inspect pickle format | `inspect_pickle_format.py` |
+| Check settings.ini | `diagnostics/check_config.py` |
+| Debug pickle structure | `diagnostics/diagnose_pickle_bodies.py` |
+| Inspect pickle format | `diagnostics/inspect_pickle_format.py` |
 
-### Utilities
+### Confluence Operations
 | Goal | Script |
 |------|--------|
-| Delete a page by URL | `delete_confluence_page.py` |
-| Find empty/deletable pages | `confluence_empty_pages_checker.py` |
+| Delete a page by URL | `confluence_ops/delete_confluence_page.py` |
+| Find empty/deletable pages | `confluence_ops/confluence_empty_pages_checker.py` |
+| Audit admin users | `confluence_ops/audit_admins.py` |
 
 ### SQL Script Extraction & Browsing
 
@@ -201,13 +197,13 @@ Extract SQL scripts from Confluence pages and browse them:
 
 ```bash
 # Extract SQL to SQLite database
-python extract_sql_from_pickles.py --sqlite sql_queries.db
+python sql/extract_sql_from_pickles.py --sqlite sql_queries.db
 
 # Browse via command line
-python browse_extracted_sql.py --db sql_queries.db
+python sql/browse_extracted_sql.py --db sql_queries.db
 
 # Browse via web UI (recommended)
-python browse_extracted_sql_web.py --db sql_queries.db --host 0.0.0.0
+python sql/browse_extracted_sql_web.py --db sql_queries.db --host 0.0.0.0
 # Then open http://localhost:5080
 ```
 
@@ -218,16 +214,31 @@ Extraction options:
 
 ---
 
-## File Descriptions
+## Project Structure
 
-- **config_loader.py**: Handles loading configuration from settings.ini
-- **sample_and_pickle_spaces.py**: Main data collector - fetches spaces/pages to pickle files
-- **explore_clusters.py**: Interactive tool for clustering, search, and visualization
-- **explore_pickle_content.py**: Browse pickle contents with raw/cleaned HTML toggle
-- **render_html.py**: Generates treemap visualization from pickles
+```
+confluence-viz/
+├── collectors/       Data extraction scripts
+├── explorers/        Interactive analysis tools
+├── visualizers/      Rendering & visualization
+├── uploaders/        OpenWebUI uploaders
+│   └── qdrant/       Qdrant uploaders (formerly GENERIC_SCRIPTS/)
+├── sql/              SQL extraction & browsing
+├── confluence_ops/   Confluence operations (cleanup, audit, etc.)
+├── diagnostics/      Check & diagnostic scripts
+├── tests/            All test files
+├── utils/            Shared utilities (config_loader, html_cleaner)
+├── confluence-fast-mcp/  MCP server (separate sub-project)
+└── temp/             Pickle data files
+```
+
+### Key Modules
+
+- **utils/config_loader.py**: Loads configuration from settings.ini (cached, parsed once)
 - **utils/html_cleaner.py**: Cleans Confluence HTML, removes macros, extracts text
-- **scatter_plot_visualizer.py**: Creates scatter plot visualizations
-- **proximity_visualizer.py**: Creates proximity-based visualizations
+- **collectors/sample_and_pickle_spaces.py**: Main data collector - fetches spaces/pages to pickle files
+- **explorers/explore_clusters.py**: Interactive tool for clustering, search, and visualization
+- **visualizers/render_html.py**: Generates treemap visualization from pickles
 
 ## Data Files
 
@@ -302,10 +313,10 @@ The confluence_checkpoint.json file is used to manage resumption and can be remo
 
 ### Empty Content After Cleaning (0 pages with content in explore_clusters)
 
-If `explore_clusters.py` reports 0 or very few pages with content after cleaning, use `explore_pickle_content.py` to diagnose:
+If `explorers/explore_clusters.py` reports 0 or very few pages with content after cleaning, use `explore_pickle_content.py` to diagnose:
 
 ```bash
-python explore_pickle_content.py SPACENAME
+python explorers/explore_pickle_content.py SPACENAME
 ```
 
 1. Select **Option 5** (Explore Pages) to paginate through pages
@@ -315,7 +326,7 @@ python explore_pickle_content.py SPACENAME
 5. Press **`n`/`p`** to navigate next/previous page
 
 **Diagnosis:**
-- **Raw HTML has content, cleaned is empty**: The HTML cleaner is stripping everything. This typically happens when Confluence content uses XML namespace tags (`ac:structured-macro`, `ac:rich-text-body`, etc.) that BeautifulSoup's `html.parser` doesn't traverse into properly. The fix is to normalize namespace prefixes before parsing (convert `ac:tag` to `ac-tag`). This fix has been applied to `explore_clusters.py` but may also need to be applied to `utils/html_cleaner.py`.
+- **Raw HTML has content, cleaned is empty**: The HTML cleaner is stripping everything. This typically happens when Confluence content uses XML namespace tags (`ac:structured-macro`, `ac:rich-text-body`, etc.) that BeautifulSoup's `html.parser` doesn't traverse into properly. The fix is to normalize namespace prefixes before parsing (convert `ac:tag` to `ac-tag`). This fix has been applied to `explorers/explore_clusters.py` but may also need to be applied to `utils/html_cleaner.py`.
 
 - **Raw HTML is empty**: The body content wasn't fetched. Check:
   - API user permissions (may lack read access to page content)
@@ -329,7 +340,7 @@ python explore_pickle_content.py SPACENAME
 Run the diagnostic script to inspect pickle file contents:
 
 ```bash
-python diagnose_pickle_bodies.py --dir /path/to/pickles --files 3 --pages 5
+python diagnostics/diagnose_pickle_bodies.py --dir /path/to/pickles --files 3 --pages 5
 ```
 
 This shows body types (string vs dict), content lengths, and identifies structural issues.
