@@ -29,6 +29,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ── Ensure fastmcp's MemoryStore dependency (cachetools) is available ──
+# fastmcp 3.0+ imports MemoryStore at module level which requires
+# py-key-value-aio[memory] (i.e. cachetools).  If the MCP host launched
+# us with a Python that doesn't have it, install it on the fly.
+try:
+    import cachetools  # noqa: F401
+except ImportError:
+    import subprocess
+    logger.warning("cachetools not found – installing py-key-value-aio[memory]...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install",
+                           "py-key-value-aio[memory]", "--quiet"])
+
 # Disable FastMCP's rich logging to avoid tracebacks_max_frames errors
 # Must be done before FastMCP() is called. Works on fastmcp 3.0+.
 import fastmcp as _fastmcp_mod
