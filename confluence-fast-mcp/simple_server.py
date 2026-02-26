@@ -29,15 +29,117 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ── Work around fastmcp's hard dependency on cachetools.TLRUCache ──
+# fastmcp 3.0+ unconditionally imports MemoryStore from
+# key_value.aio.stores.memory, which requires cachetools with TLRUCache.
+# If TLRUCache is missing (wrong cachetools version, broken install, etc.)
+# we inject a simple dict-backed MemoryStore stub so fastmcp can load
+# and operate normally — our server only needs basic session state storage.
+import types as _types
+
+def _ensure_memory_store_importable():
+    """Inject a dict-backed MemoryStore if cachetools.TLRUCache is missing."""
+    try:
+        from cachetools import TLRUCache  # noqa: F401
+        return  # real cachetools works fine, nothing to do
+    except (ImportError, AttributeError):
+        pass
+
+    logger.info("cachetools.TLRUCache unavailable – injecting dict-backed MemoryStore stub")
+
+    # Build a minimal MemoryStore that satisfies fastmcp's usage:
+    #   store = MemoryStore()
+    #   await store.setup()
+    #   await store.get/put/delete(collection, key, ...)
+    from key_value.aio.stores.base import (
+        SEED_DATA_TYPE,
+        BaseDestroyCollectionStore,
+        BaseDestroyStore,
+        BaseEnumerateCollectionsStore,
+        BaseEnumerateKeysStore,
+    )
+    from key_value.aio._utils.managed_entry import ManagedEntry
+    from typing_extensions import override
+
+    class _DictMemoryStore(
+        BaseDestroyStore,
+        BaseDestroyCollectionStore,
+        BaseEnumerateCollectionsStore,
+        BaseEnumerateKeysStore,
+    ):
+        """Minimal dict-backed store (no TLRUCache / no TTL eviction)."""
+
+        def __init__(self, *, max_entries_per_collection=None,
+                     default_collection=None, seed=None):
+            self._data: dict[str, dict[str, ManagedEntry]] = {}
+            super().__init__(default_collection=default_collection,
+                             seed=seed, stable_api=True)
+
+        @override
+        async def _setup(self):
+            for col in self._seed:
+                await self._setup_collection(collection=col)
+
+        @override
+        async def _setup_collection(self, *, collection):
+            if collection not in self._data:
+                self._data[collection] = {}
+
+        def _col(self, collection):
+            c = self._data.get(collection)
+            if c is None:
+                raise KeyError(f"Collection '{collection}' not set up")
+            return c
+
+        @override
+        async def _get_managed_entry(self, *, key, collection):
+            return self._col(collection).get(key)
+
+        @override
+        async def _put_managed_entry(self, *, key, collection, managed_entry):
+            self._col(collection)[key] = managed_entry
+
+        @override
+        async def _delete_managed_entry(self, *, key, collection):
+            return self._col(collection).pop(key, None) is not None
+
+        @override
+        async def _get_collection_keys(self, *, collection, limit=None):
+            keys = list(self._col(collection).keys())
+            return keys[:limit] if limit else keys
+
+        @override
+        async def _get_collection_names(self, *, limit=None):
+            keys = list(self._data.keys())
+            return keys[:limit] if limit else keys
+
+        @override
+        async def _delete_collection(self, *, collection):
+            return self._data.pop(collection, None) is not None
+
+        @override
+        async def _delete_store(self):
+            self._data.clear()
+            return True
+
+    _mod_key = "key_value.aio.stores.memory"
+    _stub = _types.ModuleType(_mod_key)
+    _stub.MemoryStore = _DictMemoryStore
+    sys.modules[_mod_key] = _stub
+
+    # Also patch the sub-module path so "from key_value.aio.stores.memory import MemoryStore" works
+    _store_mod_key = _mod_key + ".store"
+    _store_stub = _types.ModuleType(_store_mod_key)
+    _store_stub.MemoryStore = _DictMemoryStore
+    sys.modules[_store_mod_key] = _store_stub
+
+_ensure_memory_store_importable()
+
 # Disable FastMCP's rich logging to avoid tracebacks_max_frames errors
 # Must be done before FastMCP() is called. Works on fastmcp 3.0+.
-try:
-    import fastmcp as _fastmcp_mod
-    _fastmcp_mod.settings.log_enabled = False
-    _fastmcp_mod.settings.enable_rich_logging = False
-except Exception as e:
-    logger.error(f"Failed to import fastmcp: {type(e).__name__}: {e}")
-    raise
+import fastmcp as _fastmcp_mod
+_fastmcp_mod.settings.log_enabled = False
+_fastmcp_mod.settings.enable_rich_logging = False
 
 from fastmcp import FastMCP
 from confluence_fast_mcp.config import get_config
