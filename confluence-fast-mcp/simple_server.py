@@ -29,23 +29,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ── Ensure fastmcp's MemoryStore dependency (cachetools >=5.3) is available ──
-# fastmcp 3.0+ imports MemoryStore at module level which requires
-# TLRUCache from cachetools (added in 5.3.0) via py-key-value-aio[memory].
-# If the MCP host's Python is missing it or has an old version, upgrade now.
-try:
-    from cachetools import TLRUCache  # noqa: F401
-except (ImportError, AttributeError):
-    import subprocess
-    logger.warning("cachetools missing or too old – upgrading cachetools...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install",
-                           "cachetools>=5.3", "--quiet"])
-
 # Disable FastMCP's rich logging to avoid tracebacks_max_frames errors
 # Must be done before FastMCP() is called. Works on fastmcp 3.0+.
-import fastmcp as _fastmcp_mod
-_fastmcp_mod.settings.log_enabled = False
-_fastmcp_mod.settings.enable_rich_logging = False
+try:
+    import fastmcp as _fastmcp_mod
+    _fastmcp_mod.settings.log_enabled = False
+    _fastmcp_mod.settings.enable_rich_logging = False
+except Exception as e:
+    logger.error(f"Failed to import fastmcp: {type(e).__name__}: {e}")
+    raise
 
 from fastmcp import FastMCP
 from confluence_fast_mcp.config import get_config
