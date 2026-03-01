@@ -145,6 +145,7 @@ from fastmcp import FastMCP
 from confluence_fast_mcp.config import get_config
 from confluence_fast_mcp.pickle_loader import PickleLoader
 from confluence_fast_mcp.converters import html_to_adf
+from confluence_fast_mcp.search import CQLParser
 
 # Initialize FastMCP server
 mcp = FastMCP("confluence-simple")
@@ -217,13 +218,19 @@ def getConfluencePage(
     pageIdOrTitleAndSpaceKey: str,
     spaceKey: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Get a Confluence page by ID or title."""
+    """Get a Confluence page by ID or title.
+
+    Supports page ID, exact title+spaceKey, or flexible title matching
+    (case-insensitive, partial match).
+    """
     # Try to get by ID first
     result = pickle_loader.get_page_by_id(pageIdOrTitleAndSpaceKey)
 
-    # If not found by ID and spaceKey provided, try title lookup
-    if not result and spaceKey:
-        result = pickle_loader.get_page_by_title(pageIdOrTitleAndSpaceKey, spaceKey)
+    # If not found by ID, try flexible title lookup
+    if not result:
+        result = pickle_loader.find_page_by_title_flexible(
+            pageIdOrTitleAndSpaceKey, space_key=spaceKey
+        )
 
     if not result:
         return {
@@ -270,21 +277,23 @@ def getPagesInConfluenceSpace(
 
 @mcp.tool()
 def search(query: str, limit: int = 50) -> List[Dict[str, Any]]:
-    """Simple in-memory text search across all pages."""
-    query_lower = query.lower()
+    """Search across all pages by title and body content.
+
+    Title matches are ranked higher than body content matches.
+    """
+    matches = pickle_loader.search_content(query, limit=limit)
     results = []
 
-    # Search by title first
-    title_matches = pickle_loader.search_by_title(query)
-
-    for match in title_matches[:limit]:
+    for match in matches:
         page = match['page']
         space_key = match['space_key']
+        match_type = match.get('match_type', 'title')
         results.append({
             "id": f"ari:cloud:confluence:{FAKE_CLOUD_ID}:page/{page.get('id')}",
             "title": page.get('title', ''),
             "url": f"http://localhost/spaces/{space_key}/pages/{page.get('id')}",
             "contentType": "page",
+            "matchType": match_type,
             "space": {
                 "key": space_key,
                 "name": space_key
@@ -293,6 +302,82 @@ def search(query: str, limit: int = 50) -> List[Dict[str, Any]]:
         })
 
     return results
+
+
+@mcp.tool()
+def searchConfluenceUsingCql(
+    cloudId: str,
+    cql: str,
+    limit: int = 25,
+    start: int = 0
+) -> Dict[str, Any]:
+    """Search Confluence using CQL (Confluence Query Language).
+
+    Supports in-memory CQL queries like:
+    - text ~ "search term"
+    - title ~ "title search"
+    - space = KEY
+    - text ~ "api" AND space = DOCS
+    """
+    parser = CQLParser()
+    search_terms, space_key = parser.parse(cql)
+
+    # Determine if this is a title-only search
+    title_only = 'title:' in search_terms or cql.strip().startswith('title')
+
+    # Clean WHOOSH-specific syntax from search terms for in-memory search
+    clean_query = search_terms.replace('title:', '').replace('^2', '')
+    clean_query = clean_query.strip('() ')
+
+    if clean_query == '*' or not clean_query:
+        # No text search, just space filter - return pages from space
+        if space_key:
+            pages = pickle_loader.get_pages_in_space(space_key, limit=limit, start=start)
+            formatted = [
+                _format_page_response(p, space_key, include_body=False) for p in pages
+            ]
+            return {"results": formatted, "start": start, "limit": limit, "size": len(formatted)}
+        return {"results": [], "start": start, "limit": limit, "size": 0}
+
+    matches = pickle_loader.search_content(
+        clean_query, space_key=space_key, title_only=title_only, limit=limit
+    )
+
+    formatted = [
+        _format_page_response(m['page'], m['space_key'], include_body=False)
+        for m in matches
+    ]
+
+    return {
+        "results": formatted,
+        "start": start,
+        "limit": limit,
+        "size": len(formatted),
+        "cqlQuery": cql
+    }
+
+
+@mcp.tool()
+def getConfluencePageDescendants(
+    cloudId: str,
+    pageId: str,
+    limit: int = 25,
+    start: int = 0
+) -> Dict[str, Any]:
+    """Get child pages of a specific page."""
+    children = pickle_loader.get_children(pageId, limit=limit, start=start)
+
+    formatted = [
+        _format_page_response(c['page'], c['space_key'], include_body=False)
+        for c in children
+    ]
+
+    return {
+        "results": formatted,
+        "start": start,
+        "limit": limit,
+        "size": len(formatted)
+    }
 
 
 @mcp.tool()
