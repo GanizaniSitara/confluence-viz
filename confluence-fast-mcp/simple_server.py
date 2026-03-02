@@ -19,9 +19,6 @@ for _attr in ("MutableMapping", "Mapping", "MutableSequence", "Sequence",
     if not hasattr(collections, _attr) and hasattr(collections.abc, _attr):
         setattr(collections, _attr, getattr(collections.abc, _attr))
 
-# Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
-
 # Setup logging BEFORE importing FastMCP to prevent it from reconfiguring
 logging.basicConfig(
     level=logging.INFO,
@@ -142,10 +139,10 @@ _fastmcp_mod.settings.log_enabled = False
 _fastmcp_mod.settings.enable_rich_logging = False
 
 from fastmcp import FastMCP
-from confluence_fast_mcp.config import get_config
-from confluence_fast_mcp.pickle_loader import PickleLoader
-from confluence_fast_mcp.converters import html_to_markdown, html_to_text
-from confluence_fast_mcp.search import CQLParser
+from config import get_config
+from pickle_loader import PickleLoader
+from converters import html_to_markdown, html_to_text
+from search import CQLParser
 
 # Initialize FastMCP server
 mcp = FastMCP("confluence-simple")

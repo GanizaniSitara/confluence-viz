@@ -15,7 +15,7 @@ except ImportError:
     _BS4_PARSER = 'html.parser'
 
 # Add parent directory to path to import html_cleaner from confluence-viz
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', 'confluence-viz'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 try:
     from utils.html_cleaner import clean_confluence_html

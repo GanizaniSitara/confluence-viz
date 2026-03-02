@@ -25,7 +25,7 @@ class Config:
             possible_locations = [
                 'settings.ini',
                 os.path.join(os.getcwd(), 'settings.ini'),
-                os.path.join(Path(__file__).parent.parent.parent, 'settings.ini'),
+                os.path.join(Path(__file__).parent, 'settings.ini'),
             ]
             self.settings_file = None
             for location in possible_locations:
@@ -61,7 +61,7 @@ class Config:
     def index_dir(self) -> str:
         """Get WHOOSH index directory path."""
         return self._get('data', 'index_dir',
-                        os.path.join(Path(__file__).parent.parent.parent, 'whoosh_index'))
+                        os.path.join(Path(__file__).parent, 'whoosh_index'))
 
     @property
     def confluence_url(self) -> str:

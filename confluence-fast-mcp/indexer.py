@@ -17,7 +17,7 @@ except (ImportError, AttributeError) as e:
     WHOOSH_AVAILABLE = False
     _whoosh_import_error = e
 
-from .converters import html_to_text
+from converters import html_to_text
 
 # Maximum HTML body size to parse (bytes). Pages larger than this are
 # truncated before being fed to BeautifulSoup to avoid stalling on

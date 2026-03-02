@@ -108,20 +108,14 @@ def _ensure_memory_store_importable():
 
 _ensure_memory_store_importable()
 
-# Add src/ to path so absolute imports work when run directly as a script
-# (i.e. not installed as a package).
-_src_dir = os.path.join(os.path.dirname(__file__), os.pardir, os.pardir)
-if os.path.isdir(os.path.join(_src_dir, "confluence_fast_mcp")):
-    sys.path.insert(0, os.path.abspath(_src_dir))
-
 from fastmcp import FastMCP
 
-from confluence_fast_mcp.config import get_config
-from confluence_fast_mcp.pickle_loader import PickleLoader
-from confluence_fast_mcp.indexer import ConfluenceIndexer
-from confluence_fast_mcp.converters import html_to_markdown, html_to_text
-from confluence_fast_mcp.search import translate_cql
-from confluence_fast_mcp.fallback import ConfluenceFallbackClient
+from config import get_config
+from pickle_loader import PickleLoader
+from indexer import ConfluenceIndexer
+from converters import html_to_markdown, html_to_text
+from search import translate_cql
+from fallback import ConfluenceFallbackClient
 
 # Setup logging
 logging.basicConfig(
