@@ -26,7 +26,7 @@ var store *DataStore
 func main() {
 	stdio := flag.Bool("stdio", false, "Run in stdio mode (for Claude Desktop)")
 	port := flag.Int("port", 8070, "HTTP port (default: 8070)")
-	dataDir := flag.String("data-dir", "../json_data", "Directory containing JSON files")
+	dataDir := flag.String("data-dir", "../temp", "Directory containing .pkl pickle files")
 	flag.Parse()
 
 	var err error
