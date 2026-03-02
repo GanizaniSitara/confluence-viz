@@ -36,7 +36,7 @@ func main() {
 
 	stdio := flag.Bool("stdio", false, "Run in stdio mode (for Claude Desktop)")
 	port := flag.Int("port", 8070, "HTTP port (default: 8070)")
-	dataDir := flag.String("data-dir", "../json_data", "Directory containing JSON files")
+	dataDir := flag.String("data-dir", "../temp", "Directory containing .pkl pickle files")
 	indexDir := flag.String("index-dir", "./index_data", "Directory to store/load index")
 	flag.Parse()
 
@@ -78,7 +78,7 @@ func main() {
 
 func buildIndexCmd() {
 	fs := flag.NewFlagSet("build-index", flag.ExitOnError)
-	dataDir := fs.String("data-dir", "../json_data", "Directory containing JSON files")
+	dataDir := fs.String("data-dir", "../temp", "Directory containing .pkl pickle files")
 	indexDir := fs.String("index-dir", "./index_data", "Directory to store index")
 	fs.Parse(os.Args[2:])
 

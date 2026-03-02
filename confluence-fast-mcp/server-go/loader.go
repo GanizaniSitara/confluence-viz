@@ -1,41 +1,42 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+
+	"github.com/nlpodyssey/gopickle/pickle"
+	"github.com/nlpodyssey/gopickle/types"
 )
 
-// Space represents a Confluence space loaded from JSON.
+// Space represents a Confluence space.
 type Space struct {
-	SpaceKey     string `json:"space_key"`
-	Name         string `json:"name"`
-	TotalPages   int    `json:"total_pages_in_space"`
-	SampledPages []Page `json:"sampled_pages"`
+	SpaceKey   string
+	Name       string
+	TotalPages int
+	Pages      []*Page
 }
 
 // Page represents a Confluence page.
 type Page struct {
-	ID            string    `json:"id"`
-	Title         string    `json:"title"`
-	ParentID      string    `json:"parent_id"`
-	BodyHTML      string    `json:"body_html"`
-	BodyText      string    `json:"body_text"`
-	VersionNumber int       `json:"version_number"`
-	VersionWhen   string    `json:"version_when"`
-	VersionBy     string    `json:"version_by"`
-	Labels        []string  `json:"labels"`
-	AncestorIDs   []string  `json:"ancestor_ids"`
-	Comments      []Comment `json:"comments"`
+	ID            string
+	Title         string
+	ParentID      string
+	BodyHTML      string
+	BodyText      string // pre-extracted for search
+	VersionNumber int
+	VersionWhen   string
+	VersionBy     string
+	Labels        []string
+	Comments      []Comment
 }
 
 // Comment represents a page comment.
 type Comment struct {
-	Author   string `json:"author"`
-	BodyHTML string `json:"body_html"`
+	Author   string
+	BodyHTML string
 }
 
 // PageResult wraps a page with its space key.
@@ -52,8 +53,8 @@ type DataStore struct {
 	childrenByParent map[string][]PageResult
 }
 
-// NewDataStore loads all JSON files from the given directory.
-func NewDataStore(jsonDir string) (*DataStore, error) {
+// NewDataStore loads all pickle files from the given directory.
+func NewDataStore(pickleDir string) (*DataStore, error) {
 	ds := &DataStore{
 		spaces:           make(map[string]*Space),
 		pagesByID:        make(map[string]PageResult),
@@ -61,59 +62,288 @@ func NewDataStore(jsonDir string) (*DataStore, error) {
 		childrenByParent: make(map[string][]PageResult),
 	}
 
-	files, err := filepath.Glob(filepath.Join(jsonDir, "*.json"))
+	files, err := filepath.Glob(filepath.Join(pickleDir, "*.pkl"))
 	if err != nil {
-		return nil, fmt.Errorf("glob json files: %w", err)
+		return nil, fmt.Errorf("glob pickle files: %w", err)
 	}
 	if len(files) == 0 {
-		return nil, fmt.Errorf("no .json files found in %s (run convert_to_json.py first)", jsonDir)
+		return nil, fmt.Errorf("no .pkl files found in %s", pickleDir)
 	}
 
 	for _, f := range files {
-		if err := ds.loadFile(f); err != nil {
+		if err := ds.loadPickle(f); err != nil {
 			log.Printf("Warning: skipping %s: %v", f, err)
 		}
 	}
 
-	log.Printf("Loaded %d spaces with %d pages from %s", len(ds.spaces), len(ds.pagesByID), jsonDir)
+	log.Printf("Loaded %d spaces with %d pages from %s", len(ds.spaces), len(ds.pagesByID), pickleDir)
 	return ds, nil
 }
 
-func (ds *DataStore) loadFile(path string) error {
-	data, err := os.ReadFile(path)
+func (ds *DataStore) loadPickle(path string) error {
+	raw, err := pickle.Load(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("unpickle %s: %w", path, err)
 	}
 
-	var space Space
-	if err := json.Unmarshal(data, &space); err != nil {
-		return fmt.Errorf("parse %s: %w", path, err)
-	}
-	if space.SpaceKey == "" {
-		return fmt.Errorf("no space_key in %s", path)
+	d, ok := asDict(raw)
+	if !ok {
+		return fmt.Errorf("%s: root is not a dict", path)
 	}
 
-	ds.spaces[space.SpaceKey] = &space
+	spaceKey := dictStr(d, "space_key")
+	if spaceKey == "" {
+		return fmt.Errorf("%s: no space_key", path)
+	}
 
-	for i := range space.SampledPages {
-		page := &space.SampledPages[i]
-		pr := PageResult{SpaceKey: space.SpaceKey, Page: page}
+	space := &Space{
+		SpaceKey:   spaceKey,
+		Name:       dictStr(d, "name"),
+		TotalPages: dictInt(d, "total_pages_in_space"),
+	}
 
-		if page.ID != "" {
-			ds.pagesByID[page.ID] = pr
+	pagesList, _ := asList(dictVal(d, "sampled_pages"))
+	if pagesList != nil {
+		for _, raw := range *pagesList {
+			pd, ok := asDict(raw)
+			if !ok {
+				continue
+			}
+			page := extractPage(pd)
+			if page.BodyText == "" && page.BodyHTML != "" {
+				page.BodyText = stripHTMLForSearch(page.BodyHTML)
+			}
+
+			space.Pages = append(space.Pages, page)
+			pr := PageResult{SpaceKey: spaceKey, Page: page}
+
+			if page.ID != "" {
+				ds.pagesByID[page.ID] = pr
+			}
+			if page.Title != "" {
+				key := strings.ToLower(page.Title)
+				ds.pagesByTitle[key] = append(ds.pagesByTitle[key], pr)
+			}
+			if page.ParentID != "" {
+				ds.childrenByParent[page.ParentID] = append(ds.childrenByParent[page.ParentID], pr)
+			}
 		}
-		if page.Title != "" {
-			key := strings.ToLower(page.Title)
-			ds.pagesByTitle[key] = append(ds.pagesByTitle[key], pr)
-		}
-		if page.ParentID != "" {
-			ds.childrenByParent[page.ParentID] = append(ds.childrenByParent[page.ParentID], pr)
-		}
 	}
+
+	if space.TotalPages == 0 {
+		space.TotalPages = len(space.Pages)
+	}
+	ds.spaces[spaceKey] = space
 	return nil
 }
 
-// GetPageByID looks up a page by its numeric ID.
+// ---------------------------------------------------------------------------
+// Page extraction from pickle dict
+// ---------------------------------------------------------------------------
+
+func extractPage(d *types.Dict) *Page {
+	p := &Page{
+		ID:    anyToStr(dictVal(d, "id")),
+		Title: dictStr(d, "title"),
+	}
+
+	// Parent ID: try parent_id, then last ancestor
+	p.ParentID = anyToStr(dictVal(d, "parent_id"))
+	if p.ParentID == "" {
+		if anc, ok := asList(dictVal(d, "ancestors")); ok && anc.Len() > 0 {
+			if last, ok := asDict(anc.Get(anc.Len() - 1)); ok {
+				p.ParentID = anyToStr(dictVal(last, "id"))
+			}
+		}
+	}
+
+	// Body HTML: body.storage.value
+	if body, ok := asDict(dictVal(d, "body")); ok {
+		if storage, ok := asDict(dictVal(body, "storage")); ok {
+			p.BodyHTML = dictStr(storage, "value")
+		} else if sv, ok := dictVal(body, "storage").(string); ok {
+			p.BodyHTML = sv
+		}
+	} else if bv, ok := dictVal(d, "body").(string); ok {
+		p.BodyHTML = bv
+	}
+
+	// Version
+	if ver, ok := asDict(dictVal(d, "version")); ok {
+		p.VersionNumber = dictInt(ver, "number")
+		p.VersionWhen = dictStr(ver, "when")
+		if by, ok := asDict(dictVal(ver, "by")); ok {
+			p.VersionBy = dictStr(by, "displayName")
+		}
+	}
+	if p.VersionNumber == 0 {
+		p.VersionNumber = 1
+	}
+
+	// Labels: try page.labels, then page.metadata.labels.results
+	p.Labels = extractLabels(d)
+
+	// Comments: try page.comments, then page.children.comment.results
+	p.Comments = extractComments(d)
+
+	return p
+}
+
+func extractLabels(d *types.Dict) []string {
+	var out []string
+
+	if labels, ok := asList(dictVal(d, "labels")); ok {
+		for i := 0; i < labels.Len(); i++ {
+			if ld, ok := asDict(labels.Get(i)); ok {
+				if n := dictStr(ld, "name"); n != "" {
+					out = append(out, n)
+				}
+			} else if s, ok := labels.Get(i).(string); ok {
+				out = append(out, s)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+
+	// Fallback: metadata.labels.results
+	if meta, ok := asDict(dictVal(d, "metadata")); ok {
+		labelsRaw := dictVal(meta, "labels")
+		if ld, ok := asDict(labelsRaw); ok {
+			if results, ok := asList(dictVal(ld, "results")); ok {
+				for i := 0; i < results.Len(); i++ {
+					if rd, ok := asDict(results.Get(i)); ok {
+						if n := dictStr(rd, "name"); n != "" {
+							out = append(out, n)
+						}
+					}
+				}
+			}
+		} else if ll, ok := asList(labelsRaw); ok {
+			for i := 0; i < ll.Len(); i++ {
+				if rd, ok := asDict(ll.Get(i)); ok {
+					if n := dictStr(rd, "name"); n != "" {
+						out = append(out, n)
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+func extractComments(d *types.Dict) []Comment {
+	var out []Comment
+
+	tryList := func(raw interface{}) {
+		if cl, ok := asList(raw); ok {
+			for i := 0; i < cl.Len(); i++ {
+				if cd, ok := asDict(cl.Get(i)); ok {
+					c := Comment{}
+					if ad, ok := asDict(dictVal(cd, "author")); ok {
+						c.Author = dictStr(ad, "displayName")
+					}
+					if bd, ok := asDict(dictVal(cd, "body")); ok {
+						if sd, ok := asDict(dictVal(bd, "storage")); ok {
+							c.BodyHTML = dictStr(sd, "value")
+						}
+					}
+					out = append(out, c)
+				}
+			}
+		}
+	}
+
+	// Try page.comments directly
+	tryList(dictVal(d, "comments"))
+	if len(out) > 0 {
+		return out
+	}
+
+	// Fallback: page.children.comment.results
+	if children, ok := asDict(dictVal(d, "children")); ok {
+		if commentD, ok := asDict(dictVal(children, "comment")); ok {
+			tryList(dictVal(commentD, "results"))
+		}
+	}
+	return out
+}
+
+// ---------------------------------------------------------------------------
+// Dict/List navigation helpers
+// ---------------------------------------------------------------------------
+
+func asDict(v interface{}) (*types.Dict, bool) {
+	d, ok := v.(*types.Dict)
+	return d, ok
+}
+
+func asList(v interface{}) (*types.List, bool) {
+	l, ok := v.(*types.List)
+	return l, ok
+}
+
+func dictVal(d *types.Dict, key string) interface{} {
+	if d == nil {
+		return nil
+	}
+	v, _ := d.Get(key)
+	return v
+}
+
+func dictStr(d *types.Dict, key string) string {
+	v := dictVal(d, key)
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+func dictInt(d *types.Dict, key string) int {
+	v := dictVal(d, key)
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	default:
+		return 0
+	}
+}
+
+func anyToStr(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	switch s := v.(type) {
+	case string:
+		return s
+	case int:
+		return fmt.Sprintf("%d", s)
+	case int64:
+		return fmt.Sprintf("%d", s)
+	default:
+		return fmt.Sprintf("%v", s)
+	}
+}
+
+var reHTMLTag = regexp.MustCompile(`<[^>]+>`)
+
+func stripHTMLForSearch(html string) string {
+	text := reHTMLTag.ReplaceAllString(html, " ")
+	return strings.Join(strings.Fields(text), " ")
+}
+
+// ---------------------------------------------------------------------------
+// Lookup methods
+// ---------------------------------------------------------------------------
+
 func (ds *DataStore) GetPageByID(id string) *PageResult {
 	pr, ok := ds.pagesByID[id]
 	if !ok {
@@ -122,11 +352,9 @@ func (ds *DataStore) GetPageByID(id string) *PageResult {
 	return &pr
 }
 
-// GetPageByTitle does a flexible title lookup with fallbacks.
 func (ds *DataStore) GetPageByTitle(title, spaceKey string) *PageResult {
 	titleLower := strings.ToLower(title)
 
-	// 1. Exact case-insensitive match
 	if results, ok := ds.pagesByTitle[titleLower]; ok {
 		for i := range results {
 			if spaceKey == "" || strings.EqualFold(results[i].SpaceKey, spaceKey) {
@@ -135,7 +363,7 @@ func (ds *DataStore) GetPageByTitle(title, spaceKey string) *PageResult {
 		}
 	}
 
-	// 2. Partial match — prefer closest length
+	// Partial match
 	type candidate struct {
 		pr   PageResult
 		diff int
@@ -159,14 +387,12 @@ func (ds *DataStore) GetPageByTitle(title, spaceKey string) *PageResult {
 			}
 		}
 	}
-
 	if best != nil {
 		return &best.pr
 	}
 	return nil
 }
 
-// GetChildren returns child pages of a parent.
 func (ds *DataStore) GetChildren(parentID string, limit, start int) []PageResult {
 	children := ds.childrenByParent[parentID]
 	if start >= len(children) {
@@ -179,23 +405,19 @@ func (ds *DataStore) GetChildren(parentID string, limit, start int) []PageResult
 	return children[start:end]
 }
 
-// GetPagesInSpace returns pages from a specific space.
 func (ds *DataStore) GetPagesInSpace(spaceKey string, limit int) []*Page {
 	space, ok := ds.spaces[strings.ToUpper(spaceKey)]
 	if !ok {
-		// Try original case
 		space, ok = ds.spaces[spaceKey]
 		if !ok {
 			return nil
 		}
 	}
-	pages := space.SampledPages
+	pages := space.Pages
 	if limit > len(pages) {
 		limit = len(pages)
 	}
 	result := make([]*Page, limit)
-	for i := 0; i < limit; i++ {
-		result[i] = &pages[i]
-	}
+	copy(result, pages[:limit])
 	return result
 }
