@@ -4,64 +4,61 @@
 import sys
 import os
 
-# Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
-
 def test_imports():
     """Test that all modules can be imported."""
     print("Testing imports...")
 
     try:
-        from confluence_fast_mcp import config
+        import config
         print("[PASS] config module")
     except ImportError as e:
         print(f"[FAIL] config module: {e}")
         return False
 
     try:
-        from confluence_fast_mcp import models
+        import models
         print("[PASS] models module")
     except ImportError as e:
         print(f"[FAIL] models module: {e}")
         return False
 
     try:
-        from confluence_fast_mcp import pickle_loader
+        import pickle_loader
         print("[PASS] pickle_loader module")
     except ImportError as e:
         print(f"[FAIL] pickle_loader module: {e}")
         return False
 
     try:
-        from confluence_fast_mcp import converters
+        import converters
         print("[PASS] converters module")
     except ImportError as e:
         print(f"[FAIL] converters module: {e}")
         return False
 
     try:
-        from confluence_fast_mcp import search
+        import search
         print("[PASS] search module")
     except ImportError as e:
         print(f"[FAIL] search module: {e}")
         return False
 
     try:
-        from confluence_fast_mcp import indexer
+        import indexer
         print("[PASS] indexer module")
     except ImportError as e:
         print(f"[FAIL] indexer module: {e}")
         return False
 
     try:
-        from confluence_fast_mcp import fallback
+        import fallback
         print("[PASS] fallback module")
     except ImportError as e:
         print(f"[FAIL] fallback module: {e}")
         return False
 
     try:
-        from confluence_fast_mcp import server
+        import server
         print("[PASS] server module")
     except ImportError as e:
         print(f"[FAIL] server module: {e}")
@@ -74,7 +71,7 @@ def test_converters():
     """Test HTML to ADF conversion."""
     print("\nTesting converters...")
 
-    from confluence_fast_mcp.converters import html_to_adf, html_to_text
+    from converters import html_to_adf, html_to_text
 
     # Test simple paragraph
     html = "<p>Hello world</p>"
@@ -99,7 +96,7 @@ def test_search():
     """Test CQL parsing."""
     print("\nTesting CQL parsing...")
 
-    from confluence_fast_mcp.search import translate_cql
+    from search import translate_cql
 
     # Test simple text search
     query, space = translate_cql('text ~ "kubernetes"')
@@ -128,7 +125,7 @@ def test_config():
     """Test configuration loading."""
     print("\nTesting configuration...")
 
-    from confluence_fast_mcp.config import get_config
+    from config import get_config
 
     config = get_config()
     assert config.pickle_dir is not None, "Pickle dir should be set"
