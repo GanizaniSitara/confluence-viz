@@ -16,12 +16,9 @@ Supports 30+ concurrent users for hackathons and team collaboration.
 
 ```bash
 cd confluence-fast-mcp
-pip install -r requirements.txt
-```
-
-Or install dependencies individually:
-```bash
-pip install fastmcp whoosh beautifulsoup4 lxml pydantic requests python-dateutil
+pip install fastmcp beautifulsoup4 lxml pydantic requests python-dateutil
+# Optional, for full-text search server:
+pip install whoosh3
 ```
 
 ## Configuration
@@ -59,11 +56,11 @@ Features:
 
 ### Option 2: Full Server with WHOOSH Search
 
-Build search index first (for advanced full-text search):
+Build search index first, then run:
 
 ```bash
 python build_index.py
-PYTHONPATH=$PWD/src python -m confluence_fast_mcp.server
+python server.py
 ```
 
 Features:
@@ -97,10 +94,7 @@ Add to your MCP settings file:
   "mcpServers": {
     "confluence-fast": {
       "command": "/usr/bin/python",
-      "args": ["-m", "confluence_fast_mcp.server"],
-      "env": {
-        "PYTHONPATH": "/home/user/git/confluence-viz/confluence-fast-mcp/src"
-      }
+      "args": ["/home/user/git/confluence-viz/confluence-fast-mcp/server.py"]
     }
   }
 }
@@ -164,7 +158,11 @@ python build_index.py
 ## Testing
 
 ```bash
+# Quick smoke test
 python test_basic.py
+
+# Full pytest suite
+pytest tests/ -v
 ```
 
 ## Troubleshooting
@@ -174,8 +172,8 @@ python test_basic.py
 - Check `pickle_dir` in `settings.ini` points to correct location
 
 **"Module not found"**
-- Install dependencies: `pip install -r requirements.txt`
-- Ensure `PYTHONPATH` is set correctly
+- Install dependencies: `pip install fastmcp beautifulsoup4 lxml pydantic requests`
+- Make sure you're running from the `confluence-fast-mcp/` directory
 
 **"Index not found" / "Index is empty"**
 - Run `python build_index.py` to create the search index
@@ -190,11 +188,17 @@ python test_basic.py
 
 ## Architecture
 
-- `server.py` - FastMCP server with 8 tools
-- `indexer.py` - WHOOSH full-text search
-- `converters.py` - HTML to ADF conversion
-- `search.py` - CQL query parsing
-- `pickle_loader.py` - Data loading and caching
-- `config.py` - Configuration management
-- `models.py` - Response models
-- `fallback.py` - Optional live Confluence API client
+All modules are flat scripts in the project root (no package installation needed):
+
+| File | Purpose |
+|------|---------|
+| `simple_server.py` | FastMCP server, in-memory search (recommended) |
+| `server.py` | FastMCP server with WHOOSH full-text search |
+| `build_index.py` | Builds WHOOSH index from pickles |
+| `config.py` | Configuration management (`settings.ini`) |
+| `pickle_loader.py` | Loads and indexes pickled Confluence data |
+| `converters.py` | HTML to Markdown/ADF conversion |
+| `search.py` | CQL query parsing |
+| `indexer.py` | WHOOSH full-text search index |
+| `fallback.py` | Optional live Confluence API client |
+| `models.py` | Pydantic response models |
