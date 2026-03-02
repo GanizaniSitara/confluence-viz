@@ -485,19 +485,27 @@ def initialize_server():
 
 def main():
     """Main entry point."""
-    import sys
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Simple Confluence FastMCP server")
+    parser.add_argument("--stdio", action="store_true", help="Run in stdio mode (for Claude Desktop)")
+    parser.add_argument("--port", type=int, default=8070, help="HTTP port (default: 8070)")
+    # Legacy support: --http [port]
+    parser.add_argument("--http", nargs="?", type=int, const=8070, default=None, help=argparse.SUPPRESS)
+    args = parser.parse_args()
+
+    if args.http is not None:
+        args.port = args.http
 
     initialize_server()
 
-    # Check if running in HTTP mode
-    if len(sys.argv) > 1 and sys.argv[1] == "--http":
-        port = int(sys.argv[2]) if len(sys.argv) > 2 else 8070
-        host = "0.0.0.0"
-        logger.info(f"Starting Simple FastMCP server in HTTP mode on {host}:{port}...")
-        mcp.run(transport="sse", host=host, port=port)
-    else:
+    if args.stdio:
         logger.info("Starting Simple FastMCP server in stdio mode...")
         mcp.run(transport="stdio")
+    else:
+        host = "0.0.0.0"
+        logger.info(f"Starting Simple FastMCP server on http://{host}:{args.port} ...")
+        mcp.run(transport="sse", host=host, port=args.port)
 
 
 if __name__ == "__main__":
