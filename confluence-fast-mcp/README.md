@@ -188,6 +188,24 @@ python test_basic.py
 - Page retrieval: <10ms
 - Speedup: 10-100x vs live API
 
+## Windows Performance Guidance (Before a Go Rewrite)
+
+If your primary goal is **faster response time**, use this decision order:
+
+1. **`simple_server.py` first** (no index build, fastest startup, lower overhead)
+2. **`server.py` + WHOOSH** only when you need CQL/full-text queries
+
+WHOOSH is good for an embedded Python index, but it is **not the highest-performance option** on Windows for large full-text workloads. Before rewriting in Go, also consider:
+
+- **SQLite FTS5** (very fast embedded search, simple deployment)
+- **Meilisearch/OpenSearch/Elasticsearch** (best query performance at scale, but extra service to run)
+- **Running current Python server in WSL2** (often faster filesystem/index performance than native Windows Python)
+
+If we do move to Go, keep both variants to match current behavior:
+
+- `go/simple-server/` (equivalent to `simple_server.py`)
+- `go/full-server/` (equivalent to `server.py` with indexed full-text search)
+
 ## Architecture
 
 - `server.py` - FastMCP server with 8 tools
