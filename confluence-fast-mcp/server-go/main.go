@@ -40,15 +40,18 @@ func main() {
 	indexDir := flag.String("index-dir", "./index_data", "Directory to store/load index")
 	flag.Parse()
 
+	// Try loading a pre-built index first.  If one exists we can skip
+	// the expensive HTML-to-text extraction during pickle loading.
+	index, _ = LoadIndex(*indexDir)
+	skipBody := index != nil
+
 	var err error
-	store, err = NewDataStore(*dataDir)
+	store, err = NewDataStore(*dataDir, skipBody)
 	if err != nil {
 		log.Fatalf("Failed to load data: %v", err)
 	}
 
-	// Load or build index
-	index, err = LoadIndex(*indexDir)
-	if err != nil {
+	if index == nil {
 		log.Printf("No existing index found, building fresh index...")
 		index = BuildIndex(store)
 		if err := index.Save(*indexDir); err != nil {
@@ -82,7 +85,7 @@ func buildIndexCmd() {
 	indexDir := fs.String("index-dir", "./index_data", "Directory to store index")
 	fs.Parse(os.Args[2:])
 
-	ds, err := NewDataStore(*dataDir)
+	ds, err := NewDataStore(*dataDir, false) // need body text for indexing
 	if err != nil {
 		log.Fatalf("Failed to load data: %v", err)
 	}

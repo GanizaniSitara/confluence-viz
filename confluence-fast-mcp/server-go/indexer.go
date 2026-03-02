@@ -66,7 +66,13 @@ func (idx *InvertedIndex) indexPage(id string, pr PageResult) {
 	idx.Docs[id] = DocMeta{SpaceKey: pr.SpaceKey, Title: pr.Page.Title}
 
 	titleTokens := tokenize(pr.Page.Title)
-	bodyTokens := tokenize(pr.Page.BodyText)
+
+	// Use pre-extracted BodyText if available, otherwise strip HTML now
+	bodyText := pr.Page.BodyText
+	if bodyText == "" && pr.Page.BodyHTML != "" {
+		bodyText = stripHTMLForSearch(pr.Page.BodyHTML)
+	}
+	bodyTokens := tokenize(bodyText)
 
 	// Count term frequencies
 	titleFreqs := termFreqs(titleTokens)
