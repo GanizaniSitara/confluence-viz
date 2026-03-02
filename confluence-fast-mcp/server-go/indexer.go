@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/gob"
 	"fmt"
 	"log"
 	"math"
@@ -14,27 +14,27 @@ import (
 )
 
 // InvertedIndex provides full-text search with TF-IDF scoring.
-// Replaces WHOOSH for this use case.
+// Persisted to disk as a gob-encoded binary file.
 type InvertedIndex struct {
 	// term -> list of postings (docID + fields that matched)
-	Postings map[string][]Posting `json:"postings"`
+	Postings map[string][]Posting
 	// docID -> document metadata
-	Docs map[string]DocMeta `json:"docs"`
+	Docs map[string]DocMeta
 	// total documents
-	NumDocuments int `json:"num_documents"`
+	NumDocuments int
 }
 
 // Posting is a single term occurrence in a document.
 type Posting struct {
-	DocID      string  `json:"d"`
-	TitleFreq  float64 `json:"tf,omitempty"` // frequency in title (boosted)
-	BodyFreq   float64 `json:"bf,omitempty"` // frequency in body
+	DocID     string
+	TitleFreq float64 // frequency in title (boosted)
+	BodyFreq  float64 // frequency in body
 }
 
 // DocMeta stores document metadata in the index.
 type DocMeta struct {
-	SpaceKey string `json:"sk"`
-	Title    string `json:"t"`
+	SpaceKey string
+	Title    string
 }
 
 // BuildIndex creates a new inverted index from a DataStore.
@@ -184,33 +184,40 @@ func (idx *InvertedIndex) SearchIndex(query string, spaceKey string, titleOnly b
 	return results
 }
 
-// Save writes the index to disk as JSON.
+// Save writes the index to disk as a gob-encoded binary file.
 func (idx *InvertedIndex) Save(dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	data, err := json.Marshal(idx)
+	path := filepath.Join(dir, "index.gob")
+	f, err := os.Create(path)
 	if err != nil {
-		return fmt.Errorf("marshal index: %w", err)
-	}
-	path := filepath.Join(dir, "index.json")
-	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return err
 	}
-	log.Printf("Index saved to %s (%.1f MB)", path, float64(len(data))/1024/1024)
+	defer f.Close()
+
+	if err := gob.NewEncoder(f).Encode(idx); err != nil {
+		return fmt.Errorf("encode index: %w", err)
+	}
+	info, _ := f.Stat()
+	if info != nil {
+		log.Printf("Index saved to %s (%.1f MB)", path, float64(info.Size())/1024/1024)
+	}
 	return nil
 }
 
-// LoadIndex reads a previously saved index from disk.
+// LoadIndex reads a previously saved gob index from disk.
 func LoadIndex(dir string) (*InvertedIndex, error) {
-	path := filepath.Join(dir, "index.json")
-	data, err := os.ReadFile(path)
+	path := filepath.Join(dir, "index.gob")
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
+	defer f.Close()
+
 	var idx InvertedIndex
-	if err := json.Unmarshal(data, &idx); err != nil {
-		return nil, fmt.Errorf("parse index: %w", err)
+	if err := gob.NewDecoder(f).Decode(&idx); err != nil {
+		return nil, fmt.Errorf("decode index: %w", err)
 	}
 	return &idx, nil
 }
