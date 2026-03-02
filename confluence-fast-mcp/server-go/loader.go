@@ -51,15 +51,19 @@ type DataStore struct {
 	pagesByID        map[string]PageResult
 	pagesByTitle     map[string][]PageResult // lowercase title -> results
 	childrenByParent map[string][]PageResult
+	skipBodyText     bool // when true, skip expensive HTML→text extraction
 }
 
 // NewDataStore loads all pickle files from the given directory.
-func NewDataStore(pickleDir string) (*DataStore, error) {
+// If skipBodyText is true, BodyText is left empty (saves time when a
+// pre-built search index already exists and body text isn't needed).
+func NewDataStore(pickleDir string, skipBodyText bool) (*DataStore, error) {
 	ds := &DataStore{
 		spaces:           make(map[string]*Space),
 		pagesByID:        make(map[string]PageResult),
 		pagesByTitle:     make(map[string][]PageResult),
 		childrenByParent: make(map[string][]PageResult),
+		skipBodyText:     skipBodyText,
 	}
 
 	files, err := filepath.Glob(filepath.Join(pickleDir, "*.pkl"))
@@ -110,7 +114,7 @@ func (ds *DataStore) loadPickle(path string) error {
 				continue
 			}
 			page := extractPage(pd)
-			if page.BodyText == "" && page.BodyHTML != "" {
+			if !ds.skipBodyText && page.BodyText == "" && page.BodyHTML != "" {
 				page.BodyText = stripHTMLForSearch(page.BodyHTML)
 			}
 
