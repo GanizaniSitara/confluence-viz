@@ -50,6 +50,175 @@ def html_to_text(html_content: str) -> str:
     return soup.get_text(separator=' ', strip=True)
 
 
+def html_to_markdown(html_content: str) -> str:
+    """Convert HTML storage format to Markdown.
+
+    Handles headings, lists, tables, links, bold/italic, code blocks,
+    and Confluence macros. Falls back to plain text on errors.
+    """
+    if not html_content:
+        return ""
+
+    try:
+        soup = BeautifulSoup(html_content, _BS4_PARSER)
+        return _nodes_to_md(soup).strip()
+    except Exception as e:
+        logger.warning(f"Error converting HTML to markdown: {e}")
+        return html_to_text(html_content)
+
+
+def _nodes_to_md(element, depth: int = 0) -> str:
+    """Recursively convert HTML nodes to Markdown."""
+    parts: List[str] = []
+
+    for child in element.children:
+        if isinstance(child, NavigableString):
+            text = str(child)
+            if text.strip():
+                parts.append(text)
+        elif isinstance(child, Tag):
+            md = _tag_to_md(child, depth)
+            if md is not None:
+                parts.append(md)
+
+    return ''.join(parts)
+
+
+def _tag_to_md(tag: Tag, depth: int = 0) -> Optional[str]:
+    """Convert a single HTML tag to Markdown."""
+    name = tag.name.lower()
+
+    # Headings
+    if name in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
+        level = int(name[1])
+        text = tag.get_text(strip=True)
+        return f"\n\n{'#' * level} {text}\n\n"
+
+    # Paragraphs
+    if name == 'p':
+        inner = _inline_to_md(tag)
+        return f"\n\n{inner}\n\n" if inner.strip() else ""
+
+    # Bold / italic / code / strikethrough
+    if name in ('strong', 'b'):
+        return f"**{_inline_to_md(tag)}**"
+    if name in ('em', 'i'):
+        return f"*{_inline_to_md(tag)}*"
+    if name == 'code':
+        return f"`{tag.get_text()}`"
+    if name in ('s', 'strike', 'del'):
+        return f"~~{_inline_to_md(tag)}~~"
+
+    # Links
+    if name == 'a':
+        href = tag.get('href', '')
+        text = _inline_to_md(tag) or href
+        return f"[{text}]({href})"
+
+    # Images
+    if name == 'img':
+        alt = tag.get('alt', '')
+        src = tag.get('src', '')
+        return f"![{alt}]({src})"
+
+    # Line breaks
+    if name == 'br':
+        return "  \n"
+
+    # Horizontal rules
+    if name == 'hr':
+        return "\n\n---\n\n"
+
+    # Pre / code blocks
+    if name == 'pre':
+        code_tag = tag.find('code')
+        code_text = code_tag.get_text() if code_tag else tag.get_text()
+        return f"\n\n```\n{code_text}\n```\n\n"
+
+    # Unordered lists
+    if name == 'ul':
+        items = []
+        for li in tag.find_all('li', recursive=False):
+            text = _inline_to_md(li).strip()
+            nested = li.find(['ul', 'ol'], recursive=False)
+            nested_md = ""
+            if nested:
+                nested_md = "\n" + _tag_to_md(nested, depth + 1)
+            prefix = "  " * depth + "- "
+            items.append(f"{prefix}{text}{nested_md}")
+        return "\n" + "\n".join(items) + "\n"
+
+    # Ordered lists
+    if name == 'ol':
+        items = []
+        for i, li in enumerate(tag.find_all('li', recursive=False), 1):
+            text = _inline_to_md(li).strip()
+            nested = li.find(['ul', 'ol'], recursive=False)
+            nested_md = ""
+            if nested:
+                nested_md = "\n" + _tag_to_md(nested, depth + 1)
+            prefix = "  " * depth + f"{i}. "
+            items.append(f"{prefix}{text}{nested_md}")
+        return "\n" + "\n".join(items) + "\n"
+
+    # Tables
+    if name == 'table':
+        return _table_to_md(tag)
+
+    # Block quotes
+    if name == 'blockquote':
+        inner = _nodes_to_md(tag, depth).strip()
+        lines = inner.split('\n')
+        return "\n" + "\n".join(f"> {line}" for line in lines) + "\n"
+
+    # Confluence macros
+    if name == 'ac:structured-macro':
+        macro_name = tag.get('ac:name', 'unknown')
+        body = tag.find('ac:rich-text-body') or tag.find('ac:plain-text-body')
+        if body:
+            return f"\n\n> **{macro_name}:** {body.get_text(strip=True)}\n\n"
+        return f"\n\n> **[{macro_name}]**\n\n"
+
+    # Divs and generic containers - recurse
+    if name in ('div', 'section', 'article', 'span', 'body', '[document]'):
+        return _nodes_to_md(tag, depth)
+
+    # Unknown tags - extract text
+    text = tag.get_text(strip=True)
+    return text if text else None
+
+
+def _inline_to_md(element) -> str:
+    """Convert inline elements to markdown text."""
+    parts: List[str] = []
+    for child in element.children:
+        if isinstance(child, NavigableString):
+            parts.append(str(child))
+        elif isinstance(child, Tag):
+            md = _tag_to_md(child)
+            if md:
+                parts.append(md)
+    return ''.join(parts)
+
+
+def _table_to_md(table_tag: Tag) -> str:
+    """Convert HTML table to Markdown table."""
+    rows = table_tag.find_all('tr')
+    if not rows:
+        return ""
+
+    md_rows: List[str] = []
+    for i, tr in enumerate(rows):
+        cells = tr.find_all(['td', 'th'])
+        cell_texts = [c.get_text(strip=True).replace('|', '\\|') for c in cells]
+        md_rows.append("| " + " | ".join(cell_texts) + " |")
+        # Add separator after header row
+        if i == 0:
+            md_rows.append("| " + " | ".join("---" for _ in cells) + " |")
+
+    return "\n\n" + "\n".join(md_rows) + "\n\n"
+
+
 def html_to_adf(html_content: str) -> Dict[str, Any]:
     """Convert HTML storage format to Atlassian Document Format (ADF).
 

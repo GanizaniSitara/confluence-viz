@@ -144,7 +144,7 @@ _fastmcp_mod.settings.enable_rich_logging = False
 from fastmcp import FastMCP
 from confluence_fast_mcp.config import get_config
 from confluence_fast_mcp.pickle_loader import PickleLoader
-from confluence_fast_mcp.converters import html_to_adf
+from confluence_fast_mcp.converters import html_to_markdown, html_to_text
 from confluence_fast_mcp.search import CQLParser
 
 # Initialize FastMCP server
@@ -154,307 +154,313 @@ mcp = FastMCP("confluence-simple")
 config = None
 pickle_loader = None
 
-# Fake cloud ID for local server
-FAKE_CLOUD_ID = "local-confluence-simple"
+
+# ---------------------------------------------------------------------------
+# Tools – sooperset/mcp-atlassian compatible names & signatures
+# See: https://github.com/sooperset/mcp-atlassian
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def confluence_search(
+    query: str,
+    limit: int = 10,
+    spaces_filter: Optional[str] = None,
+) -> str:
+    """Search Confluence content.
+
+    Args:
+        query: Search query - simple text or CQL query string
+        limit: Maximum number of results (1-50)
+        spaces_filter: Comma-separated list of space keys to filter results
+    """
+    # Check if query looks like CQL (contains operators like ~, =, AND, OR)
+    is_cql = any(op in query for op in (' ~ ', ' = ', ' AND ', ' OR '))
+
+    if is_cql:
+        parser = CQLParser()
+        search_terms, cql_space = parser.parse(query)
+        title_only = 'title:' in search_terms or query.strip().startswith('title')
+        clean_query = search_terms.replace('title:', '').replace('^2', '')
+        clean_query = clean_query.strip('() ')
+        space_key = cql_space or (spaces_filter.split(',')[0].strip() if spaces_filter else None)
+
+        if clean_query == '*' or not clean_query:
+            if space_key:
+                pages = pickle_loader.get_pages_in_space(space_key, limit=limit)
+                return _format_search_results(
+                    [{'space_key': space_key, 'page': p} for p in pages], query
+                )
+            return f"No results found for: {query}"
+
+        matches = pickle_loader.search_content(
+            clean_query, space_key=space_key, title_only=title_only, limit=limit
+        )
+    else:
+        # Simple text search
+        space_key = spaces_filter.split(',')[0].strip() if spaces_filter else None
+        matches = pickle_loader.search_content(query, space_key=space_key, limit=limit)
+
+    return _format_search_results(matches, query)
 
 
 @mcp.tool()
-def getAccessibleAtlassianResources() -> List[Dict[str, Any]]:
-    """Get accessible Atlassian resources."""
-    return [{
-        "id": FAKE_CLOUD_ID,
-        "name": "Local Confluence (Simple)",
-        "url": "http://localhost",
-        "scopes": ["read:confluence-content.all"]
-    }]
-
-
-@mcp.tool()
-def atlassianUserInfo() -> Dict[str, Any]:
-    """Get current user info."""
-    return {
-        "accountId": "local-user",
-        "accountType": "atlassian",
-        "email": "local@example.com",
-        "displayName": "Local User"
-    }
-
-
-@mcp.tool()
-def getConfluenceSpaces(
-    cloudId: Optional[str] = None,
-    searchString: Optional[str] = None,
-    maxResults: int = 50
-) -> List[Dict[str, Any]]:
-    """Get Confluence spaces."""
-    spaces = pickle_loader.get_all_spaces()
-
-    # Apply search filter
-    if searchString:
-        search_lower = searchString.lower()
-        spaces = [
-            s for s in spaces
-            if search_lower in s['name'].lower() or search_lower in s['key'].lower()
-        ]
-
-    # Limit results
-    spaces = spaces[:maxResults]
-
-    return [
-        {
-            "id": space['key'],
-            "key": space['key'],
-            "name": space['name'],
-            "type": "global",
-            "status": "current"
-        }
-        for space in spaces
-    ]
-
-
-@mcp.tool()
-def getConfluencePage(
-    cloudId: str,
-    pageIdOrTitleAndSpaceKey: str,
-    spaceKey: Optional[str] = None
-) -> Dict[str, Any]:
+def confluence_get_page(
+    page_id: Optional[str] = None,
+    title: Optional[str] = None,
+    space_key: Optional[str] = None,
+    include_metadata: bool = True,
+    convert_to_markdown: bool = True,
+) -> str:
     """Get a Confluence page by ID or title.
 
-    Supports page ID, exact title+spaceKey, or flexible title matching
-    (case-insensitive, partial match).
+    Args:
+        page_id: Numeric page ID from URL
+        title: Exact page title
+        space_key: Space key (required when using title)
+        include_metadata: Whether to include creation date, version, labels
+        convert_to_markdown: Whether to convert HTML body to markdown
     """
-    # Try to get by ID first
-    result = pickle_loader.get_page_by_id(pageIdOrTitleAndSpaceKey)
+    result = None
 
-    # If not found by ID, try flexible title lookup
-    if not result:
-        result = pickle_loader.find_page_by_title_flexible(
-            pageIdOrTitleAndSpaceKey, space_key=spaceKey
-        )
+    # Try page_id first
+    if page_id:
+        result = pickle_loader.get_page_by_id(page_id)
+
+    # Fall back to title lookup
+    if not result and title:
+        result = pickle_loader.find_page_by_title_flexible(title, space_key=space_key)
+
+    # Last resort: treat page_id as title
+    if not result and page_id and not page_id.isdigit():
+        result = pickle_loader.find_page_by_title_flexible(page_id, space_key=space_key)
 
     if not result:
-        return {
-            "isError": True,
-            "message": f"Page not found: {pageIdOrTitleAndSpaceKey}"
-        }
+        identifier = page_id or title or "unknown"
+        return f"Page not found: {identifier}"
 
     page = result['page']
     page_space_key = result['space_key']
 
-    return _format_page_response(page, page_space_key)
+    return _format_page_text(page, page_space_key,
+                             include_metadata=include_metadata,
+                             convert_to_markdown=convert_to_markdown)
 
 
 @mcp.tool()
-def getPagesInConfluenceSpace(
-    cloudId: str,
-    spaceIdOrKey: str,
+def confluence_get_page_children(
+    parent_id: str,
+    expand: str = "version",
     limit: int = 25,
-    start: int = 0
-) -> Dict[str, Any]:
-    """Get pages in a Confluence space."""
-    pages = pickle_loader.get_pages_in_space(spaceIdOrKey, limit=limit, start=start)
+    include_content: bool = False,
+    convert_to_markdown: bool = True,
+    start: int = 0,
+    include_folders: bool = True,
+) -> str:
+    """Get child pages of a specific page.
 
-    if not pages:
-        return {
-            "results": [],
-            "start": start,
-            "limit": limit,
-            "size": 0
-        }
-
-    formatted_pages = [
-        _format_page_response(page, spaceIdOrKey, include_body=False)
-        for page in pages
-    ]
-
-    return {
-        "results": formatted_pages,
-        "start": start,
-        "limit": limit,
-        "size": len(formatted_pages)
-    }
-
-
-@mcp.tool()
-def search(query: str, limit: int = 50) -> List[Dict[str, Any]]:
-    """Search across all pages by title and body content.
-
-    Title matches are ranked higher than body content matches.
+    Args:
+        parent_id: ID of the parent page
+        expand: Fields to expand in the response
+        limit: Maximum child items to return (1-50)
+        include_content: Whether to include page body content
+        convert_to_markdown: Convert to markdown or return raw HTML
+        start: Starting index for pagination
+        include_folders: Whether to include child folders
     """
-    matches = pickle_loader.search_content(query, limit=limit)
-    results = []
+    children = pickle_loader.get_children(parent_id, limit=limit, start=start)
 
-    for match in matches:
-        page = match['page']
-        space_key = match['space_key']
-        match_type = match.get('match_type', 'title')
-        results.append({
-            "id": f"ari:cloud:confluence:{FAKE_CLOUD_ID}:page/{page.get('id')}",
-            "title": page.get('title', ''),
-            "url": f"http://localhost/spaces/{space_key}/pages/{page.get('id')}",
-            "contentType": "page",
-            "matchType": match_type,
-            "space": {
-                "key": space_key,
-                "name": space_key
-            },
-            "excerpt": page.get('title', '')[:200]
-        })
+    if not children:
+        return f"No child pages found for parent {parent_id}"
 
-    return results
+    lines = [f"Found {len(children)} child page(s) of page {parent_id}:\n"]
+
+    for i, child in enumerate(children, 1):
+        page = child['page']
+        sk = child['space_key']
+        page_id = page.get('id', '')
+        page_title = page.get('title', '')
+        lines.append(f"{i}. **{page_title}** (ID: {page_id}, Space: {sk})")
+
+        if include_content:
+            body_html = _extract_body_html(page)
+            if convert_to_markdown:
+                body = html_to_markdown(body_html)
+            else:
+                body = body_html
+            if body:
+                # Indent content under the list item
+                for line in body.strip().split('\n')[:10]:
+                    lines.append(f"   {line}")
+                lines.append("")
+
+    return "\n".join(lines)
 
 
 @mcp.tool()
-def searchConfluenceUsingCql(
-    cloudId: str,
-    cql: str,
-    limit: int = 25,
-    start: int = 0
-) -> Dict[str, Any]:
-    """Search Confluence using CQL (Confluence Query Language).
+def confluence_get_comments(page_id: str) -> str:
+    """Get comments on a Confluence page.
 
-    Supports in-memory CQL queries like:
-    - text ~ "search term"
-    - title ~ "title search"
-    - space = KEY
-    - text ~ "api" AND space = DOCS
+    Args:
+        page_id: Confluence page ID
+
+    Note: This cached server has limited comment data. Returns whatever
+    comment data is available in the pickled page data.
     """
-    parser = CQLParser()
-    search_terms, space_key = parser.parse(cql)
+    result = pickle_loader.get_page_by_id(page_id)
+    if not result:
+        return f"Page not found: {page_id}"
 
-    # Determine if this is a title-only search
-    title_only = 'title:' in search_terms or cql.strip().startswith('title')
+    page = result['page']
 
-    # Clean WHOOSH-specific syntax from search terms for in-memory search
-    clean_query = search_terms.replace('title:', '').replace('^2', '')
-    clean_query = clean_query.strip('() ')
+    # Check if comments are stored in the pickle data
+    comments = page.get('comments', [])
+    if not comments:
+        children = page.get('children', {})
+        if isinstance(children, dict):
+            comment_data = children.get('comment', {})
+            if isinstance(comment_data, dict):
+                comments = comment_data.get('results', [])
 
-    if clean_query == '*' or not clean_query:
-        # No text search, just space filter - return pages from space
-        if space_key:
-            pages = pickle_loader.get_pages_in_space(space_key, limit=limit, start=start)
-            formatted = [
-                _format_page_response(p, space_key, include_body=False) for p in pages
-            ]
-            return {"results": formatted, "start": start, "limit": limit, "size": len(formatted)}
-        return {"results": [], "start": start, "limit": limit, "size": 0}
+    if not comments:
+        return f"No comments found for page {page_id} (page: {page.get('title', '')})"
 
-    matches = pickle_loader.search_content(
-        clean_query, space_key=space_key, title_only=title_only, limit=limit
-    )
+    lines = [f"Comments on \"{page.get('title', '')}\" ({len(comments)} comment(s)):\n"]
+    for i, comment in enumerate(comments, 1):
+        author = ""
+        if isinstance(comment, dict):
+            author_data = comment.get('author', {})
+            if isinstance(author_data, dict):
+                author = author_data.get('displayName', '')
+            body = comment.get('body', {})
+            if isinstance(body, dict):
+                text = body.get('storage', {}).get('value', '')
+                text = html_to_text(text) if text else ''
+            else:
+                text = str(body)
+            lines.append(f"{i}. [{author}] {text[:500]}")
 
-    formatted = [
-        _format_page_response(m['page'], m['space_key'], include_body=False)
-        for m in matches
-    ]
-
-    return {
-        "results": formatted,
-        "start": start,
-        "limit": limit,
-        "size": len(formatted),
-        "cqlQuery": cql
-    }
+    return "\n".join(lines)
 
 
 @mcp.tool()
-def getConfluencePageDescendants(
-    cloudId: str,
-    pageId: str,
-    limit: int = 25,
-    start: int = 0
-) -> Dict[str, Any]:
-    """Get child pages of a specific page."""
-    children = pickle_loader.get_children(pageId, limit=limit, start=start)
+def confluence_get_labels(page_id: str) -> str:
+    """Get labels for a Confluence page.
 
-    formatted = [
-        _format_page_response(c['page'], c['space_key'], include_body=False)
-        for c in children
-    ]
+    Args:
+        page_id: Content ID (page or attachment with att prefix)
+    """
+    result = pickle_loader.get_page_by_id(page_id)
+    if not result:
+        return f"Page not found: {page_id}"
 
-    return {
-        "results": formatted,
-        "start": start,
-        "limit": limit,
-        "size": len(formatted)
-    }
+    page = result['page']
 
+    # Try various locations where labels might be stored
+    labels = page.get('labels', [])
+    if not labels:
+        metadata = page.get('metadata', {})
+        if isinstance(metadata, dict):
+            label_data = metadata.get('labels', {})
+            if isinstance(label_data, dict):
+                labels = label_data.get('results', [])
+            elif isinstance(label_data, list):
+                labels = label_data
 
-@mcp.tool()
-def fetch(id: str) -> Dict[str, Any]:
-    """Fetch details of a Confluence page by ARI."""
-    # Parse ARI to extract page ID
-    if id.startswith('ari:cloud:confluence:'):
-        parts = id.split('/')
-        if len(parts) >= 2:
-            page_id = parts[-1]
-            return getConfluencePage(FAKE_CLOUD_ID, page_id)
+    if not labels:
+        return f"No labels found for page {page_id} (page: {page.get('title', '')})"
 
-    return {
-        "isError": True,
-        "message": f"Invalid ARI format: {id}"
-    }
+    label_names = []
+    for label in labels:
+        if isinstance(label, dict):
+            label_names.append(label.get('name', str(label)))
+        else:
+            label_names.append(str(label))
+
+    return f"Labels for \"{page.get('title', '')}\": {', '.join(label_names)}"
 
 
-def _format_page_response(page: Dict[str, Any], space_key: str,
-                         include_body: bool = True) -> Dict[str, Any]:
-    """Format a page as Confluence API response."""
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _extract_body_html(page: Dict[str, Any]) -> str:
+    """Extract HTML body content from a page dict."""
+    body_data = page.get('body', {})
+    if isinstance(body_data, dict):
+        storage = body_data.get('storage', {})
+        if isinstance(storage, dict):
+            return storage.get('value', '')
+        elif isinstance(storage, str):
+            return storage
+    elif isinstance(body_data, str):
+        return body_data
+    return ''
+
+
+def _format_page_text(page: Dict[str, Any], space_key: str,
+                      include_metadata: bool = True,
+                      convert_to_markdown: bool = True) -> str:
+    """Format a page as readable text (sooperset style)."""
     page_id = str(page.get('id', ''))
     title = page.get('title', '')
 
-    response = {
-        "id": page_id,
-        "type": "page",
-        "status": "current",
-        "title": title,
-        "space": {
-            "key": space_key,
-            "name": space_key
-        }
-    }
+    parts = [f"# {title}\n"]
 
-    # Add version info
-    version = page.get('version', {})
-    if isinstance(version, dict):
-        response["version"] = {
-            "number": version.get('number', 1),
-            "when": version.get('when', ''),
-        }
+    if include_metadata:
+        parts.append(f"- **Page ID**: {page_id}")
+        parts.append(f"- **Space**: {space_key}")
+        version = page.get('version', {})
+        if isinstance(version, dict):
+            ver_num = version.get('number', 1)
+            ver_when = version.get('when', '')
+            parts.append(f"- **Version**: {ver_num}")
+            if ver_when:
+                parts.append(f"- **Last updated**: {ver_when}")
+            by = version.get('by', {})
+            if isinstance(by, dict) and by.get('displayName'):
+                parts.append(f"- **Author**: {by['displayName']}")
 
-    # Add body if requested
-    if include_body:
-        body_html = ''
-        body_data = page.get('body', {})
-        if isinstance(body_data, dict):
-            storage = body_data.get('storage', {})
-            if isinstance(storage, dict):
-                body_html = storage.get('value', '')
-            elif isinstance(storage, str):
-                body_html = storage
-        elif isinstance(body_data, str):
-            body_html = body_data
+        # Labels if present
+        labels = page.get('labels', [])
+        if labels:
+            label_names = [
+                l.get('name', str(l)) if isinstance(l, dict) else str(l)
+                for l in labels
+            ]
+            parts.append(f"- **Labels**: {', '.join(label_names)}")
 
-        # Convert to ADF
-        adf = html_to_adf(body_html)
+        parts.append("")  # blank line
 
-        response["body"] = {
-            "storage": {
-                "value": body_html,
-                "representation": "storage"
-            },
-            "atlas_doc_format": {
-                "value": adf,
-                "representation": "atlas_doc_format"
-            }
-        }
+    # Body content
+    body_html = _extract_body_html(page)
+    if body_html:
+        parts.append("---\n")
+        if convert_to_markdown:
+            parts.append(html_to_markdown(body_html))
+        else:
+            parts.append(body_html)
 
-    # Add links
-    response["_links"] = {
-        "self": f"/rest/api/content/{page_id}",
-        "webui": f"/spaces/{space_key}/pages/{page_id}"
-    }
+    return "\n".join(parts)
 
-    return response
+
+def _format_search_results(matches: List[Dict[str, Any]], query: str) -> str:
+    """Format search results as readable text (sooperset style)."""
+    if not matches:
+        return f"No results found for: {query}"
+
+    lines = [f"Found {len(matches)} result(s) for \"{query}\":\n"]
+
+    for i, match in enumerate(matches, 1):
+        page = match['page']
+        space_key = match['space_key']
+        match_type = match.get('match_type', 'content')
+        page_id = page.get('id', '')
+        title = page.get('title', '')
+        lines.append(
+            f"{i}. **{title}** (ID: {page_id}, Space: {space_key}, Match: {match_type})"
+        )
+
+    return "\n".join(lines)
 
 
 def initialize_server():
