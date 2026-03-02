@@ -1,6 +1,8 @@
 """WHOOSH-based indexing for fast full-text search."""
 
 import os
+import glob
+import shutil
 import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional
@@ -16,6 +18,11 @@ except (ImportError, AttributeError) as e:
     _whoosh_import_error = e
 
 from .converters import html_to_text
+
+# Maximum HTML body size to parse (bytes). Pages larger than this are
+# truncated before being fed to BeautifulSoup to avoid stalling on
+# multi-MB meeting-notes / auto-generated pages.
+MAX_BODY_HTML_BYTES = 500_000  # 500 KB
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +62,9 @@ class ConfluenceIndexer:
         # Ensure index directory exists
         os.makedirs(index_dir, exist_ok=True)
 
+        # Clean up stale locks / temp files from previous crashed runs
+        self._cleanup_stale_locks()
+
         # Create or open index
         if index.exists_in(index_dir):
             logger.info(f"Opening existing index at {index_dir}")
@@ -62,6 +72,18 @@ class ConfluenceIndexer:
         else:
             logger.info(f"Creating new index at {index_dir}")
             self.ix = index.create_in(index_dir, SCHEMA)
+
+    def _cleanup_stale_locks(self) -> None:
+        """Remove stale MAIN_WRITELOCK and *.tmp dirs left by crashed indexing runs."""
+        lock_file = os.path.join(self.index_dir, 'MAIN_WRITELOCK')
+        if os.path.exists(lock_file):
+            logger.warning(f"Removing stale write lock: {lock_file}")
+            os.remove(lock_file)
+
+        for tmp_dir in glob.glob(os.path.join(self.index_dir, '*.tmp')):
+            if os.path.isdir(tmp_dir):
+                logger.warning(f"Removing stale temp dir: {tmp_dir}")
+                shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def needs_rebuild(self, pickle_files: List[str]) -> bool:
         """Check if index needs rebuilding based on pickle file timestamps.
@@ -98,7 +120,7 @@ class ConfluenceIndexer:
         total_pages = len(pages)
         logger.info(f"Indexing {total_pages} pages...")
         indexed_count = 0
-        batch_size = 5000  # Commit every 5000 pages for large datasets
+        batch_size = 1000  # Commit frequently to reduce lost progress on stall
 
         # Use AsyncWriter for better performance
         writer = AsyncWriter(self.ix)
@@ -146,19 +168,31 @@ class ConfluenceIndexer:
         page_id = str(page.get('id', ''))
         title = page.get('title', '')
 
-        # Extract body text from HTML storage
-        body_html = ''
-        body_data = page.get('body', {})
-        if isinstance(body_data, dict):
-            storage = body_data.get('storage', {})
-            if isinstance(storage, dict):
-                body_html = storage.get('value', '')
-            elif isinstance(storage, str):
-                body_html = storage
-        elif isinstance(body_data, str):
-            body_html = body_data
+        # Use pre-extracted plain text if available (from pickle-time extraction)
+        body_text = page.get('body_text', '')
 
-        body_text = html_to_text(body_html) if body_html else ''
+        if not body_text:
+            # Fall back to extracting from HTML storage
+            body_html = ''
+            body_data = page.get('body', {})
+            if isinstance(body_data, dict):
+                storage = body_data.get('storage', {})
+                if isinstance(storage, dict):
+                    body_html = storage.get('value', '')
+                elif isinstance(storage, str):
+                    body_html = storage
+            elif isinstance(body_data, str):
+                body_html = body_data
+
+            # Truncate mega-bodies to avoid stalling on multi-MB pages
+            if len(body_html) > MAX_BODY_HTML_BYTES:
+                logger.warning(
+                    f"Truncating page {page_id} ({title!r}) body from "
+                    f"{len(body_html):,} to {MAX_BODY_HTML_BYTES:,} bytes"
+                )
+                body_html = body_html[:MAX_BODY_HTML_BYTES]
+
+            body_text = html_to_text(body_html) if body_html else ''
 
         # Parse version/history for updated date
         updated = None

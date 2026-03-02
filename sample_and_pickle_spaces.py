@@ -286,7 +286,19 @@ def sample_and_fetch_bodies(space_key, pages, fetch_all=False):
     for i, p in enumerate(deduped):
         if (i + 1) % 10 == 0 or i == 0 or (i + 1) == len(deduped):
             print(f"    Fetching body for page {i+1}/{len(deduped)} (ID: {p.get('id')})...")
-        p['body'] = fetch_page_body(p.get('id'))
+        body_html = fetch_page_body(p.get('id'))
+        p['body'] = body_html
+        # Pre-extract plain text so the WHOOSH indexer doesn't have to re-parse
+        # HTML at index time. Truncate huge pages (>500KB) to avoid stalling.
+        try:
+            html_for_text = body_html[:500_000] if len(body_html) > 500_000 else body_html
+            if html_for_text:
+                from bs4 import BeautifulSoup
+                p['body_text'] = BeautifulSoup(html_for_text, 'lxml').get_text(separator=' ', strip=True)
+            else:
+                p['body_text'] = ''
+        except Exception:
+            p['body_text'] = ''
     return deduped, len(pages)
 
 def load_checkpoint(filename=CHECKPOINT_FILE): # Added filename parameter with default

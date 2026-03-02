@@ -6,6 +6,14 @@ import os
 from typing import Dict, Any, List, Optional
 from bs4 import BeautifulSoup, NavigableString, Tag
 
+# Prefer lxml parser (5-10x faster than html.parser on large documents).
+# Falls back to html.parser if lxml is not installed.
+try:
+    import lxml  # noqa: F401
+    _BS4_PARSER = 'lxml'
+except ImportError:
+    _BS4_PARSER = 'html.parser'
+
 # Add parent directory to path to import html_cleaner from confluence-viz
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', 'confluence-viz'))
 
@@ -38,7 +46,7 @@ def html_to_text(html_content: str) -> str:
     if not html_content:
         return ""
 
-    soup = BeautifulSoup(html_content, 'html.parser')
+    soup = BeautifulSoup(html_content, _BS4_PARSER)
     return soup.get_text(separator=' ', strip=True)
 
 
@@ -59,7 +67,7 @@ def html_to_adf(html_content: str) -> Dict[str, Any]:
         }
 
     try:
-        soup = BeautifulSoup(html_content, 'html.parser')
+        soup = BeautifulSoup(html_content, _BS4_PARSER)
         content = _convert_nodes(soup)
 
         # Ensure we have at least some content
