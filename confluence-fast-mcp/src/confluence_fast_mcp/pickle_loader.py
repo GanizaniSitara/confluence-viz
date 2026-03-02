@@ -31,7 +31,12 @@ def _extract_body_text(page: Dict[str, Any]) -> str:
 
     try:
         from bs4 import BeautifulSoup
-        return BeautifulSoup(body_html, 'html.parser').get_text(separator=' ', strip=True)
+        try:
+            import lxml  # noqa: F401
+            parser = 'lxml'
+        except ImportError:
+            parser = 'html.parser'
+        return BeautifulSoup(body_html, parser).get_text(separator=' ', strip=True)
     except Exception:
         # Fallback: strip tags with regex
         return re.sub(r'<[^>]+>', ' ', body_html)
