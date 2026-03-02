@@ -44,8 +44,10 @@ Just loads pickles into memory - instant startup, no indexing required.
 
 **Start server:**
 ```bash
-python simple_server.py --http 8070
+python simple_server.py
 ```
+
+Listens on `http://0.0.0.0:8070` by default. Use `--port 9000` to change, or `--stdio` for Claude Desktop.
 
 Features:
 - Instant startup (loads 80K pages in seconds)
@@ -82,7 +84,7 @@ Add to your MCP settings file:
   "mcpServers": {
     "confluence-simple": {
       "command": "/usr/bin/python",
-      "args": ["/home/user/git/confluence-viz/confluence-fast-mcp/simple_server.py"]
+      "args": ["/home/user/git/confluence-viz/confluence-fast-mcp/simple_server.py", "--stdio"]
     }
   }
 }
@@ -94,7 +96,7 @@ Add to your MCP settings file:
   "mcpServers": {
     "confluence-fast": {
       "command": "/usr/bin/python",
-      "args": ["/home/user/git/confluence-viz/confluence-fast-mcp/server.py"]
+      "args": ["/home/user/git/confluence-viz/confluence-fast-mcp/server.py", "--stdio"]
     }
   }
 }
@@ -107,7 +109,7 @@ Update paths to match your actual installation.
 **Step 1: Start the server** (runs independently, visible via ps):
 
 ```bash
-python simple_server.py --http 8070
+python simple_server.py
 ```
 
 **Step 2: Configure Claude Code** - Edit `~/.claude/mcp_settings.json`:

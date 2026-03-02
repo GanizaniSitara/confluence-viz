@@ -485,12 +485,22 @@ def initialize_server():
 
 def main():
     """Main entry point."""
-    # Initialize components
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Confluence FastMCP server (WHOOSH search)")
+    parser.add_argument("--stdio", action="store_true", help="Run in stdio mode (for Claude Desktop)")
+    parser.add_argument("--port", type=int, default=8070, help="HTTP port (default: 8070)")
+    args = parser.parse_args()
+
     initialize_server()
 
-    # Run FastMCP server
-    logger.info("Starting FastMCP server...")
-    mcp.run()
+    if args.stdio:
+        logger.info("Starting FastMCP server in stdio mode...")
+        mcp.run(transport="stdio")
+    else:
+        host = "0.0.0.0"
+        logger.info(f"Starting FastMCP server on http://{host}:{args.port} ...")
+        mcp.run(transport="sse", host=host, port=args.port)
 
 
 if __name__ == "__main__":
