@@ -5,12 +5,9 @@ import sys
 import os
 import logging
 
-# Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
-
-from confluence_fast_mcp.config import get_config
-from confluence_fast_mcp.pickle_loader import PickleLoader
-from confluence_fast_mcp.indexer import ConfluenceIndexer
+from config import get_config
+from pickle_loader import PickleLoader
+from indexer import ConfluenceIndexer
 
 # Setup logging
 logging.basicConfig(

@@ -1,7 +1,7 @@
 """Tests for HTML to ADF conversion."""
 
 import pytest
-from confluence_fast_mcp.converters import html_to_adf, html_to_text
+from converters import html_to_adf, html_to_text
 
 
 def test_html_to_text_basic():

@@ -1,7 +1,7 @@
 """Tests for CQL parsing."""
 
 import pytest
-from confluence_fast_mcp.search import CQLParser, translate_cql
+from search import CQLParser, translate_cql
 
 
 def test_parse_text_search():
