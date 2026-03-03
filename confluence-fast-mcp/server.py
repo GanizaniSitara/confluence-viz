@@ -108,6 +108,12 @@ def _ensure_memory_store_importable():
 
 _ensure_memory_store_importable()
 
+# Disable FastMCP's rich logging to avoid tracebacks_max_frames errors
+# Must be done before FastMCP() is called. Works on fastmcp 3.0+.
+import fastmcp as _fastmcp_mod
+_fastmcp_mod.settings.log_enabled = False
+_fastmcp_mod.settings.enable_rich_logging = False
+
 from fastmcp import FastMCP
 
 from config import get_config
@@ -490,7 +496,13 @@ def main():
     parser = argparse.ArgumentParser(description="Confluence FastMCP server (WHOOSH search)")
     parser.add_argument("--stdio", action="store_true", help="Run in stdio mode (for Claude Desktop)")
     parser.add_argument("--port", type=int, default=8070, help="HTTP port (default: 8070)")
+    parser.add_argument("--sse", action="store_true", help="Use legacy SSE transport instead of streamable HTTP")
+    # Legacy support: --http [port]
+    parser.add_argument("--http", nargs="?", type=int, const=8070, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
+
+    if args.http is not None:
+        args.port = args.http
 
     initialize_server()
 
@@ -499,8 +511,10 @@ def main():
         mcp.run(transport="stdio")
     else:
         host = "0.0.0.0"
-        logger.info(f"Starting FastMCP server on http://{host}:{args.port} ...")
-        mcp.run(transport="sse", host=host, port=args.port)
+        transport = "sse" if args.sse else "http"
+        endpoint = "/sse" if args.sse else "/mcp"
+        logger.info(f"Starting FastMCP server on http://{host}:{args.port}{endpoint} (transport={transport})")
+        mcp.run(transport=transport, host=host, port=args.port)
 
 
 if __name__ == "__main__":
