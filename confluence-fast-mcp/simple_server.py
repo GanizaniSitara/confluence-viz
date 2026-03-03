@@ -490,6 +490,7 @@ def main():
     parser = argparse.ArgumentParser(description="Simple Confluence FastMCP server")
     parser.add_argument("--stdio", action="store_true", help="Run in stdio mode (for Claude Desktop)")
     parser.add_argument("--port", type=int, default=8070, help="HTTP port (default: 8070)")
+    parser.add_argument("--sse", action="store_true", help="Use legacy SSE transport instead of streamable HTTP")
     # Legacy support: --http [port]
     parser.add_argument("--http", nargs="?", type=int, const=8070, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -504,8 +505,10 @@ def main():
         mcp.run(transport="stdio")
     else:
         host = "0.0.0.0"
-        logger.info(f"Starting Simple FastMCP server on http://{host}:{args.port} ...")
-        mcp.run(transport="sse", host=host, port=args.port)
+        transport = "sse" if args.sse else "http"
+        endpoint = "/sse" if args.sse else "/mcp"
+        logger.info(f"Starting Simple FastMCP server on http://{host}:{args.port}{endpoint} (transport={transport})")
+        mcp.run(transport=transport, host=host, port=args.port)
 
 
 if __name__ == "__main__":
