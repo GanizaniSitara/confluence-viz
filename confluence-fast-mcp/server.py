@@ -1,14 +1,11 @@
-#!/usr/bin/env python
-"""Simple in-memory FastMCP server for Confluence - no WHOOSH indexing required.
+"""FastMCP server for Confluence data."""
 
-Supports 30+ concurrent users for hackathons and team use.
-"""
-
-import sys
-import os
-import logging
 import collections
 import collections.abc
+import logging
+import os
+import sys
+import types as _types
 from typing import Optional, Dict, Any, List
 
 # Python 3.10+ removed these aliases from collections.
@@ -19,37 +16,19 @@ for _attr in ("MutableMapping", "Mapping", "MutableSequence", "Sequence",
     if not hasattr(collections, _attr) and hasattr(collections.abc, _attr):
         setattr(collections, _attr, getattr(collections.abc, _attr))
 
-# Setup logging BEFORE importing FastMCP to prevent it from reconfiguring
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
 # ── Work around fastmcp's hard dependency on cachetools.TLRUCache ──
 # fastmcp 3.0+ unconditionally imports MemoryStore from
 # key_value.aio.stores.memory, which requires cachetools with TLRUCache.
-# If TLRUCache is missing (wrong cachetools version, broken install, etc.)
-# we inject a simple dict-backed MemoryStore stub so fastmcp can load
-# and operate normally — our server only needs basic session state storage.
-import types as _types
-
+# If TLRUCache is missing we inject a simple dict-backed MemoryStore stub.
 def _ensure_memory_store_importable():
     """Inject a dict-backed MemoryStore if cachetools.TLRUCache is missing."""
     try:
         from cachetools import TLRUCache  # noqa: F401
-        return  # real cachetools works fine, nothing to do
+        return
     except (ImportError, AttributeError):
         pass
 
-    logger.info("cachetools.TLRUCache unavailable – injecting dict-backed MemoryStore stub")
-
-    # Build a minimal MemoryStore that satisfies fastmcp's usage:
-    #   store = MemoryStore()
-    #   await store.setup()
-    #   await store.get/put/delete(collection, key, ...)
     from key_value.aio.stores.base import (
-        SEED_DATA_TYPE,
         BaseDestroyCollectionStore,
         BaseDestroyStore,
         BaseEnumerateCollectionsStore,
@@ -64,8 +43,6 @@ def _ensure_memory_store_importable():
         BaseEnumerateCollectionsStore,
         BaseEnumerateKeysStore,
     ):
-        """Minimal dict-backed store (no TLRUCache / no TTL eviction)."""
-
         def __init__(self, *, max_entries_per_collection=None,
                      default_collection=None, seed=None):
             self._data: dict[str, dict[str, ManagedEntry]] = {}
@@ -124,7 +101,6 @@ def _ensure_memory_store_importable():
     _stub.MemoryStore = _DictMemoryStore
     sys.modules[_mod_key] = _stub
 
-    # Also patch the sub-module path so "from key_value.aio.stores.memory import MemoryStore" works
     _store_mod_key = _mod_key + ".store"
     _store_stub = _types.ModuleType(_store_mod_key)
     _store_stub.MemoryStore = _DictMemoryStore
@@ -132,24 +108,30 @@ def _ensure_memory_store_importable():
 
 _ensure_memory_store_importable()
 
-# Disable FastMCP's rich logging to avoid tracebacks_max_frames errors
-# Must be done before FastMCP() is called. Works on fastmcp 3.0+.
-import fastmcp as _fastmcp_mod
-_fastmcp_mod.settings.log_enabled = False
-_fastmcp_mod.settings.enable_rich_logging = False
-
 from fastmcp import FastMCP
+
 from config import get_config
 from pickle_loader import PickleLoader
+from indexer import ConfluenceIndexer
 from converters import html_to_markdown, html_to_text
-from search import CQLParser
+from search import translate_cql
+from fallback import ConfluenceFallbackClient
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Initialize FastMCP server
-mcp = FastMCP("confluence-simple")
+mcp = FastMCP("confluence-fast-mcp")
 
-# Global instances
+# Global instances (initialized on startup)
 config = None
 pickle_loader = None
+indexer = None
+fallback_client = None
 
 
 # ---------------------------------------------------------------------------
@@ -170,32 +152,35 @@ def confluence_search(
         limit: Maximum number of results (1-50)
         spaces_filter: Comma-separated list of space keys to filter results
     """
-    # Check if query looks like CQL (contains operators like ~, =, AND, OR)
+    logger.info(f"Search: {query}")
+
+    # Check if query looks like CQL
     is_cql = any(op in query for op in (' ~ ', ' = ', ' AND ', ' OR '))
 
     if is_cql:
-        parser = CQLParser()
-        search_terms, cql_space = parser.parse(query)
-        title_only = 'title:' in search_terms or query.strip().startswith('title')
-        clean_query = search_terms.replace('title:', '').replace('^2', '')
-        clean_query = clean_query.strip('() ')
+        whoosh_query, cql_space = translate_cql(query)
         space_key = cql_space or (spaces_filter.split(',')[0].strip() if spaces_filter else None)
-
-        if clean_query == '*' or not clean_query:
-            if space_key:
-                pages = pickle_loader.get_pages_in_space(space_key, limit=limit)
-                return _format_search_results(
-                    [{'space_key': space_key, 'page': p} for p in pages], query
-                )
-            return f"No results found for: {query}"
-
-        matches = pickle_loader.search_content(
-            clean_query, space_key=space_key, title_only=title_only, limit=limit
-        )
     else:
-        # Simple text search
+        whoosh_query = query
         space_key = spaces_filter.split(',')[0].strip() if spaces_filter else None
-        matches = pickle_loader.search_content(query, space_key=space_key, limit=limit)
+
+    # Use WHOOSH index for full-text search
+    search_results = indexer.search(
+        whoosh_query,
+        space_key=space_key,
+        limit=limit,
+    )
+
+    # Build formatted results
+    matches = []
+    for result in search_results:
+        page_result = pickle_loader.get_page_by_id(result['page_id'])
+        if page_result:
+            matches.append({
+                'space_key': page_result['space_key'],
+                'page': page_result['page'],
+                'match_type': 'content',
+            })
 
     return _format_search_results(matches, query)
 
@@ -225,7 +210,10 @@ def confluence_get_page(
 
     # Fall back to title lookup
     if not result and title:
-        result = pickle_loader.find_page_by_title_flexible(title, space_key=space_key)
+        if space_key:
+            result = pickle_loader.get_page_by_title(title, space_key)
+        if not result:
+            result = pickle_loader.find_page_by_title_flexible(title, space_key=space_key)
 
     # Last resort: treat page_id as title
     if not result and page_id and not page_id.isdigit():
@@ -274,9 +262,9 @@ def confluence_get_page_children(
     for i, child in enumerate(children, 1):
         page = child['page']
         sk = child['space_key']
-        page_id = page.get('id', '')
+        pid = page.get('id', '')
         page_title = page.get('title', '')
-        lines.append(f"{i}. **{page_title}** (ID: {page_id}, Space: {sk})")
+        lines.append(f"{i}. **{page_title}** (ID: {pid}, Space: {sk})")
 
         if include_content:
             body_html = _extract_body_html(page)
@@ -285,7 +273,6 @@ def confluence_get_page_children(
             else:
                 body = body_html
             if body:
-                # Indent content under the list item
                 for line in body.strip().split('\n')[:10]:
                     lines.append(f"   {line}")
                 lines.append("")
@@ -308,8 +295,6 @@ def confluence_get_comments(page_id: str) -> str:
         return f"Page not found: {page_id}"
 
     page = result['page']
-
-    # Check if comments are stored in the pickle data
     comments = page.get('comments', [])
     if not comments:
         children = page.get('children', {})
@@ -351,8 +336,6 @@ def confluence_get_labels(page_id: str) -> str:
         return f"Page not found: {page_id}"
 
     page = result['page']
-
-    # Try various locations where labels might be stored
     labels = page.get('labels', [])
     if not labels:
         metadata = page.get('metadata', {})
@@ -417,7 +400,6 @@ def _format_page_text(page: Dict[str, Any], space_key: str,
             if isinstance(by, dict) and by.get('displayName'):
                 parts.append(f"- **Author**: {by['displayName']}")
 
-        # Labels if present
         labels = page.get('labels', [])
         if labels:
             label_names = [
@@ -426,9 +408,8 @@ def _format_page_text(page: Dict[str, Any], space_key: str,
             ]
             parts.append(f"- **Labels**: {', '.join(label_names)}")
 
-        parts.append("")  # blank line
+        parts.append("")
 
-    # Body content
     body_html = _extract_body_html(page)
     if body_html:
         parts.append("---\n")
@@ -462,49 +443,63 @@ def _format_search_results(matches: List[Dict[str, Any]], query: str) -> str:
 
 def initialize_server():
     """Initialize server components."""
-    global config, pickle_loader
+    global config, pickle_loader, indexer, fallback_client
 
-    logger.info("Initializing Simple Confluence MCP Server...")
+    logger.info("Initializing Confluence Fast MCP Server...")
 
     # Load configuration
     config = get_config()
     logger.info(f"Pickle directory: {config.pickle_dir}")
+    logger.info(f"Index directory: {config.index_dir}")
 
     # Initialize pickle loader
-    logger.info("Loading pickle files into memory...")
     pickle_loader = PickleLoader(config.pickle_dir)
     pickle_loader.load_all_pickles()
 
-    spaces = pickle_loader.get_all_spaces()
-    total_pages = sum(s['sampled_pages'] for s in spaces)
+    # Initialize indexer
+    indexer = ConfluenceIndexer(config.index_dir)
 
-    logger.info(f"Loaded {len(spaces)} spaces with {total_pages} pages")
+    # Check if index exists
+    stats = indexer.get_stats()
+    logger.info(f"Index stats: {stats}")
+
+    if stats['total_docs'] == 0:
+        logger.error("Index is empty. Please run 'python3 build_index.py' first.")
+        raise RuntimeError("WHOOSH index not found. Run build_index.py to create it.")
+
+    logger.info(f"Using existing index with {stats['total_docs']} documents")
+
+    # Initialize fallback client (if configured)
+    if config.confluence_url and config.confluence_username and config.confluence_api_token:
+        fallback_client = ConfluenceFallbackClient(
+            config.confluence_url,
+            config.confluence_username,
+            config.confluence_api_token
+        )
+        logger.info("Fallback client configured for attachment support")
+    else:
+        logger.info("Fallback client not configured (attachments unavailable)")
+
     logger.info("Server initialization complete!")
-    logger.info("Note: This server uses simple in-memory search (no WHOOSH indexing)")
 
 
 def main():
     """Main entry point."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Simple Confluence FastMCP server")
+    parser = argparse.ArgumentParser(description="Confluence FastMCP server (WHOOSH search)")
     parser.add_argument("--stdio", action="store_true", help="Run in stdio mode (for Claude Desktop)")
     parser.add_argument("--port", type=int, default=8070, help="HTTP port (default: 8070)")
-    # Legacy support: --http [port]
-    parser.add_argument("--http", nargs="?", type=int, const=8070, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
-
-    if args.http is not None:
-        args.port = args.http
 
     initialize_server()
 
     if args.stdio:
-        logger.info("Starting Simple FastMCP server in stdio mode...")
+        logger.info("Starting FastMCP server in stdio mode...")
         mcp.run(transport="stdio")
     else:
         host = "0.0.0.0"
-        logger.info(f"Starting Simple FastMCP server on http://{host}:{args.port} ...")
+        logger.info(f"Starting FastMCP server on http://{host}:{args.port} ...")
         mcp.run(transport="sse", host=host, port=args.port)
 
 

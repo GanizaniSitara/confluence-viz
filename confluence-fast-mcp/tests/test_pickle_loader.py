@@ -4,7 +4,7 @@ import pytest
 import pickle
 import tempfile
 import os
-from confluence_fast_mcp.pickle_loader import PickleLoader
+from pickle_loader import PickleLoader
 
 
 @pytest.fixture
