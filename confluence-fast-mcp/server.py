@@ -500,7 +500,7 @@ def main():
     else:
         host = "0.0.0.0"
         logger.info(f"Starting FastMCP server on http://{host}:{args.port} ...")
-        mcp.run(transport="sse", host=host, port=args.port)
+        mcp.run(transport="streamable-http", host=host, port=args.port)
 
 
 if __name__ == "__main__":
