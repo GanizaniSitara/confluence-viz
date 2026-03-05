@@ -102,6 +102,27 @@ class ConfluenceIndexer:
         # Could add more sophisticated timestamp checking here
         return False
 
+    def delete_space(self, space_key: str) -> int:
+        """Delete all pages for a given space from the index.
+
+        Args:
+            space_key: Space key to delete
+
+        Returns:
+            Number of documents deleted
+        """
+        from whoosh.query import Term
+        writer = AsyncWriter(self.ix)
+        try:
+            count = writer.delete_by_query(Term('space_key', space_key))
+            writer.commit()
+            logger.info(f"Deleted {count} documents for space {space_key}")
+            return count
+        except Exception as e:
+            logger.error(f"Error deleting space {space_key}: {e}")
+            writer.cancel()
+            raise
+
     def index_all_pages(self, pages: List[tuple], clear_first: bool = False) -> int:
         """Index all pages from pickle data.
 
