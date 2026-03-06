@@ -1048,6 +1048,8 @@ def main():
     parser.add_argument('--list-space-keys', action='store_true', help='List only the keys of all non-user spaces to the console and exit.') # NEW ARGUMENT
     parser.add_argument('--download-attachments', action='store_true',
                            help='Download attachments for processed spaces during full pickle modes. Attachments are saved into a subfolder named after the space key, within the full pickle output directory.')
+    parser.add_argument('--verbose', action='store_true',
+                           help='Show detailed page listing during --pickle-space-full (page ID, title, body size, level).')
     parser.add_argument('--prune-retired', action='store_true',
                            help='When used with --compare-spaces, automatically delete pickle files for spaces that no longer exist in the live instance (no confirmation prompt).')
     args = parser.parse_args()
@@ -1303,6 +1305,32 @@ def main():
                     'total_pages_in_space': total_pages_metadata
                 }, f)
             print(f'  Successfully wrote {len(pages_with_bodies)} pages for space {target_space_key} to {out_path} (total pages in space: {total_pages_metadata})')
+
+            if args.verbose:
+                print(f"\n  {'ID':<12} {'Level':<6} {'Body':<10} {'Updated':<22} Title")
+                print(f"  {'-'*12} {'-'*6} {'-'*10} {'-'*22} {'-'*50}")
+                for p in pages_with_bodies:
+                    pid = str(p.get('id', '?'))
+                    title = p.get('title', '(no title)')
+                    level = p.get('level', '?')
+                    updated = p.get('updated', '')[:22]
+                    body = p.get('body', '')
+                    body_len = len(body) if isinstance(body, str) else 0
+                    if body_len > 0:
+                        body_str = f"{body_len:,}"
+                    else:
+                        body_str = "EMPTY"
+                    print(f"  {pid:<12} {level:<6} {body_str:<10} {updated:<22} {title[:60]}")
+
+                # Summary stats
+                empty_bodies = sum(1 for p in pages_with_bodies if not p.get('body'))
+                print(f"\n  Total: {len(pages_with_bodies)} pages, {empty_bodies} with empty bodies")
+                if empty_bodies > 0:
+                    print(f"  Pages with empty bodies:")
+                    for p in pages_with_bodies:
+                        if not p.get('body'):
+                            print(f"    {p.get('id', '?')}: {p.get('title', '?')}")
+
         except IOError as e:
             print(f"  Error writing pickle file {out_path}: {e}")
             sys.exit(1)
@@ -1686,6 +1714,28 @@ def main():
                             'total_pages_in_space': total_pages_metadata
                         }, f)
                     print(f'  Successfully wrote {len(pages_with_bodies)} pages for space {args.pickle_space_full} to {out_path} (total pages in space: {total_pages_metadata})')
+
+                    if args.verbose:
+                        print(f"\n  {'ID':<12} {'Level':<6} {'Body':<10} {'Updated':<22} Title")
+                        print(f"  {'-'*12} {'-'*6} {'-'*10} {'-'*22} {'-'*50}")
+                        for p in pages_with_bodies:
+                            pid = str(p.get('id', '?'))
+                            title = p.get('title', '(no title)')
+                            level = p.get('level', '?')
+                            updated = p.get('updated', '')[:22]
+                            body = p.get('body', '')
+                            body_len = len(body) if isinstance(body, str) else 0
+                            body_str = f"{body_len:,}" if body_len > 0 else "EMPTY"
+                            print(f"  {pid:<12} {level:<6} {body_str:<10} {updated:<22} {title[:60]}")
+
+                        empty_bodies = sum(1 for p in pages_with_bodies if not p.get('body'))
+                        print(f"\n  Total: {len(pages_with_bodies)} pages, {empty_bodies} with empty bodies")
+                        if empty_bodies > 0:
+                            print(f"  Pages with empty bodies:")
+                            for p in pages_with_bodies:
+                                if not p.get('body'):
+                                    print(f"    {p.get('id', '?')}: {p.get('title', '?')}")
+
                 except IOError as e:
                     print(f"  Error writing pickle file {out_path}: {e}")
                     # Potentially continue to attachment download if desired, or exit. For now, exiting on pickle error.
