@@ -260,7 +260,7 @@ def fetch_page_body(page_id):
         print(f"    Failed to fetch body for page {page_id}. Status code: {r.status_code}")
         return ''
 
-def sample_and_fetch_bodies(space_key, pages, fetch_all=False):
+def sample_and_fetch_bodies(space_key, pages, fetch_all=False, verbose=False, log_file=None):
     if fetch_all:
         print(f"  Fetching bodies for all {len(pages)} pages in space {space_key} (full pickle mode)...")
         deduped = pages # In full mode, all fetched metadata pages are processed
@@ -284,9 +284,19 @@ def sample_and_fetch_bodies(space_key, pages, fetch_all=False):
 
     # Fetch bodies for each page (either all or sampled)
     for i, p in enumerate(deduped):
-        if (i + 1) % 10 == 0 or i == 0 or (i + 1) == len(deduped):
-            print(f"    Fetching body for page {i+1}/{len(deduped)} (ID: {p.get('id')})...")
-        p['body'] = fetch_page_body(p.get('id'))
+        page_id = p.get('id')
+        page_title = p.get('title', '(no title)')
+        if verbose:
+            print(f"    [{i+1:>4}/{len(deduped)}] Fetching ID {page_id}: {page_title[:60]}")
+            write_log(log_file, "INFO", f"Fetching page {i+1}/{len(deduped)} ID={page_id} title={page_title}")
+        elif (i + 1) % 10 == 0 or i == 0 or (i + 1) == len(deduped):
+            print(f"    Fetching body for page {i+1}/{len(deduped)} (ID: {page_id})...")
+        p['body'] = fetch_page_body(page_id)
+        body_len = len(p['body']) if isinstance(p['body'], str) else 0
+        if verbose:
+            status = f"{body_len:,} chars" if body_len > 0 else "EMPTY"
+            print(f"             -> {status}")
+            write_log(log_file, "INFO", f"Fetched page ID={page_id} body={status}")
     return deduped, len(pages)
 
 def load_checkpoint(filename=CHECKPOINT_FILE): # Added filename parameter with default
@@ -1238,6 +1248,11 @@ def main():
     if args.pickle_space_full:
         target_space_key = args.pickle_space_full
         print(f"Mode: Pickling all pages for space: {target_space_key}. Target dir: {EFFECTIVE_FULL_PICKLE_OUTPUT_DIR}")
+        if args.verbose:
+            log_file = setup_simple_logging('.')
+            if log_file:
+                print(f"Verbose logging to: {log_file}")
+                write_log(log_file, "INFO", f"Starting --pickle-space-full for space {target_space_key}")
         if args.download_attachments:
             print("Attachment download enabled via --download-attachments flag.")
 
@@ -1291,8 +1306,9 @@ def main():
             print(f"  No pages found for space {target_space_key} or error fetching metadata. Exiting.")
             sys.exit(1)
 
-        # sample_and_fetch_bodies will be modified to accept fetch_all=True
-        pages_with_bodies, total_pages_metadata = sample_and_fetch_bodies(target_space_key, pages_metadata, fetch_all=True)
+        pages_with_bodies, total_pages_metadata = sample_and_fetch_bodies(
+            target_space_key, pages_metadata, fetch_all=True,
+            verbose=args.verbose, log_file=log_file if args.verbose else None)
 
         out_filename = f'{target_space_key}.pkl'
         out_path = os.path.join(EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, out_filename) # MODIFIED path
@@ -1307,6 +1323,7 @@ def main():
             print(f'  Successfully wrote {len(pages_with_bodies)} pages for space {target_space_key} to {out_path} (total pages in space: {total_pages_metadata})')
 
             if args.verbose:
+                write_log(log_file, "INFO", f"Pickle written: {len(pages_with_bodies)} pages to {out_path}")
                 print(f"\n  {'ID':<12} {'Level':<6} {'Body':<10} {'Updated':<22} Title")
                 print(f"  {'-'*12} {'-'*6} {'-'*10} {'-'*22} {'-'*50}")
                 for p in pages_with_bodies:
@@ -1316,20 +1333,22 @@ def main():
                     updated = p.get('updated', '')[:22]
                     body = p.get('body', '')
                     body_len = len(body) if isinstance(body, str) else 0
-                    if body_len > 0:
-                        body_str = f"{body_len:,}"
-                    else:
-                        body_str = "EMPTY"
+                    body_str = f"{body_len:,}" if body_len > 0 else "EMPTY"
                     print(f"  {pid:<12} {level:<6} {body_str:<10} {updated:<22} {title[:60]}")
+                    write_log(log_file, "INFO", f"  Page ID={pid} level={level} body={body_str} title={title}")
 
                 # Summary stats
                 empty_bodies = sum(1 for p in pages_with_bodies if not p.get('body'))
-                print(f"\n  Total: {len(pages_with_bodies)} pages, {empty_bodies} with empty bodies")
+                summary = f"Total: {len(pages_with_bodies)} pages, {empty_bodies} with empty bodies"
+                print(f"\n  {summary}")
+                write_log(log_file, "INFO", summary)
                 if empty_bodies > 0:
                     print(f"  Pages with empty bodies:")
                     for p in pages_with_bodies:
                         if not p.get('body'):
-                            print(f"    {p.get('id', '?')}: {p.get('title', '?')}")
+                            msg = f"    EMPTY: {p.get('id', '?')}: {p.get('title', '?')}"
+                            print(msg)
+                            write_log(log_file, "WARNING", msg)
 
         except IOError as e:
             print(f"  Error writing pickle file {out_path}: {e}")
@@ -1701,7 +1720,17 @@ def main():
                     print(f"  No pages found for space {args.pickle_space_full} or error fetching metadata. Exiting.")
                     sys.exit(1)
 
-                pages_with_bodies, total_pages_metadata = sample_and_fetch_bodies(args.pickle_space_full, pages_metadata, fetch_all=True)
+                # Setup verbose logging for interactive mode too
+                interactive_log_file = None
+                if args.verbose:
+                    interactive_log_file = setup_simple_logging('.')
+                    if interactive_log_file:
+                        print(f"  Verbose logging to: {interactive_log_file}")
+                        write_log(interactive_log_file, "INFO", f"Starting interactive full pickle for space {args.pickle_space_full}")
+
+                pages_with_bodies, total_pages_metadata = sample_and_fetch_bodies(
+                    args.pickle_space_full, pages_metadata, fetch_all=True,
+                    verbose=args.verbose, log_file=interactive_log_file)
 
                 out_filename = f'{args.pickle_space_full}.pkl'
                 out_path = os.path.join(EFFECTIVE_FULL_PICKLE_OUTPUT_DIR, out_filename) # MODIFIED path
@@ -1716,6 +1745,7 @@ def main():
                     print(f'  Successfully wrote {len(pages_with_bodies)} pages for space {args.pickle_space_full} to {out_path} (total pages in space: {total_pages_metadata})')
 
                     if args.verbose:
+                        write_log(interactive_log_file, "INFO", f"Pickle written: {len(pages_with_bodies)} pages to {out_path}")
                         print(f"\n  {'ID':<12} {'Level':<6} {'Body':<10} {'Updated':<22} Title")
                         print(f"  {'-'*12} {'-'*6} {'-'*10} {'-'*22} {'-'*50}")
                         for p in pages_with_bodies:
@@ -1727,14 +1757,19 @@ def main():
                             body_len = len(body) if isinstance(body, str) else 0
                             body_str = f"{body_len:,}" if body_len > 0 else "EMPTY"
                             print(f"  {pid:<12} {level:<6} {body_str:<10} {updated:<22} {title[:60]}")
+                            write_log(interactive_log_file, "INFO", f"  Page ID={pid} level={level} body={body_str} title={title}")
 
                         empty_bodies = sum(1 for p in pages_with_bodies if not p.get('body'))
-                        print(f"\n  Total: {len(pages_with_bodies)} pages, {empty_bodies} with empty bodies")
+                        summary = f"Total: {len(pages_with_bodies)} pages, {empty_bodies} with empty bodies"
+                        print(f"\n  {summary}")
+                        write_log(interactive_log_file, "INFO", summary)
                         if empty_bodies > 0:
                             print(f"  Pages with empty bodies:")
                             for p in pages_with_bodies:
                                 if not p.get('body'):
-                                    print(f"    {p.get('id', '?')}: {p.get('title', '?')}")
+                                    msg = f"    EMPTY: {p.get('id', '?')}: {p.get('title', '?')}"
+                                    print(msg)
+                                    write_log(interactive_log_file, "WARNING", msg)
 
                 except IOError as e:
                     print(f"  Error writing pickle file {out_path}: {e}")
