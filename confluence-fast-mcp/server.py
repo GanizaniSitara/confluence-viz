@@ -123,11 +123,36 @@ from converters import html_to_markdown, html_to_text
 from search import translate_cql
 from fallback import ConfluenceFallbackClient
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# Setup logging — console + rotating file
+_log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+os.makedirs(_log_dir, exist_ok=True)
+_log_fmt = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# Console handler (INFO)
+_console = logging.StreamHandler()
+_console.setLevel(logging.INFO)
+_console.setFormatter(_log_fmt)
+
+# File handler (DEBUG, rotating 5 x 5 MB)
+from logging.handlers import RotatingFileHandler
+_file = RotatingFileHandler(
+    os.path.join(_log_dir, 'server.log'),
+    maxBytes=5 * 1024 * 1024,
+    backupCount=5,
+    encoding='utf-8',
 )
+_file.setLevel(logging.DEBUG)
+_file.setFormatter(_log_fmt)
+
+# Apply to root logger so all modules (indexer, pickle_loader, etc.) are captured
+logging.root.setLevel(logging.DEBUG)
+logging.root.addHandler(_console)
+logging.root.addHandler(_file)
+
+# Quieten noisy third-party loggers in the file log
+for _noisy in ('httpcore', 'httpx', 'asyncio', 'watchfiles'):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 # Initialize FastMCP server
@@ -188,7 +213,9 @@ def confluence_search(
                 'match_type': 'content',
             })
 
-    return _format_search_results(matches, query)
+    response = _format_search_results(matches, query)
+    logger.debug(f"Search returned {len(matches)} matches, response {len(response)} chars")
+    return response
 
 
 @mcp.tool()
@@ -208,6 +235,7 @@ def confluence_get_page(
         include_metadata: Whether to include creation date, version, labels
         convert_to_markdown: Whether to convert HTML body to markdown
     """
+    logger.info(f"GetPage: page_id={page_id}, title={title}, space_key={space_key}")
     result = None
 
     # Try page_id first
@@ -227,10 +255,12 @@ def confluence_get_page(
 
     if not result:
         identifier = page_id or title or "unknown"
+        logger.warning(f"GetPage: not found - {identifier}")
         return f"Page not found: {identifier}"
 
     page = result['page']
     page_space_key = result['space_key']
+    logger.debug(f"GetPage: found page '{page.get('title', '')}' in space {page_space_key}")
 
     return _format_page_text(page, page_space_key,
                              include_metadata=include_metadata,
@@ -258,6 +288,7 @@ def confluence_get_page_children(
         start: Starting index for pagination
         include_folders: Whether to include child folders
     """
+    logger.info(f"GetChildren: parent_id={parent_id}, limit={limit}, start={start}")
     children = pickle_loader.get_children(parent_id, limit=limit, start=start)
 
     if not children:
@@ -296,6 +327,7 @@ def confluence_get_comments(page_id: str) -> str:
     Note: This cached server has limited comment data. Returns whatever
     comment data is available in the pickled page data.
     """
+    logger.info(f"GetComments: page_id={page_id}")
     result = pickle_loader.get_page_by_id(page_id)
     if not result:
         return f"Page not found: {page_id}"
@@ -337,6 +369,7 @@ def confluence_get_labels(page_id: str) -> str:
     Args:
         page_id: Content ID (page or attachment with att prefix)
     """
+    logger.info(f"GetLabels: page_id={page_id}")
     result = pickle_loader.get_page_by_id(page_id)
     if not result:
         return f"Page not found: {page_id}"

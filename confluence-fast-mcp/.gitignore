@@ -46,3 +46,4 @@ settings.ini
 
 # Logs
 *.log
+logs/
