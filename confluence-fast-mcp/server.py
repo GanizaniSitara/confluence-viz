@@ -214,7 +214,13 @@ def confluence_search(
             })
 
     response = _format_search_results(matches, query)
-    logger.debug(f"Search returned {len(matches)} matches, response {len(response)} chars")
+    if not matches:
+        logger.warning(
+            f"Search: NO RESULTS | query={query!r} | "
+            f"spaces_filter={spaces_filter} | is_cql={is_cql}"
+        )
+    else:
+        logger.debug(f"Search returned {len(matches)} matches, response {len(response)} chars")
     return response
 
 
@@ -255,7 +261,10 @@ def confluence_get_page(
 
     if not result:
         identifier = page_id or title or "unknown"
-        logger.warning(f"GetPage: not found - {identifier}")
+        logger.warning(
+            f"GetPage: NOT FOUND | identifier={identifier} | "
+            f"page_id={page_id} | title={title} | space_key={space_key}"
+        )
         return f"Page not found: {identifier}"
 
     page = result['page']
@@ -292,6 +301,10 @@ def confluence_get_page_children(
     children = pickle_loader.get_children(parent_id, limit=limit, start=start)
 
     if not children:
+        logger.warning(
+            f"GetChildren: NOT FOUND | parent_id={parent_id} | "
+            f"limit={limit} | start={start}"
+        )
         return f"No child pages found for parent {parent_id}"
 
     lines = [f"Found {len(children)} child page(s) of page {parent_id}:\n"]
@@ -330,6 +343,7 @@ def confluence_get_comments(page_id: str) -> str:
     logger.info(f"GetComments: page_id={page_id}")
     result = pickle_loader.get_page_by_id(page_id)
     if not result:
+        logger.warning(f"GetComments: page NOT FOUND | page_id={page_id}")
         return f"Page not found: {page_id}"
 
     page = result['page']
@@ -372,6 +386,7 @@ def confluence_get_labels(page_id: str) -> str:
     logger.info(f"GetLabels: page_id={page_id}")
     result = pickle_loader.get_page_by_id(page_id)
     if not result:
+        logger.warning(f"GetLabels: page NOT FOUND | page_id={page_id}")
         return f"Page not found: {page_id}"
 
     page = result['page']

@@ -8,6 +8,29 @@ from requests.auth import HTTPBasicAuth
 logger = logging.getLogger(__name__)
 
 
+def _log_http_error(response: requests.Response, context: str, **extra) -> None:
+    """Log an HTTP error with status code, URL, and response body."""
+    detail_parts = [
+        f"HTTP {response.status_code}",
+        f"URL: {response.request.method} {response.url}",
+    ]
+    if extra:
+        detail_parts.append(f"params: {extra}")
+    # Capture first 500 chars of response body for diagnostics
+    body = response.text[:500] if response.text else "(empty body)"
+    detail_parts.append(f"response: {body}")
+    detail = " | ".join(detail_parts)
+
+    if response.status_code == 404:
+        logger.warning(f"404 NOT FOUND — {context} | {detail}")
+    elif response.status_code == 403:
+        logger.warning(f"403 FORBIDDEN — {context} | {detail}")
+    elif response.status_code == 401:
+        logger.warning(f"401 UNAUTHORIZED — {context} | {detail}")
+    else:
+        logger.error(f"HTTP ERROR — {context} | {detail}")
+
+
 class ConfluenceFallbackClient:
     """Client for falling back to central Confluence instance."""
 
@@ -60,11 +83,13 @@ class ConfluenceFallbackClient:
                 verify=self.verify_ssl,
                 timeout=10
             )
-            response.raise_for_status()
+            if not response.ok:
+                _log_http_error(response, f"get_page_attachments(page_id={page_id})")
+                return None
             return response.json()
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching attachments for page {page_id}: {e}")
+            logger.error(f"Connection error fetching attachments for page {page_id}: {e}")
             return None
 
     def download_attachment(self, download_url: str) -> Optional[bytes]:
@@ -91,11 +116,13 @@ class ConfluenceFallbackClient:
                 verify=self.verify_ssl,
                 timeout=30
             )
-            response.raise_for_status()
+            if not response.ok:
+                _log_http_error(response, f"download_attachment(url={download_url})")
+                return None
             return response.content
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error downloading attachment: {e}")
+            logger.error(f"Connection error downloading attachment {download_url}: {e}")
             return None
 
     def get_page(self, page_id: str, expand: str = "body.storage,version") -> Optional[Dict[str, Any]]:
@@ -114,18 +141,21 @@ class ConfluenceFallbackClient:
 
         try:
             url = f"{self.base_url}/rest/api/content/{page_id}"
+            params = {'expand': expand}
             response = requests.get(
                 url,
                 auth=self.auth,
-                params={'expand': expand},
+                params=params,
                 verify=self.verify_ssl,
                 timeout=10
             )
-            response.raise_for_status()
+            if not response.ok:
+                _log_http_error(response, f"get_page(page_id={page_id})", expand=expand)
+                return None
             return response.json()
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching page {page_id}: {e}")
+            logger.error(f"Connection error fetching page {page_id}: {e}")
             return None
 
     def search_cql(self, cql: str, limit: int = 25) -> Optional[Dict[str, Any]]:
@@ -144,16 +174,19 @@ class ConfluenceFallbackClient:
 
         try:
             url = f"{self.base_url}/rest/api/content/search"
+            params = {'cql': cql, 'limit': limit}
             response = requests.get(
                 url,
                 auth=self.auth,
-                params={'cql': cql, 'limit': limit},
+                params=params,
                 verify=self.verify_ssl,
                 timeout=15
             )
-            response.raise_for_status()
+            if not response.ok:
+                _log_http_error(response, f"search_cql(cql={cql!r}, limit={limit})")
+                return None
             return response.json()
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error searching with CQL '{cql}': {e}")
+            logger.error(f"Connection error searching CQL '{cql}': {e}")
             return None
