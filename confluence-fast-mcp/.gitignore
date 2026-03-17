@@ -47,3 +47,8 @@ settings.ini
 # Logs
 *.log
 logs/
+
+# MCP event store (session resumability data)
+mcp_events.db
+mcp_events.db-wal
+mcp_events.db-shm

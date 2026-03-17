@@ -547,6 +547,14 @@ def main():
     parser.add_argument("--sse", action="store_true", help="Use legacy SSE transport instead of streamable HTTP")
     # Legacy support: --http [port]
     parser.add_argument("--http", nargs="?", type=int, const=8070, default=None, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--no-event-store", action="store_true",
+        help="Disable EventStore (disables session resumability after restart)",
+    )
+    parser.add_argument(
+        "--retry-interval", type=int, default=3000,
+        help="SSE retry interval in ms for client reconnect (default: 3000)",
+    )
     args = parser.parse_args()
 
     if args.http is not None:
@@ -561,8 +569,48 @@ def main():
         host = "0.0.0.0"
         transport = "sse" if args.sse else "http"
         endpoint = "/sse" if args.sse else "/mcp"
+
+        # Enable EventStore for session resumability on streamable-HTTP.
+        # When the server restarts, clients that reconnect with a
+        # Last-Event-ID header can pick up missed events instead of
+        # getting a hard "session not found" error.
+        event_store = None
+        if transport == "http" and not args.no_event_store:
+            from sqlite_event_store import SQLiteEventStore
+            db_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "mcp_events.db"
+            )
+            event_store = SQLiteEventStore(
+                db_path=db_path,
+                max_events_per_stream=200,
+                ttl=7200,  # 2 hours
+            )
+            logger.info(
+                "SQLiteEventStore enabled — sessions survive server restarts "
+                f"(retry_interval={args.retry_interval}ms, ttl=7200s)"
+            )
+
         logger.info(f"Starting FastMCP server on http://{host}:{args.port}{endpoint} (transport={transport})")
-        mcp.run(transport=transport, host=host, port=args.port)
+
+        if event_store is not None:
+            # Use http_app() so we can pass event_store & retry_interval
+            import uvicorn
+            app = mcp.http_app(
+                event_store=event_store,
+                retry_interval=args.retry_interval,
+            )
+            uvicorn_config = uvicorn.Config(
+                app,
+                host=host,
+                port=args.port,
+                log_level="info",
+                timeout_graceful_shutdown=0,
+            )
+            server = uvicorn.Server(uvicorn_config)
+            import anyio
+            anyio.run(server.serve)
+        else:
+            mcp.run(transport=transport, host=host, port=args.port)
 
 
 if __name__ == "__main__":
