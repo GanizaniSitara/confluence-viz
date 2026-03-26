@@ -2,7 +2,7 @@
 
 import logging
 import requests
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from requests.auth import HTTPBasicAuth
 
 logger = logging.getLogger(__name__)
@@ -189,4 +189,74 @@ class ConfluenceFallbackClient:
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Connection error searching CQL '{cql}': {e}")
+            return None
+
+    def get_page_children(self, page_id: str, limit: int = 25,
+                          start: int = 0) -> Optional[List[Dict[str, Any]]]:
+        """Get child pages of a page from the live Confluence API.
+
+        Returns:
+            List of child page dicts or None on error
+        """
+        if not self.is_configured():
+            return None
+        try:
+            url = f"{self.base_url}/rest/api/content/{page_id}/child/page"
+            params = {'limit': limit, 'start': start, 'expand': 'version,space'}
+            response = requests.get(
+                url, auth=self.auth, params=params,
+                verify=self.verify_ssl, timeout=10,
+            )
+            if not response.ok:
+                _log_http_error(response, f"get_page_children(page_id={page_id})")
+                return None
+            return response.json().get('results', [])
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Connection error fetching children for page {page_id}: {e}")
+            return None
+
+    def get_page_labels(self, page_id: str) -> Optional[List[Dict[str, Any]]]:
+        """Get labels for a page from the live Confluence API.
+
+        Returns:
+            List of label dicts or None on error
+        """
+        if not self.is_configured():
+            return None
+        try:
+            url = f"{self.base_url}/rest/api/content/{page_id}/label"
+            response = requests.get(
+                url, auth=self.auth,
+                verify=self.verify_ssl, timeout=10,
+            )
+            if not response.ok:
+                _log_http_error(response, f"get_page_labels(page_id={page_id})")
+                return None
+            return response.json().get('results', [])
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Connection error fetching labels for page {page_id}: {e}")
+            return None
+
+    def get_page_comments(self, page_id: str,
+                          limit: int = 25) -> Optional[List[Dict[str, Any]]]:
+        """Get comments on a page from the live Confluence API.
+
+        Returns:
+            List of comment dicts or None on error
+        """
+        if not self.is_configured():
+            return None
+        try:
+            url = f"{self.base_url}/rest/api/content/{page_id}/child/comment"
+            params = {'limit': limit, 'expand': 'body.storage,version,author'}
+            response = requests.get(
+                url, auth=self.auth, params=params,
+                verify=self.verify_ssl, timeout=10,
+            )
+            if not response.ok:
+                _log_http_error(response, f"get_page_comments(page_id={page_id})")
+                return None
+            return response.json().get('results', [])
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Connection error fetching comments for page {page_id}: {e}")
             return None

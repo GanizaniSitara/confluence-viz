@@ -234,7 +234,7 @@ def fetch_page_metadata(space_key):
                 'title': page.get('title'),
                 'updated': page.get('version', {}).get('when', ''),
                 'update_count': page.get('version', {}).get('number', 0),
-                'parent_id': page['ancestors'][0]['id'] if page.get('ancestors') else None,
+                'parent_id': page['ancestors'][-1]['id'] if page.get('ancestors') else None,
                 'level': len(page.get('ancestors', [])),
                 'space_key': space_key,
                 # NEW METADATA

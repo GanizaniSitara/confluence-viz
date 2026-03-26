@@ -122,6 +122,7 @@ from indexer import ConfluenceIndexer
 from converters import html_to_markdown, html_to_text
 from search import translate_cql
 from fallback import ConfluenceFallbackClient
+from cache import TTLCache
 
 # Setup logging — console + rotating file
 _log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
@@ -163,6 +164,11 @@ config = None
 pickle_loader = None
 indexer = None
 fallback_client = None
+
+# In-memory caches for live API results (5-minute TTL)
+_children_cache = TTLCache()
+_labels_cache = TTLCache()
+_comments_cache = TTLCache()
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +304,33 @@ def confluence_get_page_children(
         include_folders: Whether to include child folders
     """
     logger.info(f"GetChildren: parent_id={parent_id}, limit={limit}, start={start}")
+
+    # 1. Try pickle data (parent_id index)
     children = pickle_loader.get_children(parent_id, limit=limit, start=start)
+
+    # 2. Fallback: live Confluence API (cached)
+    if not children and fallback_client:
+        cache_key = f"children:{parent_id}:{start}:{limit}"
+        cached = _children_cache.get(cache_key)
+        if cached is not None:
+            children = cached
+            logger.debug(f"GetChildren: cache hit for {parent_id}")
+        else:
+            logger.info(f"GetChildren: pickle miss, trying live API for {parent_id}")
+            api_children = fallback_client.get_page_children(
+                parent_id, limit=limit, start=start,
+            )
+            if api_children:
+                children = []
+                for child_page in api_children:
+                    sk = child_page.get('space', {}).get('key', '')
+                    if not sk:
+                        # Try to find space key from pickle data
+                        pid = str(child_page.get('id', ''))
+                        pkl_result = pickle_loader.get_page_by_id(pid)
+                        sk = pkl_result['space_key'] if pkl_result else '?'
+                    children.append({'space_key': sk, 'page': child_page})
+                _children_cache.put(cache_key, children)
 
     if not children:
         logger.warning(
@@ -336,29 +368,51 @@ def confluence_get_comments(page_id: str) -> str:
 
     Args:
         page_id: Confluence page ID
-
-    Note: This cached server has limited comment data. Returns whatever
-    comment data is available in the pickled page data.
     """
     logger.info(f"GetComments: page_id={page_id}")
+
+    # Resolve page title for display (from pickle or API)
+    page_title = ""
     result = pickle_loader.get_page_by_id(page_id)
-    if not result:
-        logger.warning(f"GetComments: page NOT FOUND | page_id={page_id}")
-        return f"Page not found: {page_id}"
+    if result:
+        page_title = result['page'].get('title', '')
 
-    page = result['page']
-    comments = page.get('comments', [])
+    # 1. Try pickle data
+    comments = []
+    if result:
+        page = result['page']
+        comments = page.get('comments', [])
+        if not comments:
+            children = page.get('children', {})
+            if isinstance(children, dict):
+                comment_data = children.get('comment', {})
+                if isinstance(comment_data, dict):
+                    comments = comment_data.get('results', [])
+
+    # 2. Fallback: live Confluence API (cached)
+    if not comments and fallback_client:
+        cache_key = f"comments:{page_id}"
+        cached = _comments_cache.get(cache_key)
+        if cached is not None:
+            comments = cached
+            logger.debug(f"GetComments: cache hit for {page_id}")
+        else:
+            logger.info(f"GetComments: pickle miss, trying live API for {page_id}")
+            api_comments = fallback_client.get_page_comments(page_id)
+            if api_comments is not None:
+                comments = api_comments
+                _comments_cache.put(cache_key, comments)
+                if not page_title and api_comments:
+                    # Try to get title from API if we didn't have it
+                    api_page = fallback_client.get_page(page_id, expand="version")
+                    if api_page:
+                        page_title = api_page.get('title', '')
+
     if not comments:
-        children = page.get('children', {})
-        if isinstance(children, dict):
-            comment_data = children.get('comment', {})
-            if isinstance(comment_data, dict):
-                comments = comment_data.get('results', [])
+        return f"No comments found for page {page_id}" + (
+            f" (page: {page_title})" if page_title else "")
 
-    if not comments:
-        return f"No comments found for page {page_id} (page: {page.get('title', '')})"
-
-    lines = [f"Comments on \"{page.get('title', '')}\" ({len(comments)} comment(s)):\n"]
+    lines = [f"Comments on \"{page_title}\" ({len(comments)} comment(s)):\n"]
     for i, comment in enumerate(comments, 1):
         author = ""
         if isinstance(comment, dict):
@@ -384,24 +438,48 @@ def confluence_get_labels(page_id: str) -> str:
         page_id: Content ID (page or attachment with att prefix)
     """
     logger.info(f"GetLabels: page_id={page_id}")
+
+    # Resolve page title for display
+    page_title = ""
     result = pickle_loader.get_page_by_id(page_id)
-    if not result:
-        logger.warning(f"GetLabels: page NOT FOUND | page_id={page_id}")
-        return f"Page not found: {page_id}"
+    if result:
+        page_title = result['page'].get('title', '')
 
-    page = result['page']
-    labels = page.get('labels', [])
-    if not labels:
-        metadata = page.get('metadata', {})
-        if isinstance(metadata, dict):
-            label_data = metadata.get('labels', {})
-            if isinstance(label_data, dict):
-                labels = label_data.get('results', [])
-            elif isinstance(label_data, list):
-                labels = label_data
+    # 1. Try pickle data
+    labels = []
+    if result:
+        page = result['page']
+        labels = page.get('labels', [])
+        if not labels:
+            metadata = page.get('metadata', {})
+            if isinstance(metadata, dict):
+                label_data = metadata.get('labels', {})
+                if isinstance(label_data, dict):
+                    labels = label_data.get('results', [])
+                elif isinstance(label_data, list):
+                    labels = label_data
+
+    # 2. Fallback: live Confluence API (cached)
+    if not labels and fallback_client:
+        cache_key = f"labels:{page_id}"
+        cached = _labels_cache.get(cache_key)
+        if cached is not None:
+            labels = cached
+            logger.debug(f"GetLabels: cache hit for {page_id}")
+        else:
+            logger.info(f"GetLabels: pickle miss, trying live API for {page_id}")
+            api_labels = fallback_client.get_page_labels(page_id)
+            if api_labels is not None:
+                labels = api_labels
+                _labels_cache.put(cache_key, labels)
+                if not page_title:
+                    api_page = fallback_client.get_page(page_id, expand="version")
+                    if api_page:
+                        page_title = api_page.get('title', '')
 
     if not labels:
-        return f"No labels found for page {page_id} (page: {page.get('title', '')})"
+        return f"No labels found for page {page_id}" + (
+            f" (page: {page_title})" if page_title else "")
 
     label_names = []
     for label in labels:
@@ -410,7 +488,7 @@ def confluence_get_labels(page_id: str) -> str:
         else:
             label_names.append(str(label))
 
-    return f"Labels for \"{page.get('title', '')}\": {', '.join(label_names)}"
+    return f"Labels for \"{page_title}\": {', '.join(label_names)}"
 
 
 # ---------------------------------------------------------------------------
@@ -528,9 +606,10 @@ def initialize_server():
         fallback_client = ConfluenceFallbackClient(
             config.confluence_url,
             config.confluence_username,
-            config.confluence_api_token
+            config.confluence_api_token,
+            verify_ssl=config.confluence_verify_ssl,
         )
-        logger.info("Fallback client configured for attachment support")
+        logger.info("Fallback client configured (live API for children/labels/comments)")
     else:
         logger.info("Fallback client not configured (attachments unavailable)")
 

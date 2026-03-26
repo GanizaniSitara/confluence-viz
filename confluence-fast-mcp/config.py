@@ -82,6 +82,12 @@ class Config:
                              self._get('confluence', 'api_token', ''))
 
     @property
+    def confluence_verify_ssl(self) -> bool:
+        """Get SSL verification setting for Confluence."""
+        val = self._get('confluence', 'verify_ssl', 'true')
+        return val.lower() not in ('false', '0', 'no')
+
+    @property
     def server_host(self) -> str:
         """Get server host."""
         return self._get('server', 'host', 'localhost')
