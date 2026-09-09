@@ -304,7 +304,7 @@ class ConfluenceWatchEnumerator:
 def create_sample_config():
     """Create a sample config.ini file"""
     config_content = """[confluence]
-base_url = https://confluence.barcapint.com
+base_url = https://confluence.example.com
 username = your_username
 password = your_password
 

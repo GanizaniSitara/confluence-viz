@@ -71,7 +71,7 @@ This project helps organizations understand how their Confluence instance is bei
 1. Clone the repository:
    ```
    git clone <repository-url>
-   cd confluence_visualization
+   cd confluence-viz
    ```
 
 2. Install required Python packages:
@@ -109,9 +109,9 @@ This project helps organizations understand how their Confluence instance is bei
 
 1. Fetch data from Confluence:
    ```
-   python fetch_data.py
+   python sample_and_pickle_spaces.py
    ```
-   This creates a `confluence_data.pkl` file with space and page data.
+   This saves sampled space and page data as per-space pickle files under `temp/`.
 
 2. Run semantic analysis (optional):
    ```
@@ -144,11 +144,6 @@ This project helps organizations understand how their Confluence instance is bei
 - **Space Explorer**: Browse and analyze individual Confluence spaces
   ```
   python space_explorer.py
-  ```
-
-- **Application Search**: Find and analyze applications mentioned in Confluence
-  ```
-  python seed_applications.py
   ```
 
 ## Which Script Should I Use?
@@ -265,7 +260,14 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+No repository-wide LICENSE file is currently included. Licence selection and contributor provenance remain pending owner review.
+
+## Safety and operational limits
+
+- The Python and Go MCP HTTP servers currently listen on all network interfaces. The example configuration's host setting does not control this binding. Use stdio for local-only operation, or restrict network access before starting HTTP mode.
+- Pickles, database files, upload checkpoints and audit output can contain private Confluence content and user identities. Keep these artifacts out of commits and shared screenshots. Only load pickle files from trusted sources.
+- `check_postgres.py` is a local empty-password connection diagnostic, not a password tester. It does not try candidate passwords.
+- Current-file cleanup does not remove identifiers from earlier Git commits; history rewriting is a separate owner decision.
 
 
 ## SAMPLE_AND_PICKLE_SPACES.PY
@@ -287,7 +289,7 @@ It will skip processing spaces that are already listed in the checkpoint as comp
 The checkpoint file itself is updated as new spaces are processed.
 
 Re-run with --reset flag:
-The script accepts a --reset command-line argument (e.g., python [sample_and_pickle_spaces.py](http://_vscodecontentref_/8) --reset).
+The script accepts a --reset command-line argument (e.g., `python sample_and_pickle_spaces.py --reset`).
 
 If this flag is used, the existing confluence_checkpoint.json file will be deleted at the beginning of the script's execution.
 

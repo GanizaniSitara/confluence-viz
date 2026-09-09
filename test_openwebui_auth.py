@@ -141,7 +141,7 @@ def test_authentication(base_url, username, password):
             data = response.json()
             if 'token' in data:
                 print("✅ Authentication successful!")
-                print(f"   Token received: {data['token'][:20]}...")
+                print("   Token received (not displayed).")
                 
                 # Test the token
                 print("\n🔍 Testing token validity...")

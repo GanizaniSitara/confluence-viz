@@ -47,6 +47,9 @@ settings_gpu_load.ini
 
 # Backup files
 *.bak
+*.bak2
+/openwebui_checkpoint.txt
+*.db
 
 # OS specific files
 .DS_Store

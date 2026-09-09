@@ -1,7 +1,9 @@
+"""Explicit local empty-password connection diagnostic; never probes passwords."""
+
 import psycopg2
 from psycopg2 import OperationalError
 
-def try_password(pw):
+def check_local_connection():
     try:
         conn = psycopg2.connect(
             dbname="postgres",
@@ -15,8 +17,9 @@ def try_password(pw):
     except OperationalError:
         return False
 
-# Try a list of passwords
-for candidate in ["pass1", "pass2", "correct_password"]:
-    if try_password(candidate):
-        print(f"✅ Password OK: {candidate}")
-        break
+if __name__ == "__main__":
+    if check_local_connection():
+        print("Local PostgreSQL connection succeeded with an empty password argument.")
+    else:
+        print("Local PostgreSQL connection failed; no other passwords were attempted.")
+        raise SystemExit(1)
